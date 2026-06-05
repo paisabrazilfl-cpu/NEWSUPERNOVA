@@ -1,22 +1,32 @@
 openapi: 3.1.0
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: OPENCLAW OMEGA - Multi-agent orchestrator API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: agents
+    description: Agent management
+  - name: messages
+    description: Chat messages
+  - name: channels
+    description: Channels / workspaces
+  - name: tasks
+    description: Agent tasks
+  - name: telemetry
+    description: Agent telemetry and internal state
+  - name: swarm
+    description: Swarm control
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,6 +34,295 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /agents:
+    get:
+      operationId: listAgents
+      tags: [agents]
+      summary: List all agents
+      responses:
+        "200":
+          description: List of agents
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Agent"
+    post:
+      operationId: createAgent
+      tags: [agents]
+      summary: Create a new agent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Agent"
+
+  /agents/{agentId}:
+    get:
+      operationId: getAgent
+      tags: [agents]
+      summary: Get agent by ID
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Agent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Agent"
+        "404":
+          description: Not found
+    patch:
+      operationId: updateAgent
+      tags: [agents]
+      summary: Update agent
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentUpdate"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Agent"
+
+  /agents/{agentId}/telemetry:
+    get:
+      operationId: getAgentTelemetry
+      tags: [telemetry]
+      summary: Get agent telemetry and internal state
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Telemetry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentTelemetry"
+
+  /agents/{agentId}/tasks:
+    get:
+      operationId: listAgentTasks
+      tags: [tasks]
+      summary: List tasks for an agent
+      parameters:
+        - name: agentId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Tasks
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Task"
+
+  /channels:
+    get:
+      operationId: listChannels
+      tags: [channels]
+      summary: List all channels
+      responses:
+        "200":
+          description: Channels
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Channel"
+    post:
+      operationId: createChannel
+      tags: [channels]
+      summary: Create a channel
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChannelInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Channel"
+
+  /channels/{channelId}/messages:
+    get:
+      operationId: listMessages
+      tags: [messages]
+      summary: List messages in a channel
+      parameters:
+        - name: channelId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Messages
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Message"
+    post:
+      operationId: sendMessage
+      tags: [messages]
+      summary: Send a message to a channel
+      parameters:
+        - name: channelId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessageInput"
+      responses:
+        "201":
+          description: Sent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Message"
+
+  /tasks:
+    get:
+      operationId: listTasks
+      tags: [tasks]
+      summary: List all tasks
+      responses:
+        "200":
+          description: All tasks
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Task"
+    post:
+      operationId: createTask
+      tags: [tasks]
+      summary: Create a task
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TaskInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+
+  /tasks/{taskId}:
+    patch:
+      operationId: updateTask
+      tags: [tasks]
+      summary: Update task status
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TaskUpdate"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Task"
+
+  /swarm/status:
+    get:
+      operationId: getSwarmStatus
+      tags: [swarm]
+      summary: Get aggregate swarm status and stats
+      responses:
+        "200":
+          description: Swarm status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SwarmStatus"
+
+  /swarm/pause:
+    post:
+      operationId: pauseSwarm
+      tags: [swarm]
+      summary: Pause all agent execution
+      responses:
+        "200":
+          description: Paused
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SwarmStatus"
+
+  /swarm/resume:
+    post:
+      operationId: resumeSwarm
+      tags: [swarm]
+      summary: Resume all agent execution
+      responses:
+        "200":
+          description: Resumed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SwarmStatus"
+
 components:
   schemas:
     HealthStatus:
@@ -31,6 +330,266 @@ components:
       properties:
         status:
           type: string
-      required:
-        - status
+      required: [status]
 
+    Agent:
+      type: object
+      required: [id, name, role, status, color, contextUsed, contextMax, createdAt]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        role:
+          type: string
+        description:
+          type: ["string", "null"]
+        status:
+          type: string
+          enum: [idle, thinking, executing, waiting, stalled, hitl]
+        color:
+          type: string
+        avatarInitials:
+          type: ["string", "null"]
+        model:
+          type: ["string", "null"]
+        contextUsed:
+          type: integer
+        contextMax:
+          type: integer
+        capabilities:
+          type: array
+          items:
+            type: string
+        createdAt:
+          type: string
+
+    AgentInput:
+      type: object
+      required: [name, role, color]
+      properties:
+        name:
+          type: string
+        role:
+          type: string
+        description:
+          type: string
+        color:
+          type: string
+        model:
+          type: string
+        capabilities:
+          type: array
+          items:
+            type: string
+
+    AgentUpdate:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [idle, thinking, executing, waiting, stalled, hitl]
+        description:
+          type: string
+        model:
+          type: string
+
+    AgentTelemetry:
+      type: object
+      required: [agentId, monologue, toolCalls, contextUsed, contextMax, updatedAt]
+      properties:
+        agentId:
+          type: integer
+        monologue:
+          type: array
+          items:
+            $ref: "#/components/schemas/MonologueLine"
+        toolCalls:
+          type: array
+          items:
+            $ref: "#/components/schemas/ToolCall"
+        contextUsed:
+          type: integer
+        contextMax:
+          type: integer
+        updatedAt:
+          type: string
+
+    MonologueLine:
+      type: object
+      required: [id, text, timestamp, type]
+      properties:
+        id:
+          type: integer
+        text:
+          type: string
+        timestamp:
+          type: string
+        type:
+          type: string
+          enum: [thought, action, observation, conclusion]
+
+    ToolCall:
+      type: object
+      required: [id, toolName, status, startedAt]
+      properties:
+        id:
+          type: integer
+        toolName:
+          type: string
+        args:
+          type: ["string", "null"]
+        result:
+          type: ["string", "null"]
+        status:
+          type: string
+          enum: [pending, running, success, error]
+        startedAt:
+          type: string
+        completedAt:
+          type: ["string", "null"]
+
+    Channel:
+      type: object
+      required: [id, name, type, createdAt]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        type:
+          type: string
+          enum: [general, swarm, terminal, logs, hitl]
+        description:
+          type: ["string", "null"]
+        unreadCount:
+          type: integer
+        lastActivity:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+
+    ChannelInput:
+      type: object
+      required: [name, type]
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          enum: [general, swarm, terminal, logs, hitl]
+        description:
+          type: string
+
+    Message:
+      type: object
+      required: [id, channelId, content, messageType, timestamp]
+      properties:
+        id:
+          type: integer
+        channelId:
+          type: integer
+        agentId:
+          type: ["integer", "null"]
+        agentName:
+          type: ["string", "null"]
+        agentColor:
+          type: ["string", "null"]
+        content:
+          type: string
+        messageType:
+          type: string
+          enum: [user, agent, system, tool_output, hitl_request]
+        metadata:
+          type: ["string", "null"]
+        timestamp:
+          type: string
+
+    MessageInput:
+      type: object
+      required: [content, messageType]
+      properties:
+        content:
+          type: string
+        messageType:
+          type: string
+          enum: [user, agent, system, tool_output, hitl_request]
+        agentId:
+          type: integer
+        targetAgentId:
+          type: integer
+
+    Task:
+      type: object
+      required: [id, title, status, priority, createdAt]
+      properties:
+        id:
+          type: integer
+        title:
+          type: string
+        description:
+          type: ["string", "null"]
+        agentId:
+          type: ["integer", "null"]
+        agentName:
+          type: ["string", "null"]
+        status:
+          type: string
+          enum: [queued, running, paused, completed, failed]
+        priority:
+          type: string
+          enum: [low, medium, high, critical]
+        progress:
+          type: integer
+        channelId:
+          type: ["integer", "null"]
+        createdAt:
+          type: string
+        completedAt:
+          type: ["string", "null"]
+
+    TaskInput:
+      type: object
+      required: [title, priority]
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        agentId:
+          type: integer
+        channelId:
+          type: integer
+        priority:
+          type: string
+          enum: [low, medium, high, critical]
+
+    TaskUpdate:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [queued, running, paused, completed, failed]
+        progress:
+          type: integer
+        agentId:
+          type: integer
+
+    SwarmStatus:
+      type: object
+      required: [paused, activeAgents, totalAgents, runningTasks, completedTasks, totalMessages]
+      properties:
+        paused:
+          type: boolean
+        activeAgents:
+          type: integer
+        totalAgents:
+          type: integer
+        runningTasks:
+          type: integer
+        completedTasks:
+          type: integer
+        totalMessages:
+          type: integer
+        uptimeSeconds:
+          type: integer

@@ -1,10 +1,11 @@
-# [Project name]
+# OPENCLAW OMEGA
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+A Discord-style multi-agent AI orchestrator dashboard for monitoring and directing ABBY CLAW autonomous agents in real-time.
 
 ## Run & Operate
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
+- `pnpm --filter @workspace/api-server run dev` — run the API server (port 8080)
+- `pnpm --filter @workspace/openclaw run dev` — run the frontend dashboard
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
@@ -14,31 +15,63 @@ _Replace the heading above with the project's name, and this line with one sente
 ## Stack
 
 - pnpm workspaces, Node.js 24, TypeScript 5.9
-- API: Express 5
+- API: Express 5 (port 8080, path `/api`)
 - DB: PostgreSQL + Drizzle ORM
-- Validation: Zod (`zod/v4`), `drizzle-zod`
+- Frontend: React + Vite + Tailwind (port 20581, path `/`)
+- Validation: Zod (`zod/v4` in libs, plain `zod` in api-server routes)
 - API codegen: Orval (from OpenAPI spec)
 - Build: esbuild (CJS bundle)
+- Animations: framer-motion
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `lib/api-spec/openapi.yaml` — OpenAPI source of truth
+- `lib/db/src/schema/` — Drizzle table definitions (agents, channels, messages, tasks, telemetry)
+- `artifacts/api-server/src/routes/` — Express route handlers
+- `artifacts/openclaw/src/` — React frontend
+  - `components/dashboard/SwarmCanvas.tsx` — Animated agent node graph
+  - `components/dashboard/AgentInspector.tsx` — Right-side telemetry drawer
+  - `components/dashboard/ChatStream.tsx` — Color-coded agent message feed
+  - `components/dashboard/CommandBar.tsx` — Bottom command bar with @-routing
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- SVG `transform` cannot use percentage values — use `viewBox="-500 -400 1000 800"` + CSS positioned divs for agent nodes
+- Backend route files must NOT import `zod/v4` directly (esbuild can't resolve it); use plain `zod` or validate without zod in api-server routes
+- Agent telemetry (monologue + tool calls) stored in separate `monologue_lines` and `tool_calls` tables, served under `/api/agents/:id/telemetry`
+- Swarm pause/resume state is held in-memory on the API server (not persisted) — resets on restart
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+- **Swarm Canvas** — Animated node-graph of all ABBY CLAW agents with neon glow, pulse animations per status (thinking=green, waiting=blue, hitl=purple, idle=gray), animated connection lines between active agents
+- **Chat Stream** — Discord-style scrollable message feed, color-coded by agent, special rendering for tool_output (code blocks) and hitl_request (pulsing purple + Authorize button)
+- **Inspector Drawer** — Click any agent node to slide in a right panel showing internal monologue terminal, tool call execution matrix, context window gauge
+- **Command Bar** — Global broadcast or `@AgentName` targeted routing, Tab cycles agents, Pause/Resume SWARM button
+- **Agents page** — Full agent registry with status badges, capabilities, model info
+- **Tasks page** — Task queue with priority badges, progress bars, agent assignments
+
+## ABBY CLAW Agents
+
+| Name | Role | Model | Color |
+|------|------|-------|-------|
+| ABBY | Orchestrator | hermes-3-70b | #00e5ff |
+| CLAW-1 | Code Executor | qwen2.5-coder-32b | #bf00ff |
+| CLAW-2 | Browser Agent | gpt-4o | #0066ff |
+| CLAW-3 | Memory & RAG | llama-3.3-70b | #00cc88 |
+| CLAW-4 | API Connector | claude-3-5-sonnet | #ff6b00 |
+| MR.NICE | Social Agent | mistral-large | #ff2d78 |
 
 ## User preferences
 
-_Populate as you build — explicit user instructions worth remembering across sessions._
+- Do not ask to fix things that can be self-fixed — self-reflect, plan, execute, verify
+- Keep the cyberpunk dark aesthetic: zinc-950 background, neon cyan/purple accents
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
+- Do NOT use `zod/v4` imports in `artifacts/api-server/src/` — esbuild can't resolve the subpath. Use `zod` or avoid zod entirely
+- SVG `<g transform="translate(50%, 50%)">` is invalid — percentages not supported in SVG transforms. Use `viewBox` + CSS `flex items-center justify-center` for centering
+- Always run codegen after OpenAPI spec changes before building frontend
+- Swarm status aggregation uses raw SQL via `drizzle-orm/sql` — ensure imports include `sql` from `drizzle-orm`
 
 ## Pointers
 

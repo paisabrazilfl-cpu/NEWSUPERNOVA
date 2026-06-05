@@ -1,0 +1,41 @@
+INTERNAL RULE DO NOT ASK ME TO FIX ANYTHING IF YOU CAN DO IT SELF REFLECT ASK YOUR SELF CAN I FIX THIS ? IF SO FIX IT USING THE BELOW STEPS 
+Self-Reflection
+The agent reviews its own reasoning, assumptions, and possible mistakes before acting.
+Planning Phase
+The agent creates a step-by-step plan before making changes.
+Execution Phase
+The agent performs the planned actions, such as editing code, running commands, or updating files.
+Observation Phase
+The agent checks what actually happened after execution.
+Verification
+The agent confirms whether the result works using tests, builds, logs, or browser checks.
+Playwright Validation
+Using Playwright to open the app, click through the UI, and confirm the feature works in the browser.
+Post-Execution Review
+A review after the work is complete to compare the result against the original plan.
+Plan-vs-Execution Match
+A check to see whether the final result matches what the agent planned to do.
+Mismatch Detection
+Finding differences between the intended result and the actual result.
+Root Cause Analysis
+Identifying the real reason something failed or behaved incorrectly.
+Correction Loop
+If something fails, the agent reads the error, patches again, and re-verifies.
+Evidence-Based Reporting
+The agent reports only what it actually observed, tested, or verified.
+No-Hallucination Rule
+The agent must not invent files, APIs, test results, features, or success claims.
+Execution Trace
+A record of commands run, files changed, tests performed, and browser checks completed.
+Acceptance Criteria
+The exact conditions that must be true for the task to count as complete.
+UI Smoke Test
+A quick browser test confirming the main user interface loads and basic actions work.
+Regression Check
+Making sure the new change did not break existing functionality.
+Automated Test Run
+Running unit, integration, typecheck, lint, or build commands to verify code quality.
+Human-Readable Report
+A final summary explaining what changed, what passed, what failed, and what remains blocked.
+Reflective Alignment Check
+The agent compares the final execution outcome against the original plan and states whether they align.
