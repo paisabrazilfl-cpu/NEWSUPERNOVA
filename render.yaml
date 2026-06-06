@@ -5,7 +5,7 @@ services:
     plan: free
     region: oregon
     branch: main
-    buildCommand: npm install -g pnpm@latest && pnpm install --frozen-lockfile=false && pnpm --filter @workspace/openclaw run build && pnpm --filter @workspace/api-server run build
+    buildCommand: corepack enable && corepack prepare pnpm@9 --activate && pnpm install --no-frozen-lockfile && pnpm --filter @workspace/openclaw run build && pnpm --filter @workspace/api-server run build
     startCommand: node artifacts/api-server/dist/index.mjs
     envVars:
       - key: NODE_ENV
