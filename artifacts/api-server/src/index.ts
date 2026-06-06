@@ -1,6 +1,8 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 import { runMigrations } from "./migrate";
+import { logConfig, getConfig } from "./lib/config";
+import { initOpenClawConnector } from "./lib/openclaw-connector";
 
 const rawPort = process.env["PORT"];
 
@@ -14,6 +16,28 @@ const port = Number(rawPort);
 
 if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
+}
+
+// Log configuration on startup
+logConfig();
+const config = getConfig();
+
+// Initialize BOS-OMEGA connector if API key is available
+if (config.openclawApiKey) {
+  try {
+    const connector = initOpenClawConnector(config.openclawApiKey);
+    connector.testConnection().then(connected => {
+      if (connected) {
+        logger.info("Connected to BOS-OMEGA");
+      } else {
+        logger.warn("Failed to connect to BOS-OMEGA");
+      }
+    });
+  } catch (err) {
+    logger.warn({ err }, "BOS-OMEGA connector init failed");
+  }
+} else {
+  logger.info("OPENCLAW_API_KEY not set - BOS-OMEGA integration disabled");
 }
 
 runMigrations().then(() => {
