@@ -4,10 +4,11 @@ import { SwarmCanvas } from "@/components/dashboard/SwarmCanvas";
 import { ChatStream } from "@/components/dashboard/ChatStream";
 import { AgentInspector } from "@/components/dashboard/AgentInspector";
 import { CommandBar } from "@/components/dashboard/CommandBar";
+import { SteelBrowser } from "@/components/dashboard/SteelBrowser";
 
 export default function Dashboard() {
   const [activeChannelId, setActiveChannelId] = useState<number | null>(null);
-  const [viewMode, setViewMode] = useState<"canvas" | "chat">("canvas");
+  const [viewMode, setViewMode] = useState<"canvas" | "chat" | "browser">("canvas");
   const [selectedAgentId, setSelectedAgentId] = useState<number | null>(null);
 
   return (
@@ -27,11 +28,9 @@ export default function Dashboard() {
       
       <div className="flex-1 flex flex-col min-w-0 relative z-10">
         <div className="flex-1 relative">
-          {viewMode === "canvas" ? (
-            <SwarmCanvas onAgentClick={setSelectedAgentId} />
-          ) : (
-            <ChatStream channelId={activeChannelId} />
-          )}
+          {viewMode === "canvas" && <SwarmCanvas onAgentClick={setSelectedAgentId} />}
+          {viewMode === "chat" && <ChatStream channelId={activeChannelId} />}
+          {viewMode === "browser" && <SteelBrowser />}
         </div>
         
         <CommandBar activeChannelId={activeChannelId} />

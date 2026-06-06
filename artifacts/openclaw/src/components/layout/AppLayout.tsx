@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { Activity, LayoutGrid, Terminal, Settings as SettingsIcon, ShieldAlert } from "lucide-react";
+import { Activity, LayoutGrid, Terminal, Settings as SettingsIcon, ShieldAlert, Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useGetSwarmStatus } from "@workspace/api-client-react";
 import { useEffect } from "react";
@@ -24,6 +24,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
     { href: "/", icon: Activity, label: "SWARM" },
     { href: "/tasks", icon: LayoutGrid, label: "TASKS" },
     { href: "/agents", icon: Terminal, label: "AGENTS" },
+    { href: "/cron", icon: Clock, label: "CRON" },
     { href: "/settings", icon: SettingsIcon, label: "SETTINGS" },
   ];
 

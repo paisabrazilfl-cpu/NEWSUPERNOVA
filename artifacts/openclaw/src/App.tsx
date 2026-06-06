@@ -8,6 +8,7 @@ import Dashboard from "@/pages/dashboard";
 import Agents from "@/pages/agents";
 import Tasks from "@/pages/tasks";
 import Settings from "@/pages/settings";
+import CronPage from "@/pages/cron";
 
 const queryClient = new QueryClient();
 
@@ -18,6 +19,7 @@ function Router() {
         <Route path="/" component={Dashboard} />
         <Route path="/agents" component={Agents} />
         <Route path="/tasks" component={Tasks} />
+        <Route path="/cron" component={CronPage} />
         <Route path="/settings" component={Settings} />
         <Route component={NotFound} />
       </Switch>

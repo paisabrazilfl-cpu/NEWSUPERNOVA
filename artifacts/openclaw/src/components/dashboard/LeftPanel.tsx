@@ -1,14 +1,14 @@
 import { useState, useEffect } from "react";
 import { useListChannels, useListAgents } from "@workspace/api-client-react";
 import { AgentStatusDot } from "@/components/ui/agent-status-dot";
-import { Hash, Activity, TerminalSquare, AlertTriangle } from "lucide-react";
+import { Hash, Activity, TerminalSquare, AlertTriangle, Globe } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface LeftPanelProps {
   activeChannelId: number | null;
   setActiveChannelId: (id: number) => void;
-  setViewMode: (mode: "canvas" | "chat") => void;
-  viewMode: "canvas" | "chat";
+  setViewMode: (mode: "canvas" | "chat" | "browser") => void;
+  viewMode: "canvas" | "chat" | "browser";
 }
 
 export function LeftPanel({ activeChannelId, setActiveChannelId, setViewMode, viewMode }: LeftPanelProps) {
@@ -34,27 +34,39 @@ export function LeftPanel({ activeChannelId, setActiveChannelId, setViewMode, vi
   return (
     <div className="w-[280px] bg-card/80 border-r border-card-border flex flex-col h-full flex-shrink-0 z-10 backdrop-blur-md">
       {/* View Toggle */}
-      <div className="p-4 border-b border-card-border">
-        <div className="flex bg-background border border-card-border p-1 rounded-lg">
+      <div className="p-3 border-b border-card-border">
+        <div className="flex bg-background border border-card-border p-1 rounded-lg gap-0.5">
           <button
             onClick={() => setViewMode("canvas")}
             className={cn(
-              "flex-1 text-xs font-bold px-3 py-1.5 rounded-md transition-all",
+              "flex-1 text-[10px] font-bold px-2 py-1.5 rounded-md transition-all",
               viewMode === "canvas" ? "bg-primary/20 text-primary" : "text-muted-foreground hover:text-foreground"
             )}
             data-testid="toggle-view-canvas"
           >
-            SWARM CANVAS
+            SWARM
           </button>
           <button
             onClick={() => setViewMode("chat")}
             className={cn(
-              "flex-1 text-xs font-bold px-3 py-1.5 rounded-md transition-all",
+              "flex-1 text-[10px] font-bold px-2 py-1.5 rounded-md transition-all",
               viewMode === "chat" ? "bg-primary/20 text-primary" : "text-muted-foreground hover:text-foreground"
             )}
             data-testid="toggle-view-chat"
           >
-            CHAT STREAM
+            CHAT
+          </button>
+          <button
+            onClick={() => setViewMode("browser")}
+            className={cn(
+              "flex items-center gap-1 text-[10px] font-bold px-2 py-1.5 rounded-md transition-all",
+              viewMode === "browser"
+                ? "bg-[#0066ff]/20 text-[#0066ff]"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+            data-testid="toggle-view-browser"
+          >
+            <Globe className="w-3 h-3" /> STEEL
           </button>
         </div>
       </div>
