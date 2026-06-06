@@ -4,6 +4,7 @@ import { runMigrations } from "./migrate";
 import { startKeepAlive } from "./lib/keepAlive";
 import { reconcileStaleWork } from "./orchestrator";
 import { integrationStatus } from "./lib/integrations";
+import { startScheduler } from "./lib/scheduler";
 
 const rawPort = process.env["PORT"];
 
@@ -50,5 +51,6 @@ runMigrations()
 
       logger.info({ port }, "Server listening");
       startKeepAlive();
+      startScheduler();
     });
   });

@@ -107,8 +107,12 @@ CREATE TABLE IF NOT EXISTS "agent_memory" (
   "key" text,
   "content" text NOT NULL,
   "tags" text,
+  "embedding" text,
   "created_at" timestamp DEFAULT now() NOT NULL
 );
+
+-- Backfill the embedding column on databases created before semantic memory.
+ALTER TABLE "agent_memory" ADD COLUMN IF NOT EXISTS "embedding" text;
 
 CREATE TABLE IF NOT EXISTS "vault_secrets" (
   "id" serial PRIMARY KEY NOT NULL,

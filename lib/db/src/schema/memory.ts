@@ -9,6 +9,11 @@ export const agentMemoryTable = pgTable("agent_memory", {
   key: text("key"),
   content: text("content").notNull(),
   tags: text("tags"),
+  // Semantic-search embedding of the content, stored as a JSON-encoded float
+  // array (text). Null when no embeddings provider is configured — search then
+  // falls back to keyword matching. Kept provider-agnostic and extension-free
+  // so it works on any Postgres without requiring pgvector.
+  embedding: text("embedding"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

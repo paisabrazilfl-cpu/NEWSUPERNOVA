@@ -483,9 +483,11 @@ function parseDirectives(raw: string, claws: Agent[]): Directive[] {
 }
 
 /**
- * Create command rows for a set of directives and run each target CLAW's
- * autonomous loop sequentially (so the feed reads naturally). Returns each
- * CLAW's final result for ABBY's coordinator review. Honors mid-run pause.
+ * Create command rows for a set of directives and run the target CLAWs'
+ * autonomous loops CONCURRENTLY — they are independent agents and execute in
+ * parallel, like a real swarm. Each CLAW persists its own feed/tool/task rows
+ * as it works, so the dashboard fills in live and interleaved. Returns each
+ * CLAW's final result for ABBY's coordinator review. Honors pause at launch.
  */
 async function dispatchDirectives(
   directives: Directive[],
@@ -494,21 +496,21 @@ async function dispatchDirectives(
   priority: string,
   abby: Agent | null,
 ): Promise<Array<{ name: string; result: string }>> {
-  const results: Array<{ name: string; result: string }> = [];
-  for (const d of directives) {
-    if (isSwarmPaused()) {
-      await postMessage({
-        channelId,
-        agentId: ABBY_ID,
-        agentName: "ABBY",
-        agentColor: abby?.color ?? ABBY_COLOR,
-        content: "SWARM paused mid-orchestration. Remaining directives halted.",
-        messageType: "system",
-      });
-      break;
-    }
+  if (isSwarmPaused()) {
+    await postMessage({
+      channelId,
+      agentId: ABBY_ID,
+      agentName: "ABBY",
+      agentColor: abby?.color ?? ABBY_COLOR,
+      content: "SWARM is paused. Directives were not dispatched.",
+      messageType: "system",
+    });
+    return [];
+  }
+
+  const runs = directives.map(async (d): Promise<{ name: string; result: string } | null> => {
     const agent = claws.find((c) => c.id === d.agentId);
-    if (!agent) continue;
+    if (!agent) return null;
     const [cmd] = await db
       .insert(agentCommandsTable)
       .values({
@@ -520,18 +522,19 @@ async function dispatchDirectives(
         status: "queued",
       })
       .returning();
-    if (cmd) {
-      const result = await executeAgentCommand({
-        commandId: cmd.id,
-        agent,
-        command: d.directive,
-        payload: null,
-        channelId,
-      });
-      results.push({ name: agent.name, result });
-    }
-  }
-  return results;
+    if (!cmd) return null;
+    const result = await executeAgentCommand({
+      commandId: cmd.id,
+      agent,
+      command: d.directive,
+      payload: null,
+      channelId,
+    });
+    return { name: agent.name, result };
+  });
+
+  const settled = await Promise.all(runs);
+  return settled.filter((r): r is { name: string; result: string } => r !== null);
 }
 
 /**

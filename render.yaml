@@ -46,6 +46,13 @@ services:
         sync: false
       - key: EXA_API_KEY
         sync: false
+      # Semantic memory (real vector RAG)
+      - key: EMBEDDINGS_API_KEY
+        sync: false
+      - key: EMBEDDINGS_BASE_URL
+        value: https://api.openai.com/v1
+      - key: EMBEDDINGS_MODEL
+        value: text-embedding-3-small
       # Event bus + cloud sandbox
       - key: INNGEST_EVENT_KEY
         sync: false

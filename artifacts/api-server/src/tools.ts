@@ -24,7 +24,7 @@ import { join } from "node:path";
 import { logger } from "./lib/logger";
 import { db } from "@workspace/db";
 import { agentMemoryTable, vaultSecretsTable, messagesTable } from "@workspace/db";
-import { desc, ilike, or } from "drizzle-orm";
+import { desc, ilike, or, isNotNull } from "drizzle-orm";
 import { substituteSecrets, redactSecrets } from "./lib/vault";
 import {
   PLATFORMS,
@@ -34,6 +34,7 @@ import {
   callPlatformApi,
 } from "./lib/connectors";
 import { tavilySearch, exaSearch, e2bExec, e2bConfigured } from "./lib/integrations";
+import { embed, embeddingsConfigured, cosineSimilarity, parseEmbedding } from "./lib/embeddings";
 
 const STEEL_BASE = "https://api.steel.dev/v1";
 const FIRECRAWL_BASE = "https://api.firecrawl.dev/v1";
@@ -173,6 +174,59 @@ async function webSearch(query: string, limit: number): Promise<string> {
     }
   }
   return `error: all web search providers failed — ${errors.join("; ")}`;
+}
+
+// ─── Shared long-term memory (semantic + keyword) ────────────────────────────
+// Real retrieval over the swarm's shared memory. When an embeddings provider is
+// configured, ranks candidates by cosine similarity against the query vector;
+// otherwise falls back to SQL keyword matching. Always degrades gracefully.
+
+const MEMORY_CANDIDATE_LIMIT = 1000; // newest N embedded rows considered per query
+
+function formatMemoryRow(m: { id: number; agentName: string | null; key: string | null; content: string }, score?: number): string {
+  const tag = score != null ? ` · sim ${score.toFixed(3)}` : "";
+  return `#${m.id} [${m.agentName ?? "?"}${m.key ? ` · ${m.key}` : ""}${tag}] ${clip(m.content, 600)}`;
+}
+
+async function keywordMemorySearch(query: string, limit: number): Promise<string> {
+  const like = `%${query}%`;
+  const rows = await db
+    .select()
+    .from(agentMemoryTable)
+    .where(or(ilike(agentMemoryTable.content, like), ilike(agentMemoryTable.key, like), ilike(agentMemoryTable.tags, like)))
+    .orderBy(desc(agentMemoryTable.createdAt))
+    .limit(limit);
+  if (!rows.length) return `no memory entries matched "${query}".`;
+  return rows.map((m) => formatMemoryRow(m)).join("\n---\n");
+}
+
+async function memorySearch(query: string, limit: number): Promise<string> {
+  if (embeddingsConfigured()) {
+    const queryVec = await embed(query);
+    if (queryVec) {
+      const candidates = await db
+        .select()
+        .from(agentMemoryTable)
+        .where(isNotNull(agentMemoryTable.embedding))
+        .orderBy(desc(agentMemoryTable.createdAt))
+        .limit(MEMORY_CANDIDATE_LIMIT);
+
+      const scored = candidates
+        .map((m) => {
+          const vec = parseEmbedding(m.embedding);
+          return vec ? { row: m, score: cosineSimilarity(queryVec, vec) } : null;
+        })
+        .filter((x): x is { row: typeof candidates[number]; score: number } => x !== null)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, limit);
+
+      if (scored.length) {
+        return scored.map((s) => formatMemoryRow(s.row, s.score)).join("\n---\n");
+      }
+      // Embeddings on but nothing embedded yet (e.g. legacy rows) — fall through.
+    }
+  }
+  return keywordMemorySearch(query, limit);
 }
 
 // ─── Safe arithmetic ─────────────────────────────────────────────────────────
@@ -611,45 +665,42 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
     run: async (args, ctx) => {
       const content = String(args["content"] ?? "").trim();
       if (!content) return "error: content is required.";
+      const key = args["key"] != null ? String(args["key"]).slice(0, 200) : null;
+      const stored = content.slice(0, 8000);
+      // Embed the content (key + content) for semantic retrieval. Best-effort:
+      // if embeddings aren't configured or fail, we store null and search falls
+      // back to keyword matching.
+      const vector = await embed(key ? `${key}\n${stored}` : stored);
       const [row] = await db
         .insert(agentMemoryTable)
         .values({
           agentId: ctx.agentId,
           agentName: ctx.agentName,
-          key: args["key"] != null ? String(args["key"]).slice(0, 200) : null,
-          content: content.slice(0, 8000),
+          key,
+          content: stored,
           tags: args["tags"] != null ? String(args["tags"]).slice(0, 300) : null,
+          embedding: vector ? JSON.stringify(vector) : null,
         })
         .returning();
-      return `stored memory #${row?.id ?? "?"}.`;
+      return `stored memory #${row?.id ?? "?"}${vector ? " (semantic)" : ""}.`;
     },
   },
 
   memory_search: {
     name: "memory_search",
     description:
-      "Search the swarm's shared long-term memory by keyword. Returns the most relevant stored entries.",
+      "Search the swarm's shared long-term memory. Uses real semantic (vector) similarity when an embeddings provider is configured, otherwise keyword matching. Returns the most relevant stored entries.",
     parameters: {
       type: "object",
       properties: {
-        query: { type: "string", description: "Keyword(s) to search stored memory for." },
+        query: { type: "string", description: "What to retrieve from stored memory (natural language or keywords)." },
       },
       required: ["query"],
     },
     run: async (args) => {
       const query = String(args["query"] ?? "").trim();
       if (!query) return "error: query is required.";
-      const like = `%${query}%`;
-      const rows = await db
-        .select()
-        .from(agentMemoryTable)
-        .where(or(ilike(agentMemoryTable.content, like), ilike(agentMemoryTable.key, like), ilike(agentMemoryTable.tags, like)))
-        .orderBy(desc(agentMemoryTable.createdAt))
-        .limit(5);
-      if (!rows.length) return `no memory entries matched "${query}".`;
-      return rows
-        .map((m) => `#${m.id} [${m.agentName ?? "?"}${m.key ? ` · ${m.key}` : ""}] ${clip(m.content, 600)}`)
-        .join("\n---\n");
+      return memorySearch(query, 5);
     },
   },
 

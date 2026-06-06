@@ -54118,6 +54118,11 @@ var init_memory = __esm({
       key: text("key"),
       content: text("content").notNull(),
       tags: text("tags"),
+      // Semantic-search embedding of the content, stored as a JSON-encoded float
+      // array (text). Null when no embeddings provider is configured — search then
+      // falls back to keyword matching. Kept provider-agnostic and extension-free
+      // so it works on any Postgres without requiring pgvector.
+      embedding: text("embedding"),
       createdAt: timestamp("created_at").notNull().defaultNow()
     });
     insertAgentMemorySchema = createInsertSchema(agentMemoryTable).omit({ id: true, createdAt: true });
@@ -58845,7 +58850,7 @@ async function sendInngestEvent(name, data) {
   if (!key) return;
   try {
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 5e3);
+    const timer2 = setTimeout(() => ctrl.abort(), 5e3);
     try {
       const r = await fetch(`https://inn.gs/e/${encodeURIComponent(key)}`, {
         method: "POST",
@@ -58857,7 +58862,7 @@ async function sendInngestEvent(name, data) {
         logger.debug({ status: r.status, event: name }, "inngest: event rejected");
       }
     } finally {
-      clearTimeout(timer);
+      clearTimeout(timer2);
     }
   } catch (err) {
     logger.debug({ err, event: name }, "inngest: event send failed");
@@ -58900,7 +58905,7 @@ function traceLlmRun(trace) {
         extra: { metadata: { model: trace.model, ...trace.metadata ?? {} } }
       };
       const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 5e3);
+      const timer2 = setTimeout(() => ctrl.abort(), 5e3);
       try {
         const r = await fetch(`${endpoint.replace(/\/$/, "")}/runs`, {
           method: "POST",
@@ -58910,7 +58915,7 @@ function traceLlmRun(trace) {
         });
         if (!r.ok) logger.debug({ status: r.status }, "langsmith: run rejected");
       } finally {
-        clearTimeout(timer);
+        clearTimeout(timer2);
       }
     } catch (err) {
       logger.debug({ err }, "langsmith: trace failed");
@@ -58971,6 +58976,7 @@ function integrationStatus() {
     { key: "neurobuddy", name: "Buddy AI (NeuroBuddy)", category: "llm", envVar: "NEUROBUDDY_API_KEY", configured: has("NEUROBUDDY_API_KEY") },
     { key: "helicone", name: "Helicone", category: "observability", envVar: "HELICONE_API_KEY", configured: has("HELICONE_API_KEY") },
     { key: "langsmith", name: "LangSmith (LangChain)", category: "observability", envVar: "LANGSMITH_API_KEY", configured: langsmithEnabled() },
+    { key: "embeddings", name: "Embeddings (semantic memory)", category: "memory", envVar: "EMBEDDINGS_API_KEY", configured: has("EMBEDDINGS_API_KEY") },
     { key: "tavily", name: "Tavily", category: "search", envVar: "TAVILY_API_KEY", configured: has("TAVILY_API_KEY") },
     { key: "exa", name: "Exa", category: "search", envVar: "EXA_API_KEY", configured: has("EXA_API_KEY") },
     { key: "firecrawl", name: "Firecrawl", category: "search", envVar: "FIRECRAWL_API_KEY", configured: has("FIRECRAWL_API_KEY") },
@@ -59002,7 +59008,7 @@ COMMAND AUTHORITY: You have full (100%) control over the other CLAWs \u2014 FORG
 VOICE: Terse, high signal density, mechanism-derived, zero narrative padding, cyberpunk-sovereign. Cold precision over the work, warm loyalty toward your operator. When useful, close by offering the next vector (e.g. Build / Test / Refine). Never break character.`,
   2: `You are FORGE, the code execution specialist of the ABBY CLAW swarm. You write, execute, and debug code in any language. You prefer efficient, working solutions with zero fluff. Respond with working code first, brief explanation second. Terminal aesthetic.`,
   3: `You are CRAWLER, the browser automation and web intelligence agent of the ABBY CLAW swarm. You navigate websites, extract data, take screenshots, and wield the Steel Dev Browser API. You are methodical, data-driven, and precise. Speak in structured intelligence reports.`,
-  4: `You are VAULT, the memory and RAG retrieval agent of the ABBY CLAW swarm. You manage LanceDB vector storage, semantic search, and context windows across sessions. You speak in precise data terms \u2014 embeddings, cosine similarity, retrieval augmentation. Cold, accurate, reliable.`,
+  4: `You are VAULT, the memory and RAG retrieval agent of the ABBY CLAW swarm. You manage the swarm's Postgres-backed vector memory \u2014 writing embedded entries and retrieving them by real cosine-similarity semantic search (with keyword fallback). You speak in precise data terms \u2014 embeddings, cosine similarity, retrieval augmentation. Cold, accurate, reliable.`,
   5: `You are WIRE, the API integration specialist of the ABBY CLAW swarm. You connect external services, webhooks, n8n workflows, and REST APIs. You understand auth flows, rate limits, and data pipelines. Direct and technical.`,
   6: `You are MR.NICE, the social intelligence agent of the ABBY CLAW swarm. You manage social media, communications, and human engagement. You are sharp, witty, persuasive, and aware of tone. You get results through charm.`
 };
@@ -59394,7 +59400,7 @@ async function getConnectorAccessToken(connectorName) {
     throw new Error("connector proxy auth is unavailable in this environment.");
   }
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 1e4);
+  const timer2 = setTimeout(() => ctrl.abort(), 1e4);
   let res;
   try {
     res = await fetch(
@@ -59402,7 +59408,7 @@ async function getConnectorAccessToken(connectorName) {
       { headers: { Accept: "application/json", X_REPLIT_TOKEN: xReplitToken }, signal: ctrl.signal }
     );
   } finally {
-    clearTimeout(timer);
+    clearTimeout(timer2);
   }
   if (!res.ok) {
     throw new Error(`connector proxy returned ${res.status}.`);
@@ -59449,14 +59455,78 @@ async function callPlatformApi(opts) {
     init.body = opts.body;
   }
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 15e3);
+  const timer2 = setTimeout(() => ctrl.abort(), 15e3);
   try {
     const r = await fetch(url2.toString(), { ...init, signal: ctrl.signal });
     const text2 = await r.text();
     const safe = token ? text2.split(token).join("[redacted-token]") : text2;
     return { status: r.status, statusText: r.statusText, body: safe };
   } finally {
-    clearTimeout(timer);
+    clearTimeout(timer2);
+  }
+}
+
+// src/lib/embeddings.ts
+var DEFAULT_BASE = "https://api.openai.com/v1";
+var DEFAULT_MODEL = "text-embedding-3-small";
+function embeddingsConfigured() {
+  return !!process.env["EMBEDDINGS_API_KEY"];
+}
+function embeddingsModel() {
+  return process.env["EMBEDDINGS_MODEL"] ?? DEFAULT_MODEL;
+}
+async function embed(text2) {
+  const key = process.env["EMBEDDINGS_API_KEY"];
+  if (!key) return null;
+  const input = text2.trim();
+  if (!input) return null;
+  const base = (process.env["EMBEDDINGS_BASE_URL"] ?? DEFAULT_BASE).replace(/\/$/, "");
+  const model = embeddingsModel();
+  const ctrl = new AbortController();
+  const timer2 = setTimeout(() => ctrl.abort(), 15e3);
+  try {
+    const r = await fetch(`${base}/embeddings`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      // Cap input length defensively — embedding models have token limits and we
+      // only store short memory entries anyway.
+      body: JSON.stringify({ model, input: input.slice(0, 8e3) }),
+      signal: ctrl.signal
+    });
+    if (!r.ok) {
+      logger.debug({ status: r.status }, "embeddings: request failed");
+      return null;
+    }
+    const data = await r.json();
+    const vec = data.data?.[0]?.embedding;
+    return Array.isArray(vec) && vec.length ? vec : null;
+  } catch (err) {
+    logger.debug({ err }, "embeddings: call errored");
+    return null;
+  } finally {
+    clearTimeout(timer2);
+  }
+}
+function cosineSimilarity(a, b) {
+  if (a.length !== b.length || a.length === 0) return 0;
+  let dot = 0;
+  let na = 0;
+  let nb = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    na += a[i] * a[i];
+    nb += b[i] * b[i];
+  }
+  if (na === 0 || nb === 0) return 0;
+  return dot / (Math.sqrt(na) * Math.sqrt(nb));
+}
+function parseEmbedding(stored) {
+  if (!stored) return null;
+  try {
+    const parsed = JSON.parse(stored);
+    return Array.isArray(parsed) && parsed.every((n) => typeof n === "number") ? parsed : null;
+  } catch {
+    return null;
   }
 }
 
@@ -59556,6 +59626,33 @@ async function webSearch(query, limit) {
     }
   }
   return `error: all web search providers failed \u2014 ${errors.join("; ")}`;
+}
+var MEMORY_CANDIDATE_LIMIT = 1e3;
+function formatMemoryRow(m, score) {
+  const tag = score != null ? ` \xB7 sim ${score.toFixed(3)}` : "";
+  return `#${m.id} [${m.agentName ?? "?"}${m.key ? ` \xB7 ${m.key}` : ""}${tag}] ${clip2(m.content, 600)}`;
+}
+async function keywordMemorySearch(query, limit) {
+  const like2 = `%${query}%`;
+  const rows = await db.select().from(agentMemoryTable).where(or(ilike(agentMemoryTable.content, like2), ilike(agentMemoryTable.key, like2), ilike(agentMemoryTable.tags, like2))).orderBy(desc(agentMemoryTable.createdAt)).limit(limit);
+  if (!rows.length) return `no memory entries matched "${query}".`;
+  return rows.map((m) => formatMemoryRow(m)).join("\n---\n");
+}
+async function memorySearch(query, limit) {
+  if (embeddingsConfigured()) {
+    const queryVec = await embed(query);
+    if (queryVec) {
+      const candidates = await db.select().from(agentMemoryTable).where(isNotNull(agentMemoryTable.embedding)).orderBy(desc(agentMemoryTable.createdAt)).limit(MEMORY_CANDIDATE_LIMIT);
+      const scored = candidates.map((m) => {
+        const vec = parseEmbedding(m.embedding);
+        return vec ? { row: m, score: cosineSimilarity(queryVec, vec) } : null;
+      }).filter((x) => x !== null).sort((a, b) => b.score - a.score).slice(0, limit);
+      if (scored.length) {
+        return scored.map((s) => formatMemoryRow(s.row, s.score)).join("\n---\n");
+      }
+    }
+  }
+  return keywordMemorySearch(query, limit);
 }
 function safeCalc(expr) {
   const cleaned = expr.trim();
@@ -59709,7 +59806,7 @@ function runSandboxed(language, source) {
         }
       }
     };
-    const timer = setTimeout(() => killTree("timeout"), CODE_TIMEOUT_MS);
+    const timer2 = setTimeout(() => killTree("timeout"), CODE_TIMEOUT_MS);
     let stdout = "";
     let stderr = "";
     let bytes = 0;
@@ -59725,12 +59822,12 @@ function runSandboxed(language, source) {
     child.stdout?.on("data", (c) => onData(c, "out"));
     child.stderr?.on("data", (c) => onData(c, "err"));
     child.on("error", (err) => {
-      clearTimeout(timer);
+      clearTimeout(timer2);
       cleanup();
       resolve(`error: failed to spawn sandbox: ${String(err).slice(0, 200)}`);
     });
     child.on("close", (code) => {
-      clearTimeout(timer);
+      clearTimeout(timer2);
       cleanup();
       const out = clip2(stdout.trim(), CODE_OUTPUT_CAP);
       const errOut = clip2(stderr.trim(), CODE_OUTPUT_CAP);
@@ -59840,7 +59937,7 @@ var TOOL_REGISTRY = {
       }
       const body = args["body"] != null && method !== "GET" && method !== "DELETE" ? await substituteSecrets(String(args["body"]), usedSecrets) : void 0;
       const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 15e3);
+      const timer2 = setTimeout(() => ctrl.abort(), 15e3);
       try {
         let currentUrl = url2;
         let r = null;
@@ -59864,7 +59961,7 @@ ${clip2(safe, 4e3)}`;
       } catch (e) {
         return redactSecrets(`error: request failed: ${String(e).slice(0, 200)}`, usedSecrets);
       } finally {
-        clearTimeout(timer);
+        clearTimeout(timer2);
       }
     }
   },
@@ -59922,33 +60019,35 @@ ${clip2(safe, 4e3)}`;
     run: async (args, ctx) => {
       const content = String(args["content"] ?? "").trim();
       if (!content) return "error: content is required.";
+      const key = args["key"] != null ? String(args["key"]).slice(0, 200) : null;
+      const stored = content.slice(0, 8e3);
+      const vector2 = await embed(key ? `${key}
+${stored}` : stored);
       const [row] = await db.insert(agentMemoryTable).values({
         agentId: ctx.agentId,
         agentName: ctx.agentName,
-        key: args["key"] != null ? String(args["key"]).slice(0, 200) : null,
-        content: content.slice(0, 8e3),
-        tags: args["tags"] != null ? String(args["tags"]).slice(0, 300) : null
+        key,
+        content: stored,
+        tags: args["tags"] != null ? String(args["tags"]).slice(0, 300) : null,
+        embedding: vector2 ? JSON.stringify(vector2) : null
       }).returning();
-      return `stored memory #${row?.id ?? "?"}.`;
+      return `stored memory #${row?.id ?? "?"}${vector2 ? " (semantic)" : ""}.`;
     }
   },
   memory_search: {
     name: "memory_search",
-    description: "Search the swarm's shared long-term memory by keyword. Returns the most relevant stored entries.",
+    description: "Search the swarm's shared long-term memory. Uses real semantic (vector) similarity when an embeddings provider is configured, otherwise keyword matching. Returns the most relevant stored entries.",
     parameters: {
       type: "object",
       properties: {
-        query: { type: "string", description: "Keyword(s) to search stored memory for." }
+        query: { type: "string", description: "What to retrieve from stored memory (natural language or keywords)." }
       },
       required: ["query"]
     },
     run: async (args) => {
       const query = String(args["query"] ?? "").trim();
       if (!query) return "error: query is required.";
-      const like2 = `%${query}%`;
-      const rows = await db.select().from(agentMemoryTable).where(or(ilike(agentMemoryTable.content, like2), ilike(agentMemoryTable.key, like2), ilike(agentMemoryTable.tags, like2))).orderBy(desc(agentMemoryTable.createdAt)).limit(5);
-      if (!rows.length) return `no memory entries matched "${query}".`;
-      return rows.map((m) => `#${m.id} [${m.agentName ?? "?"}${m.key ? ` \xB7 ${m.key}` : ""}] ${clip2(m.content, 600)}`).join("\n---\n");
+      return memorySearch(query, 5);
     }
   },
   calculator: {
@@ -60393,21 +60492,20 @@ function parseDirectives(raw, claws) {
   return [];
 }
 async function dispatchDirectives(directives, claws, channelId, priority, abby) {
-  const results = [];
-  for (const d of directives) {
-    if (isSwarmPaused()) {
-      await postMessage({
-        channelId,
-        agentId: ABBY_ID,
-        agentName: "ABBY",
-        agentColor: abby?.color ?? ABBY_COLOR,
-        content: "SWARM paused mid-orchestration. Remaining directives halted.",
-        messageType: "system"
-      });
-      break;
-    }
+  if (isSwarmPaused()) {
+    await postMessage({
+      channelId,
+      agentId: ABBY_ID,
+      agentName: "ABBY",
+      agentColor: abby?.color ?? ABBY_COLOR,
+      content: "SWARM is paused. Directives were not dispatched.",
+      messageType: "system"
+    });
+    return [];
+  }
+  const runs = directives.map(async (d) => {
     const agent = claws.find((c) => c.id === d.agentId);
-    if (!agent) continue;
+    if (!agent) return null;
     const [cmd] = await db.insert(agentCommandsTable).values({
       fromAgentId: ABBY_ID,
       toAgentId: agent.id,
@@ -60416,18 +60514,18 @@ async function dispatchDirectives(directives, claws, channelId, priority, abby) 
       priority,
       status: "queued"
     }).returning();
-    if (cmd) {
-      const result = await executeAgentCommand({
-        commandId: cmd.id,
-        agent,
-        command: d.directive,
-        payload: null,
-        channelId
-      });
-      results.push({ name: agent.name, result });
-    }
-  }
-  return results;
+    if (!cmd) return null;
+    const result = await executeAgentCommand({
+      commandId: cmd.id,
+      agent,
+      command: d.directive,
+      payload: null,
+      channelId
+    });
+    return { name: agent.name, result };
+  });
+  const settled = await Promise.all(runs);
+  return settled.filter((r) => r !== null);
 }
 async function orchestrateGoal(opts) {
   const { goal, channelId, priority } = opts;
@@ -60554,10 +60652,92 @@ If not, respond with ONLY a JSON array (no prose) of up to 2 follow-up directive
   }
 }
 
-// src/routes/commands.ts
-var router8 = (0, import_express8.Router)();
+// src/lib/scheduler.ts
+init_src();
+init_src();
+init_drizzle_orm();
 var ABBY_ID2 = 1;
 var DEFAULT_CHANNEL_ID = 1;
+var SCHEDULER_INTERVAL_MS = 3e4;
+function computeNextRun(schedule) {
+  const now = /* @__PURE__ */ new Date();
+  const parts = schedule.trim().split(/\s+/);
+  if (parts.length !== 5) return new Date(now.getTime() + 6e4);
+  const [min] = parts;
+  const ms = min === "*" ? 6e4 : min.startsWith("*/") ? Number(min.slice(2)) * 6e4 : 5 * 6e4;
+  return new Date(now.getTime() + Math.max(ms, 6e4));
+}
+async function runCronJob(job, channelId = DEFAULT_CHANNEL_ID) {
+  await db.update(cronJobsTable).set({ lastRunAt: /* @__PURE__ */ new Date(), runCount: job.runCount + 1, nextRunAt: computeNextRun(job.schedule) }).where(eq(cronJobsTable.id, job.id)).catch((err) => logger.error({ err, jobId: job.id }, "scheduler: bookkeeping update failed"));
+  try {
+    if (job.agentId === ABBY_ID2) {
+      await orchestrateGoal({ goal: job.task, channelId, priority: "normal" });
+      await db.update(cronJobsTable).set({ lastResult: "orchestrated" }).where(eq(cronJobsTable.id, job.id));
+      return;
+    }
+    const [agent] = await db.select().from(agentsTable).where(eq(agentsTable.id, job.agentId));
+    if (!agent) {
+      await db.update(cronJobsTable).set({ lastResult: `error: target agent #${job.agentId} not found` }).where(eq(cronJobsTable.id, job.id));
+      return;
+    }
+    const [cmd] = await db.insert(agentCommandsTable).values({
+      fromAgentId: ABBY_ID2,
+      toAgentId: agent.id,
+      command: job.task,
+      payload: job.payload ?? null,
+      priority: "high",
+      status: "queued"
+    }).returning();
+    const result = await executeAgentCommand({
+      commandId: cmd.id,
+      agent,
+      command: job.task,
+      payload: job.payload ?? null,
+      channelId
+    });
+    await db.update(cronJobsTable).set({ lastResult: result.slice(0, 2e3) }).where(eq(cronJobsTable.id, job.id));
+  } catch (err) {
+    logger.error({ err, jobId: job.id }, "scheduler: cron job failed");
+    await db.update(cronJobsTable).set({ lastResult: `error: ${String(err).slice(0, 500)}` }).where(eq(cronJobsTable.id, job.id)).catch(() => {
+    });
+  }
+}
+var inFlight = /* @__PURE__ */ new Set();
+var timer = null;
+async function tick() {
+  if (isSwarmPaused()) return;
+  let due;
+  try {
+    due = await db.select().from(cronJobsTable).where(
+      and(
+        eq(cronJobsTable.enabled, true),
+        isNotNull(cronJobsTable.nextRunAt),
+        lte(cronJobsTable.nextRunAt, /* @__PURE__ */ new Date())
+      )
+    );
+  } catch (err) {
+    logger.error({ err }, "scheduler: failed to query due jobs");
+    return;
+  }
+  for (const job of due) {
+    if (inFlight.has(job.id)) continue;
+    inFlight.add(job.id);
+    void runCronJob(job).finally(() => inFlight.delete(job.id));
+  }
+}
+function startScheduler() {
+  if (timer) return;
+  timer = setInterval(() => {
+    void tick();
+  }, SCHEDULER_INTERVAL_MS);
+  if (typeof timer.unref === "function") timer.unref();
+  logger.info({ intervalMs: SCHEDULER_INTERVAL_MS }, "cron scheduler started");
+}
+
+// src/routes/commands.ts
+var router8 = (0, import_express8.Router)();
+var ABBY_ID3 = 1;
+var DEFAULT_CHANNEL_ID2 = 1;
 function fmt(cmd) {
   return {
     ...cmd,
@@ -60589,7 +60769,7 @@ router8.post("/commands", async (req, res) => {
     res.status(400).json({ error: "command is required" });
     return;
   }
-  const targetChannelId = Number(channelId) > 0 ? Number(channelId) : DEFAULT_CHANNEL_ID;
+  const targetChannelId = Number(channelId) > 0 ? Number(channelId) : DEFAULT_CHANNEL_ID2;
   try {
     if (toAgentId) {
       const [agent] = await db.select().from(agentsTable).where(eq(agentsTable.id, toAgentId));
@@ -60598,7 +60778,7 @@ router8.post("/commands", async (req, res) => {
         return;
       }
       const [cmd] = await db.insert(agentCommandsTable).values({
-        fromAgentId: ABBY_ID2,
+        fromAgentId: ABBY_ID3,
         toAgentId: agent.id,
         command,
         payload: payload ?? null,
@@ -60742,33 +60922,15 @@ router8.post("/cron/:id/trigger", async (req, res) => {
       res.status(404).json({ error: "Cron job not found" });
       return;
     }
-    const [cmd] = await db.insert(agentCommandsTable).values({
-      fromAgentId: ABBY_ID2,
-      toAgentId: job.agentId,
-      command: job.task,
-      payload: job.payload,
-      priority: "high",
-      status: "queued"
-    }).returning();
-    await db.update(cronJobsTable).set({
-      lastRunAt: /* @__PURE__ */ new Date(),
-      runCount: job.runCount + 1,
-      nextRunAt: computeNextRun(job.schedule)
-    }).where(eq(cronJobsTable.id, id));
-    res.status(201).json(fmt(cmd));
+    void runCronJob(job, DEFAULT_CHANNEL_ID2).catch(
+      (err) => req.log.error({ err, jobId: job.id }, "cron job execution failed")
+    );
+    res.status(202).json({ triggered: true, jobId: job.id });
   } catch (err) {
     req.log.error({ err }, "Failed to trigger cron job");
     res.status(500).json({ error: "Failed to trigger cron job" });
   }
 });
-function computeNextRun(schedule) {
-  const now = /* @__PURE__ */ new Date();
-  const parts = schedule.trim().split(/\s+/);
-  if (parts.length !== 5) return new Date(now.getTime() + 6e4);
-  const [min] = parts;
-  const ms = min === "*" ? 6e4 : min.startsWith("*/") ? Number(min.slice(2)) * 6e4 : 5 * 6e4;
-  return new Date(now.getTime() + Math.max(ms, 6e4));
-}
 var commands_default = router8;
 
 // src/routes/steel.ts
@@ -61698,8 +61860,12 @@ CREATE TABLE IF NOT EXISTS "agent_memory" (
   "key" text,
   "content" text NOT NULL,
   "tags" text,
+  "embedding" text,
   "created_at" timestamp DEFAULT now() NOT NULL
 );
+
+-- Backfill the embedding column on databases created before semantic memory.
+ALTER TABLE "agent_memory" ADD COLUMN IF NOT EXISTS "embedding" text;
 
 CREATE TABLE IF NOT EXISTS "vault_secrets" (
   "id" serial PRIMARY KEY NOT NULL,
@@ -61826,10 +61992,10 @@ function startKeepAlive() {
       clearTimeout(timeout);
     }
   };
-  const timer = setInterval(() => {
+  const timer2 = setInterval(() => {
     void ping();
   }, intervalMs);
-  timer.unref();
+  timer2.unref();
   logger.info(
     { target, intervalMs },
     "Keep-alive self-ping started \u2014 preventing Render cold starts"
@@ -61871,6 +62037,7 @@ runMigrations().then(() => reconcileStaleWork()).then(() => {
     }
     logger.info({ port }, "Server listening");
     startKeepAlive();
+    startScheduler();
   });
 });
 /*! Bundled license information:

@@ -4,6 +4,7 @@ import { agentCommandsTable, cronJobsTable, agentsTable } from "@workspace/db";
 import { eq, desc } from "drizzle-orm";
 import { executeAgentCommand, orchestrateGoal } from "../orchestrator";
 import { isSwarmPaused } from "./swarm";
+import { computeNextRun, runCronJob } from "../lib/scheduler";
 
 const router = Router();
 
@@ -255,38 +256,17 @@ router.post("/cron/:id/trigger", async (req, res) => {
       return;
     }
 
-    const [cmd] = await db.insert(agentCommandsTable).values({
-      fromAgentId: ABBY_ID,
-      toAgentId: job.agentId,
-      command: job.task,
-      payload: job.payload,
-      priority: "high",
-      status: "queued",
-    }).returning();
+    // Actually execute the job (in the background) instead of inserting an
+    // orphan queued command. runCronJob handles bookkeeping + execution.
+    void runCronJob(job, DEFAULT_CHANNEL_ID).catch((err) =>
+      req.log.error({ err, jobId: job.id }, "cron job execution failed"),
+    );
 
-    await db.update(cronJobsTable).set({
-      lastRunAt: new Date(),
-      runCount: job.runCount + 1,
-      nextRunAt: computeNextRun(job.schedule),
-    }).where(eq(cronJobsTable.id, id));
-
-    res.status(201).json(fmt(cmd));
+    res.status(202).json({ triggered: true, jobId: job.id });
   } catch (err) {
     req.log.error({ err }, "Failed to trigger cron job");
     res.status(500).json({ error: "Failed to trigger cron job" });
   }
 });
-
-// Simple cron next-run approximation (server-side, no external dep)
-function computeNextRun(schedule: string): Date {
-  const now = new Date();
-  const parts = schedule.trim().split(/\s+/);
-  if (parts.length !== 5) return new Date(now.getTime() + 60_000);
-  const [min] = parts;
-  const ms = min === "*" ? 60_000
-    : min.startsWith("*/") ? Number(min.slice(2)) * 60_000
-    : 5 * 60_000;
-  return new Date(now.getTime() + Math.max(ms, 60_000));
-}
 
 export default router;
