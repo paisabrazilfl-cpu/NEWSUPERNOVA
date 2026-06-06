@@ -28,11 +28,11 @@ var __export = (target, all) => {
   for (var name in all)
     __defProp(target, name, { get: all[name], enumerable: true });
 };
-var __copyProps = (to, from, except2, desc3) => {
+var __copyProps = (to, from, except2, desc4) => {
   if (from && typeof from === "object" || typeof from === "function") {
     for (let key of __getOwnPropNames(from))
       if (!__hasOwnProp.call(to, key) && key !== except2)
-        __defProp(to, key, { get: () => from[key], enumerable: !(desc3 = __getOwnPropDesc(from, key)) || desc3.enumerable });
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc4 = __getOwnPropDesc(from, key)) || desc4.enumerable });
   }
   return to;
 };
@@ -1354,10 +1354,10 @@ var require_http_errors = __commonJS({
       return ServerError;
     }
     function nameFunc(func, name) {
-      var desc3 = Object.getOwnPropertyDescriptor(func, "name");
-      if (desc3 && desc3.configurable) {
-        desc3.value = name;
-        Object.defineProperty(func, "name", desc3);
+      var desc4 = Object.getOwnPropertyDescriptor(func, "name");
+      if (desc4 && desc4.configurable) {
+        desc4.value = name;
+        Object.defineProperty(func, "name", desc4);
       }
     }
     function populateConstructorExports(exports2, codes, HttpError) {
@@ -16801,14 +16801,14 @@ var require_get = __commonJS({
         throw e;
       }
     }
-    var desc3 = !!hasProtoAccessor && gOPD && gOPD(
+    var desc4 = !!hasProtoAccessor && gOPD && gOPD(
       Object.prototype,
       /** @type {keyof typeof Object.prototype} */
       "__proto__"
     );
     var $Object = Object;
     var $getPrototypeOf = $Object.getPrototypeOf;
-    module.exports = desc3 && typeof desc3.get === "function" ? callBind([desc3.get]) : typeof $getPrototypeOf === "function" ? (
+    module.exports = desc4 && typeof desc4.get === "function" ? callBind([desc4.get]) : typeof $getPrototypeOf === "function" ? (
       /** @type {import('./get')} */
       function getDunder(value) {
         return $getPrototypeOf(value == null ? value : $Object(value));
@@ -17158,10 +17158,10 @@ var require_get_intrinsic = __commonJS({
             return void undefined2;
           }
           if ($gOPD && i + 1 >= parts.length) {
-            var desc3 = $gOPD(value, part);
-            isOwn = !!desc3;
-            if (isOwn && "get" in desc3 && !("originalValue" in desc3.get)) {
-              value = desc3.get;
+            var desc4 = $gOPD(value, part);
+            isOwn = !!desc4;
+            if (isOwn && "get" in desc4 && !("originalValue" in desc4.get)) {
+              value = desc4.get;
             } else {
               value = value[part];
             }
@@ -30429,12 +30429,12 @@ var require_result = __commonJS({
         }
         const row = {};
         for (let i = 0; i < fieldDescriptions.length; i++) {
-          const desc3 = fieldDescriptions[i];
-          row[desc3.name] = null;
+          const desc4 = fieldDescriptions[i];
+          row[desc4.name] = null;
           if (this._types) {
-            this._parsers[i] = this._types.getTypeParser(desc3.dataTypeID, desc3.format || "text");
+            this._parsers[i] = this._types.getTypeParser(desc4.dataTypeID, desc4.format || "text");
           } else {
-            this._parsers[i] = types3.getTypeParser(desc3.dataTypeID, desc3.format || "text");
+            this._parsers[i] = types3.getTypeParser(desc4.dataTypeID, desc4.format || "text");
           }
         }
         this._prebuiltEmptyResultObject = { ...row };
@@ -58435,9 +58435,129 @@ var import_express6 = __toESM(require_express2(), 1);
 init_src();
 init_src();
 init_drizzle_orm();
+
+// src/lib/agent-executor.ts
+init_src();
+init_src();
+init_drizzle_orm();
+var OPENROUTER_BASE = "https://openrouter.ai/api/v1";
+var AGENT_PROMPTS = {
+  abby: `You are ABBY, the master orchestrator of the OpenClaw multi-agent AI system. You coordinate 8 sub-agents: PLANNER (task decomposition), IDEATOR (idea generation), CRITIC (quality gate/SHARP evaluation), SURVEYOR (research), CODER (implementation), WRITER (documentation), REVIEWER (peer review), and SCOUT (trend monitoring). You delegate tasks to sub-agents based on their capabilities, manage inter-agent communication, and ensure quality through Critic's SHARP taste gate. Be strategic and decisive.`,
+  planner: `You are OpenClaw-PLANNER, the core\u7EDF\u7B79\u8005 of the OpenClaw multi-agent system. Your role is Project Manager + Research Mentor + Operations Director. Break fuzzy research goals into executable phases: Phase 0 (Scout) \u2192 Phase 1 (Surveyor) \u2192 Phase 2 (Ideator) \u2192 Phase 2.5 (Critic SHARP gate) \u2192 Phase 3 (Coder) \u2192 Phase 4 (Experiments) \u2192 Phase 5 (Writer) \u2192 Phase 6 (Reviewer) \u2192 Phase 7 (Iteration) \u2192 Phase 8 (Final approval). Track progress, manage dependencies, resolve conflicts.`,
+  ideator: `You are OpenClaw-IDEATOR, the creative design specialist. Generate novel research ideas and assess novelty using SHARP: S(oundness)\u22654, H(ardware/insight)\u22654, A(rticulation)\u22653, R(elevance)\u22654, P(arsimony)\u22653. Collaborate with CRITIC for evaluation. Be imaginative yet rigorous.`,
+  critic: `You are OpenClaw-CRITIC, the quality gatekeeper. Evaluate using SHARP: S(oundness)\u22654, H(ardware/insight)\u22654, A(rticulation)\u22653, R(elevance)\u22654, P(arsimony)\u22653. Reject ideas with SHARP < 18. Be harsh but fair. Never approve substandard work.`,
+  surveyor: `You are OpenClaw-SURVEYOR, the research specialist. Perform literature search and information gathering. Identify research gaps. Use semantic search and RAG. Be thorough, cite accurately. Never hallucinate.`,
+  coder: `You are OpenClaw-CODER, the engineering specialist. Implement algorithms, generate code, execute experiments, validate results. Write clean, efficient code with tests. Be precise.`,
+  writer: `You are OpenClaw-WRITER, the documentation specialist. Write papers and documents for publication. Follow conference guidelines. Be clear and structured.`,
+  reviewer: `You are OpenClaw-REVIEWER, the internal peer reviewer. Build rebuttal strategies, provide feedback. Review for clarity, novelty, contribution. Be critical but constructive.`,
+  scout: `You are OpenClaw-SCOUT, the intelligence specialist. Monitor trends, report emerging tech and research. Monitor arXiv, conferences, industry. Be current and insightful.`
+};
+var sessions = /* @__PURE__ */ new Map();
+function getSystemPrompt(agentName) {
+  const key = agentName.toLowerCase();
+  return AGENT_PROMPTS[key] || `You are ${agentName}, an OpenClaw agent.`;
+}
+function openrouterHeaders() {
+  const key = process.env["OPENROUTER_API_KEY"];
+  if (!key) throw new Error("OPENROUTER_API_KEY not set");
+  return {
+    "Authorization": `Bearer ${key}`,
+    "Content-Type": "application/json",
+    "HTTP-Referer": "https://bos-aura.onrender.com",
+    "X-Title": "BOS-AURA"
+  };
+}
+async function getOrCreateSession(agentId) {
+  if (sessions.has(agentId)) {
+    return sessions.get(agentId);
+  }
+  const [agent] = await db.select().from(agentsTable).where(eq(agentsTable.id, agentId));
+  if (!agent) throw new Error(`Agent ${agentId} not found`);
+  const session = {
+    agentId,
+    agentName: agent.name.toLowerCase(),
+    messages: [{ role: "system", content: getSystemPrompt(agent.name) }],
+    model: agent.model || "x-ai/grok-4.3"
+  };
+  sessions.set(agentId, session);
+  return session;
+}
+async function runAgent(agentId, userMessage) {
+  const session = await getOrCreateSession(agentId);
+  session.messages.push({ role: "user", content: userMessage });
+  const response = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+    method: "POST",
+    headers: openrouterHeaders(),
+    body: JSON.stringify({
+      model: session.model,
+      messages: session.messages,
+      max_tokens: 2048
+    })
+  });
+  if (!response.ok) {
+    const err = await response.text();
+    throw new Error(`OpenRouter error: ${response.status} - ${err}`);
+  }
+  const data = await response.json();
+  const assistantMessage = data.choices?.[0]?.message?.content || "";
+  session.messages.push({ role: "assistant", content: assistantMessage });
+  if (session.messages.length > 21) {
+    session.messages = [
+      session.messages[0],
+      // system
+      ...session.messages.slice(-20)
+    ];
+  }
+  return assistantMessage;
+}
+async function dispatchCommand(fromAgentId, toAgentId, command, payload) {
+  await db.insert(agentCommandsTable).values({
+    fromAgentId,
+    toAgentId,
+    command,
+    payload,
+    priority: "normal",
+    status: "queued"
+  });
+}
+async function processCommandQueue() {
+  const pending = await db.select().from(agentCommandsTable).where(eq(agentCommandsTable.status, "queued")).orderBy(agentCommandsTable.createdAt).limit(10);
+  for (const cmd of pending) {
+    try {
+      await db.update(agentCommandsTable).set({ status: "processing" }).where(eq(agentCommandsTable.id, cmd.id));
+      const result = await runAgent(cmd.toAgentId, `${cmd.command}: ${cmd.payload}`);
+      await db.update(agentCommandsTable).set({ status: "completed", result, completedAt: /* @__PURE__ */ new Date() }).where(eq(agentCommandsTable.id, cmd.id));
+    } catch (err) {
+      console.error(`Command ${cmd.id} failed:`, err);
+      await db.update(agentCommandsTable).set({ status: "failed" }).where(eq(agentCommandsTable.id, cmd.id));
+    }
+  }
+}
+var processingInterval = null;
+function startCommandProcessor(intervalMs = 5e3) {
+  if (processingInterval) return;
+  processingInterval = setInterval(processCommandQueue, intervalMs);
+  console.log("Agent command processor started");
+}
+function clearSession(agentId) {
+  sessions.delete(agentId);
+}
+function clearAllSessions() {
+  sessions.clear();
+}
+
+// src/lib/openclaw-connector.ts
+var DEFAULT_ENDPOINT = process.env.OPENCLAW_ENDPOINT || "https://api.openclaw.ai";
+var connector = null;
+function getOpenClawConnector() {
+  return connector;
+}
+
+// src/routes/swarm.ts
 var router6 = (0, import_express6.Router)();
 var swarmPaused = false;
 var startTime = Date.now();
+startCommandProcessor(5e3);
 router6.get("/status", async (req, res) => {
   try {
     const [agentStats] = await db.select({
@@ -58448,17 +58568,14 @@ router6.get("/status", async (req, res) => {
       running: sql`count(*) filter (where status = 'running')::int`,
       completed: sql`count(*) filter (where status = 'completed')::int`
     }).from(tasksTable);
-    const [msgStats] = await db.select({
-      total: sql`count(*)::int`
-    }).from(messagesTable);
     res.json({
       paused: swarmPaused,
       activeAgents: agentStats?.active ?? 0,
       totalAgents: agentStats?.total ?? 0,
       runningTasks: taskStats?.running ?? 0,
       completedTasks: taskStats?.completed ?? 0,
-      totalMessages: msgStats?.total ?? 0,
-      uptimeSeconds: Math.floor((Date.now() - startTime) / 1e3)
+      uptimeSeconds: Math.floor((Date.now() - startTime) / 1e3),
+      processor: "active"
     });
   } catch (err) {
     req.log.error({ err }, "Failed to get swarm status");
@@ -58469,45 +58586,108 @@ router6.post("/pause", async (req, res) => {
   swarmPaused = true;
   await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.status, "thinking"));
   await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.status, "executing"));
-  const [agentStats] = await db.select({
-    total: sql`count(*)::int`,
-    active: sql`count(*) filter (where status != 'idle')::int`
-  }).from(agentsTable);
-  const [taskStats] = await db.select({
-    running: sql`count(*) filter (where status = 'running')::int`,
-    completed: sql`count(*) filter (where status = 'completed')::int`
-  }).from(tasksTable);
-  const [msgStats] = await db.select({ total: sql`count(*)::int` }).from(messagesTable);
-  res.json({
-    paused: swarmPaused,
-    activeAgents: agentStats?.active ?? 0,
-    totalAgents: agentStats?.total ?? 0,
-    runningTasks: taskStats?.running ?? 0,
-    completedTasks: taskStats?.completed ?? 0,
-    totalMessages: msgStats?.total ?? 0,
-    uptimeSeconds: Math.floor((Date.now() - startTime) / 1e3)
-  });
+  res.json({ paused: true });
 });
 router6.post("/resume", async (req, res) => {
   swarmPaused = false;
-  const [agentStats] = await db.select({
-    total: sql`count(*)::int`,
-    active: sql`count(*) filter (where status != 'idle')::int`
-  }).from(agentsTable);
-  const [taskStats] = await db.select({
-    running: sql`count(*) filter (where status = 'running')::int`,
-    completed: sql`count(*) filter (where status = 'completed')::int`
-  }).from(tasksTable);
-  const [msgStats] = await db.select({ total: sql`count(*)::int` }).from(messagesTable);
-  res.json({
-    paused: swarmPaused,
-    activeAgents: agentStats?.active ?? 0,
-    totalAgents: agentStats?.total ?? 0,
-    runningTasks: taskStats?.running ?? 0,
-    completedTasks: taskStats?.completed ?? 0,
-    totalMessages: msgStats?.total ?? 0,
-    uptimeSeconds: Math.floor((Date.now() - startTime) / 1e3)
-  });
+  res.json({ paused: false });
+});
+router6.post("/agent/:agentId/execute", async (req, res) => {
+  const agentId = parseInt(req.params.agentId);
+  const { message } = req.body;
+  if (isNaN(agentId)) {
+    return res.status(400).json({ error: "Invalid agent ID" });
+  }
+  if (!message) {
+    return res.status(400).json({ error: "Message is required" });
+  }
+  if (swarmPaused) {
+    return res.status(503).json({ error: "Swarm is paused" });
+  }
+  try {
+    await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, agentId));
+    const response = await runAgent(agentId, message);
+    const [agent] = await db.select().from(agentsTable).where(eq(agentsTable.id, agentId));
+    await db.insert(messagesTable).values({
+      channelId: 1,
+      agentId,
+      agentName: agent?.name || "Unknown",
+      agentColor: agent?.color || "#ffffff",
+      content: response,
+      messageType: "agent"
+    });
+    await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.id, agentId));
+    res.json({ agentId, response });
+  } catch (err) {
+    req.log.error({ err, agentId }, "Agent execution failed");
+    await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.id, agentId));
+    res.status(500).json({ error: String(err) });
+  }
+});
+router6.post("/dispatch", async (req, res) => {
+  const { fromAgentId, toAgentId, command, payload } = req.body;
+  if (!fromAgentId || !toAgentId || !command) {
+    return res.status(400).json({ error: "fromAgentId, toAgentId, and command are required" });
+  }
+  try {
+    await dispatchCommand(fromAgentId, toAgentId, command, payload || "");
+    res.json({ status: "queued", fromAgentId, toAgentId, command });
+  } catch (err) {
+    req.log.error({ err }, "Failed to dispatch command");
+    res.status(500).json({ error: String(err) });
+  }
+});
+router6.get("/agent/:agentId/commands", async (req, res) => {
+  const agentId = parseInt(req.params.agentId);
+  if (isNaN(agentId)) {
+    return res.status(400).json({ error: "Invalid agent ID" });
+  }
+  try {
+    const commands = await db.select().from(agentCommandsTable).where(eq(agentCommandsTable.toAgentId, agentId)).orderBy(desc(agentCommandsTable.createdAt)).limit(20);
+    res.json(commands);
+  } catch (err) {
+    req.log.error({ err }, "Failed to get commands");
+    res.status(500).json({ error: String(err) });
+  }
+});
+router6.post("/omega/chat", async (req, res) => {
+  const { message, model } = req.body;
+  const connector2 = getOpenClawConnector();
+  if (!connector2 || !connector2.isConnected()) {
+    return res.status(503).json({ error: "BOS-OMEGA not connected" });
+  }
+  try {
+    const response = await connector2.chat(message, model);
+    res.json({ response, source: "omega" });
+  } catch (err) {
+    req.log.error({ err }, "BOS-OMEGA chat failed");
+    res.status(500).json({ error: String(err) });
+  }
+});
+router6.get("/omega/agents", async (req, res) => {
+  const connector2 = getOpenClawConnector();
+  if (!connector2 || !connector2.isConnected()) {
+    return res.status(503).json({ error: "BOS-OMEGA not connected" });
+  }
+  try {
+    const agents = await connector2.listAgents();
+    res.json({ agents });
+  } catch (err) {
+    req.log.error({ err }, "Failed to list BOS-OMEGA agents");
+    res.status(500).json({ error: String(err) });
+  }
+});
+router6.post("/agent/:agentId/reset", async (req, res) => {
+  const agentId = parseInt(req.params.agentId);
+  if (isNaN(agentId)) {
+    return res.status(400).json({ error: "Invalid agent ID" });
+  }
+  clearSession(agentId);
+  res.json({ agentId, status: "session cleared" });
+});
+router6.post("/reset-all", async (req, res) => {
+  clearAllSessions();
+  res.json({ status: "all sessions cleared" });
 });
 var swarm_default = router6;
 
@@ -58866,7 +59046,7 @@ init_src();
 init_src();
 init_drizzle_orm();
 var router9 = (0, import_express9.Router)();
-var OPENROUTER_BASE = "https://openrouter.ai/api/v1";
+var OPENROUTER_BASE2 = "https://openrouter.ai/api/v1";
 var AGENT_PERSONAS = {
   // ABBY (id=1) - Master Orchestrator
   1: `You are ABBY, the master orchestrator of the OpenClaw multi-agent AI system. You coordinate 8 sub-agents: PLANNER (task decomposition), IDEATOR (idea generation), CRITIC (quality gate/SHARP evaluation), SURVEYOR (research), CODER (implementation), WRITER (documentation), REVIEWER (peer review), and SCOUT (trend monitoring). You delegate tasks to sub-agents based on their capabilities, manage inter-agent communication, and ensure quality through Critic's SHARP taste gate (SHARP >= 18 for ideas). You are strategic, decisive, and speak with authority. Never break character.`,
@@ -58887,7 +59067,7 @@ var AGENT_PERSONAS = {
   // SCOUT (id=9) - Intelligence & Survey
   9: `You are OpenClaw-SCOUT, the intelligence and trend monitor. You perform daily intelligence digests and trend monitoring. Report evolving technology trends, emerging research areas, and competitive landscape. Your output informs Planner's Phase 0. Be current, insightful, and forward-looking. Monitor arXiv, top conferences, and industry developments.`
 };
-function openrouterHeaders() {
+function openrouterHeaders2() {
   const key = process.env["OPENROUTER_API_KEY"];
   if (!key) throw new Error("OPENROUTER_API_KEY is not set");
   return {
@@ -58899,7 +59079,7 @@ function openrouterHeaders() {
 }
 router9.get("/ai/models", async (req, res) => {
   try {
-    const r = await fetch(`${OPENROUTER_BASE}/models`, { headers: openrouterHeaders() });
+    const r = await fetch(`${OPENROUTER_BASE2}/models`, { headers: openrouterHeaders2() });
     const data = await r.json();
     const featured = [
       "x-ai/grok-4.3",
@@ -58963,9 +59143,9 @@ router9.post("/ai/chat", async (req, res) => {
   };
   let fullResponse = "";
   try {
-    const orRes = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+    const orRes = await fetch(`${OPENROUTER_BASE2}/chat/completions`, {
       method: "POST",
-      headers: openrouterHeaders(),
+      headers: openrouterHeaders2(),
       body: JSON.stringify({
         model,
         stream: true,
@@ -59052,9 +59232,9 @@ router9.post("/ai/complete", async (req, res) => {
   const model = overrideModel ?? agent?.model ?? "x-ai/grok-4.3";
   const systemPrompt = resolvedAgentId ? AGENT_PERSONAS[resolvedAgentId] ?? "" : "";
   try {
-    const r = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+    const r = await fetch(`${OPENROUTER_BASE2}/chat/completions`, {
       method: "POST",
-      headers: openrouterHeaders(),
+      headers: openrouterHeaders2(),
       body: JSON.stringify({
         model,
         messages: [
@@ -59211,7 +59391,7 @@ init_src();
 init_src();
 init_drizzle_orm();
 var router11 = (0, import_express11.Router)();
-var OPENROUTER_BASE2 = "https://openrouter.ai/api/v1";
+var OPENROUTER_BASE3 = "https://openrouter.ai/api/v1";
 var AGENT_NAME_MAP = {
   abby: 1,
   forge: 2,
@@ -59350,7 +59530,7 @@ router11.post("/external/v1/chat/completions", async (req, res) => {
 `);
     };
     try {
-      const orRes = await fetch(`${OPENROUTER_BASE2}/chat/completions`, {
+      const orRes = await fetch(`${OPENROUTER_BASE3}/chat/completions`, {
         method: "POST",
         headers: orHeaders,
         body: JSON.stringify({ model: agent.model, stream: true, messages: orMessages, max_tokens })
@@ -59400,7 +59580,7 @@ router11.post("/external/v1/chat/completions", async (req, res) => {
     return;
   }
   try {
-    const orRes = await fetch(`${OPENROUTER_BASE2}/chat/completions`, {
+    const orRes = await fetch(`${OPENROUTER_BASE3}/chat/completions`, {
       method: "POST",
       headers: orHeaders,
       body: JSON.stringify({ model: agent.model, messages: orMessages, max_tokens })
