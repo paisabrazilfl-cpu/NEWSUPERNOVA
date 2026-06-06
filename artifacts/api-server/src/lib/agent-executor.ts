@@ -28,6 +28,7 @@ import {
 import { eq } from "drizzle-orm";
 import { registry, type ToolContext, type ToolResult } from "./tool-catalog.js";
 import { resolveProvider, chatTurn, type ChatMessage } from "./model-router.js";
+import * as mem from "./memory-store.js";
 
 const MAX_TOOL_ITERATIONS = 8;
 const MAX_DELEGATION_ROUNDS = 4;
@@ -155,6 +156,19 @@ async function delegationHandler(args: Record<string, unknown>, _ctx: ToolContex
 }
 registry.register("delegate_to_agent", delegationHandler);
 registry.register("agent_send", delegationHandler);
+
+// ── persistent memory + RAG (pgvector-backed, shared swarm scope) ─────────────
+const MEM_SCOPE = "global";
+function okData(data: unknown, message: string): ToolResult { return { ok: true, data, message, error: null }; }
+function failData(error: string, message: string): ToolResult { return { ok: false, error, message }; }
+registry.register("memory_put", async (a) => { try { await mem.putMemory(MEM_SCOPE, String(a.key), a.value); return okData({ key: a.key, saved: true, persistent: true }, "saved"); } catch (e) { return failData("memory_put_failed", String(e)); } });
+registry.register("memory_get", async (a) => { try { return okData({ key: a.key, value: await mem.getMemory(MEM_SCOPE, String(a.key)) }, "get"); } catch (e) { return failData("memory_get_failed", String(e)); } });
+registry.register("memory_search", async (a) => { try { return okData(await mem.searchMemory(MEM_SCOPE, String(a.query ?? ""), Number(a.limit ?? 5)), "memory_search"); } catch (e) { return failData("memory_search_failed", String(e)); } });
+registry.register("vector_upsert", async (a) => { try { await mem.upsertVector(String(a.collection), String(a.id), String(a.text), a.metadata); return okData({ collection: a.collection, id: a.id }, "upserted"); } catch (e) { return failData("vector_upsert_failed", String(e)); } });
+registry.register("vector_search", async (a) => { try { return okData(await mem.searchVectors(String(a.collection), String(a.query), Number(a.limit ?? 5)), "vector_search"); } catch (e) { return failData("vector_search_failed", String(e)); } });
+registry.register("vector_delete", async (a) => { try { const n = await mem.deleteVector(String(a.collection), String(a.id)); return okData({ deleted: n }, "deleted"); } catch (e) { return failData("vector_delete_failed", String(e)); } });
+registry.register("document_index", async (a, c) => { try { const r = await (async () => { const read = await registry.invoke("read_file", { path: a.path }, c); if (!read.ok) return read; const text = (read.data as { content: string }).content; const ids = await mem.indexDocument(String(a.collection ?? "documents"), String(a.path), text); return okData({ collection: a.collection ?? "documents", chunks: ids }, "indexed"); })(); return r; } catch (e) { return failData("document_index_failed", String(e)); } });
+registry.register("retrieve_context", async (a) => { try { return okData(await mem.searchVectors(String(a.collection ?? "documents"), String(a.query), Number(a.limit ?? 5)), "retrieved"); } catch (e) { return failData("retrieve_context_failed", String(e)); } });
 
 /** Run an agent on a user message (native tool loop). depth guards delegation. */
 export async function runAgent(agentId: number, userMessage: string, depth = 0): Promise<string> {

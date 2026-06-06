@@ -18566,7 +18566,7 @@ var require_finalhandler = __commonJS({
       var env = opts.env || process.env.NODE_ENV || "development";
       var onerror = opts.onerror;
       return function(err) {
-        var headers;
+        var headers2;
         var msg;
         var status;
         if (!err && res.headersSent) {
@@ -18578,7 +18578,7 @@ var require_finalhandler = __commonJS({
           if (status === void 0) {
             status = getResponseStatusCode(res);
           } else {
-            headers = getErrorHeaders(err);
+            headers2 = getErrorHeaders(err);
           }
           msg = getErrorMessage(err, status, env);
         } else {
@@ -18596,7 +18596,7 @@ var require_finalhandler = __commonJS({
           }
           return;
         }
-        send(req, res, status, headers, msg);
+        send(req, res, status, headers2, msg);
       };
     }
     function getErrorHeaders(err) {
@@ -18638,7 +18638,7 @@ var require_finalhandler = __commonJS({
       }
       return status;
     }
-    function send(req, res, status, headers, message) {
+    function send(req, res, status, headers2, message) {
       function write() {
         var body = createHtmlDocument(message);
         res.statusCode = status;
@@ -18648,7 +18648,7 @@ var require_finalhandler = __commonJS({
         res.removeHeader("Content-Encoding");
         res.removeHeader("Content-Language");
         res.removeHeader("Content-Range");
-        for (const [key, value] of Object.entries(headers ?? {})) {
+        for (const [key, value] of Object.entries(headers2 ?? {})) {
           res.setHeader(key, value);
         }
         res.setHeader("Content-Security-Policy", "default-src 'none'");
@@ -22907,11 +22907,11 @@ var require_send = __commonJS({
       }
       return list;
     }
-    function setHeaders(res, headers) {
-      var keys = Object.keys(headers);
+    function setHeaders(res, headers2) {
+      var keys = Object.keys(headers2);
       for (var i = 0; i < keys.length; i++) {
         var key = keys[i];
-        res.setHeader(key, headers[key]);
+        res.setHeader(key, headers2[key]);
       }
     }
   }
@@ -23204,7 +23204,7 @@ var require_response = __commonJS({
         name = null;
         opts = filename;
       }
-      var headers = {
+      var headers2 = {
         "Content-Disposition": contentDisposition(name || path5)
       };
       if (opts && opts.headers) {
@@ -23212,12 +23212,12 @@ var require_response = __commonJS({
         for (var i = 0; i < keys.length; i++) {
           var key = keys[i];
           if (key.toLowerCase() !== "content-disposition") {
-            headers[key] = opts.headers[key];
+            headers2[key] = opts.headers[key];
           }
         }
       }
       opts = Object.create(opts);
-      opts.headers = headers;
+      opts.headers = headers2;
       var fullPath = !opts.root ? resolve2(path5) : path5;
       return this.sendFile(fullPath, opts, done);
     };
@@ -23427,7 +23427,7 @@ var require_response = __commonJS({
       file2.on("stream", onstream);
       onFinished(res2, onfinish);
       if (options.headers) {
-        file2.on("headers", function headers(res3) {
+        file2.on("headers", function headers2(res3) {
           var obj2 = options.headers;
           var keys = Object.keys(obj2);
           for (var i = 0; i < keys.length; i++) {
@@ -23715,33 +23715,33 @@ var require_lib3 = __commonJS({
         }
       }
       function configureOrigin(options, req) {
-        var requestOrigin = req.headers.origin, headers = [], isAllowed;
+        var requestOrigin = req.headers.origin, headers2 = [], isAllowed;
         if (!options.origin || options.origin === "*") {
-          headers.push([{
+          headers2.push([{
             key: "Access-Control-Allow-Origin",
             value: "*"
           }]);
         } else if (isString(options.origin)) {
-          headers.push([{
+          headers2.push([{
             key: "Access-Control-Allow-Origin",
             value: options.origin
           }]);
-          headers.push([{
+          headers2.push([{
             key: "Vary",
             value: "Origin"
           }]);
         } else {
           isAllowed = isOriginAllowed(requestOrigin, options.origin);
-          headers.push([{
+          headers2.push([{
             key: "Access-Control-Allow-Origin",
             value: isAllowed ? requestOrigin : false
           }]);
-          headers.push([{
+          headers2.push([{
             key: "Vary",
             value: "Origin"
           }]);
         }
-        return headers;
+        return headers2;
       }
       function configureMethods(options) {
         var methods = options.methods;
@@ -23764,10 +23764,10 @@ var require_lib3 = __commonJS({
       }
       function configureAllowedHeaders(options, req) {
         var allowedHeaders = options.allowedHeaders || options.headers;
-        var headers = [];
+        var headers2 = [];
         if (!allowedHeaders) {
           allowedHeaders = req.headers["access-control-request-headers"];
-          headers.push([{
+          headers2.push([{
             key: "Vary",
             value: "Access-Control-Request-Headers"
           }]);
@@ -23775,24 +23775,24 @@ var require_lib3 = __commonJS({
           allowedHeaders = allowedHeaders.join(",");
         }
         if (allowedHeaders && allowedHeaders.length) {
-          headers.push([{
+          headers2.push([{
             key: "Access-Control-Allow-Headers",
             value: allowedHeaders
           }]);
         }
-        return headers;
+        return headers2;
       }
       function configureExposedHeaders(options) {
-        var headers = options.exposedHeaders;
-        if (!headers) {
+        var headers2 = options.exposedHeaders;
+        if (!headers2) {
           return null;
-        } else if (headers.join) {
-          headers = headers.join(",");
+        } else if (headers2.join) {
+          headers2 = headers2.join(",");
         }
-        if (headers && headers.length) {
+        if (headers2 && headers2.length) {
           return {
             key: "Access-Control-Expose-Headers",
-            value: headers
+            value: headers2
           };
         }
         return null;
@@ -23807,9 +23807,9 @@ var require_lib3 = __commonJS({
         }
         return null;
       }
-      function applyHeaders(headers, res) {
-        for (var i = 0, n = headers.length; i < n; i++) {
-          var header = headers[i];
+      function applyHeaders(headers2, res) {
+        for (var i = 0, n = headers2.length; i < n; i++) {
+          var header = headers2[i];
           if (header) {
             if (Array.isArray(header)) {
               applyHeaders(header, res);
@@ -23822,15 +23822,15 @@ var require_lib3 = __commonJS({
         }
       }
       function cors2(options, req, res, next) {
-        var headers = [], method = req.method && req.method.toUpperCase && req.method.toUpperCase();
+        var headers2 = [], method = req.method && req.method.toUpperCase && req.method.toUpperCase();
         if (method === "OPTIONS") {
-          headers.push(configureOrigin(options, req));
-          headers.push(configureCredentials(options));
-          headers.push(configureMethods(options));
-          headers.push(configureAllowedHeaders(options, req));
-          headers.push(configureMaxAge(options));
-          headers.push(configureExposedHeaders(options));
-          applyHeaders(headers, res);
+          headers2.push(configureOrigin(options, req));
+          headers2.push(configureCredentials(options));
+          headers2.push(configureMethods(options));
+          headers2.push(configureAllowedHeaders(options, req));
+          headers2.push(configureMaxAge(options));
+          headers2.push(configureExposedHeaders(options));
+          applyHeaders(headers2, res);
           if (options.preflightContinue) {
             next();
           } else {
@@ -23839,10 +23839,10 @@ var require_lib3 = __commonJS({
             res.end();
           }
         } else {
-          headers.push(configureOrigin(options, req));
-          headers.push(configureCredentials(options));
-          headers.push(configureExposedHeaders(options));
-          applyHeaders(headers, res);
+          headers2.push(configureOrigin(options, req));
+          headers2.push(configureCredentials(options));
+          headers2.push(configureExposedHeaders(options));
+          applyHeaders(headers2, res);
           next();
         }
       }
@@ -59017,13 +59017,13 @@ async function handleApplyPatch(a, c) {
   }
 }
 async function gh(c, method, pathPart, body) {
-  const headers = { Accept: "application/vnd.github+json", "User-Agent": "bos-aura-agent", "X-GitHub-Api-Version": "2022-11-28" };
-  if (c.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${c.env.GITHUB_TOKEN}`;
-  return httpJson(c, method, `https://api.github.com/${pathPart}`, body, headers);
+  const headers2 = { Accept: "application/vnd.github+json", "User-Agent": "bos-aura-agent", "X-GitHub-Api-Version": "2022-11-28" };
+  if (c.env.GITHUB_TOKEN) headers2.Authorization = `Bearer ${c.env.GITHUB_TOKEN}`;
+  return httpJson(c, method, `https://api.github.com/${pathPart}`, body, headers2);
 }
-async function httpJson(c, method, url2, body, headers) {
+async function httpJson(c, method, url2, body, headers2) {
   try {
-    const h = { "User-Agent": "bos-aura-agent", ...headers ?? {} };
+    const h = { "User-Agent": "bos-aura-agent", ...headers2 ?? {} };
     let payload;
     if (body !== void 0 && body !== null) {
       payload = typeof body === "string" ? body : JSON.stringify(body);
@@ -59473,11 +59473,11 @@ async function handleArtifact(a, c) {
 function handleTable(a) {
   const rows = a.rows;
   if (!rows.length) return ok({ table: "" }, "empty");
-  const headers = Object.keys(rows[0]);
-  let table = `| ${headers.join(" | ")} |
-| ${headers.map(() => "---").join(" | ")} |
+  const headers2 = Object.keys(rows[0]);
+  let table = `| ${headers2.join(" | ")} |
+| ${headers2.map(() => "---").join(" | ")} |
 `;
-  for (const r of rows) table += `| ${headers.map((h) => String(r[h] ?? "")).join(" | ")} |
+  for (const r of rows) table += `| ${headers2.map((h) => String(r[h] ?? "")).join(" | ")} |
 `;
   return ok({ table }, "table");
 }
@@ -59570,6 +59570,204 @@ async function chatTurn(opts) {
   const data = await r.json();
   const msg = data.choices?.[0]?.message;
   return { role: "assistant", content: msg?.content ?? "", tool_calls: msg?.tool_calls };
+}
+
+// src/lib/memory-store.ts
+init_src();
+
+// src/lib/embeddings.ts
+var OPENROUTER_BASE2 = "https://openrouter.ai/api/v1";
+var EMBEDDING_MODEL = process.env.EMBEDDING_MODEL || "openai/text-embedding-3-small";
+var EMBEDDING_DIM = Number(process.env.EMBEDDING_DIM || 1536);
+function headers() {
+  const key = process.env.OPENROUTER_API_KEY;
+  if (!key) throw new Error("OPENROUTER_API_KEY not set");
+  return { Authorization: `Bearer ${key}`, "Content-Type": "application/json" };
+}
+async function embed(input) {
+  const texts = Array.isArray(input) ? input : [input];
+  if (texts.length === 0) return [];
+  const r = await fetch(`${OPENROUTER_BASE2}/embeddings`, {
+    method: "POST",
+    headers: headers(),
+    body: JSON.stringify({ model: EMBEDDING_MODEL, input: texts })
+  });
+  if (!r.ok) throw new Error(`Embeddings error ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  const data = await r.json();
+  const rows = (data.data ?? []).slice().sort((a, b) => a.index - b.index);
+  return rows.map((row) => row.embedding);
+}
+async function embedOne(text2) {
+  const [v] = await embed(text2);
+  return v ?? [];
+}
+function toVectorLiteral(vec) {
+  return `[${vec.join(",")}]`;
+}
+
+// src/lib/memory-store.ts
+var ready = false;
+var pgvector = false;
+async function initMemoryStore() {
+  if (ready) return;
+  try {
+    await pool.query("CREATE EXTENSION IF NOT EXISTS vector");
+    pgvector = true;
+  } catch {
+    pgvector = false;
+  }
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS agent_memory (
+      id serial PRIMARY KEY,
+      scope text NOT NULL DEFAULT 'global',
+      key text NOT NULL,
+      value text,
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      UNIQUE (scope, key)
+    )`);
+  if (pgvector) {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS vector_chunks (
+        id serial PRIMARY KEY,
+        collection text NOT NULL,
+        doc_id text,
+        content text NOT NULL,
+        embedding vector(${EMBEDDING_DIM}),
+        metadata jsonb,
+        created_at timestamptz NOT NULL DEFAULT now()
+      )`);
+    try {
+      await pool.query("CREATE INDEX IF NOT EXISTS vector_chunks_emb_idx ON vector_chunks USING hnsw (embedding vector_cosine_ops)");
+    } catch {
+    }
+  } else {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS vector_chunks (
+        id serial PRIMARY KEY,
+        collection text NOT NULL,
+        doc_id text,
+        content text NOT NULL,
+        embedding jsonb,
+        metadata jsonb,
+        created_at timestamptz NOT NULL DEFAULT now()
+      )`);
+  }
+  ready = true;
+  console.log(`Memory store ready (pgvector=${pgvector})`);
+}
+async function ensureReady() {
+  if (!ready) await initMemoryStore();
+}
+async function putMemory(scope, key, value) {
+  await ensureReady();
+  const v = typeof value === "string" ? value : JSON.stringify(value);
+  await pool.query(
+    `INSERT INTO agent_memory (scope, key, value, updated_at) VALUES ($1,$2,$3, now())
+     ON CONFLICT (scope, key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+    [scope, key, v]
+  );
+}
+async function getMemory(scope, key) {
+  await ensureReady();
+  const { rows } = await pool.query("SELECT value FROM agent_memory WHERE scope=$1 AND key=$2", [scope, key]);
+  if (!rows[0]) return null;
+  try {
+    return JSON.parse(rows[0].value);
+  } catch {
+    return rows[0].value;
+  }
+}
+async function searchMemory(scope, query, limit = 5) {
+  await ensureReady();
+  const { rows } = await pool.query(
+    "SELECT key, value FROM agent_memory WHERE scope=$1 AND (key ILIKE $2 OR value ILIKE $2) ORDER BY updated_at DESC LIMIT $3",
+    [scope, `%${query}%`, limit]
+  );
+  return rows.map((r) => {
+    let v;
+    try {
+      v = JSON.parse(r.value);
+    } catch {
+      v = r.value;
+    }
+    return { key: r.key, value: v };
+  });
+}
+async function upsertVector(collection, docId, text2, metadata) {
+  await ensureReady();
+  const vec = await embedOne(text2);
+  await pool.query("DELETE FROM vector_chunks WHERE collection=$1 AND doc_id=$2", [collection, docId]);
+  if (pgvector) {
+    await pool.query(
+      "INSERT INTO vector_chunks (collection, doc_id, content, embedding, metadata) VALUES ($1,$2,$3,$4::vector,$5)",
+      [collection, docId, text2, toVectorLiteral(vec), metadata ? JSON.stringify(metadata) : null]
+    );
+  } else {
+    await pool.query(
+      "INSERT INTO vector_chunks (collection, doc_id, content, embedding, metadata) VALUES ($1,$2,$3,$4,$5)",
+      [collection, docId, text2, JSON.stringify(vec), metadata ? JSON.stringify(metadata) : null]
+    );
+  }
+}
+async function deleteVector(collection, docId) {
+  await ensureReady();
+  const { rowCount } = await pool.query("DELETE FROM vector_chunks WHERE collection=$1 AND doc_id=$2", [collection, docId]);
+  return rowCount ?? 0;
+}
+async function searchVectors(collection, query, limit = 5) {
+  await ensureReady();
+  const qv = await embedOne(query);
+  if (pgvector) {
+    const { rows: rows2 } = await pool.query(
+      `SELECT doc_id, content, metadata, 1 - (embedding <=> $2::vector) AS score
+       FROM vector_chunks WHERE collection=$1
+       ORDER BY embedding <=> $2::vector LIMIT $3`,
+      [collection, toVectorLiteral(qv), limit]
+    );
+    return rows2.map((r) => ({ doc_id: r.doc_id, content: r.content, score: Number(r.score), metadata: r.metadata }));
+  }
+  const { rows } = await pool.query("SELECT doc_id, content, metadata, embedding FROM vector_chunks WHERE collection=$1", [collection]);
+  const scored = rows.map((r) => {
+    const e = typeof r.embedding === "string" ? JSON.parse(r.embedding) : r.embedding;
+    return { doc_id: r.doc_id, content: r.content, metadata: r.metadata, score: cosine2(qv, e) };
+  });
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, limit);
+}
+async function indexDocument(collection, docId, text2, chunkChars = 1200) {
+  await ensureReady();
+  const chunks = [];
+  for (let i = 0; i < text2.length; i += chunkChars) chunks.push(text2.slice(i, i + chunkChars));
+  if (chunks.length === 0) return [];
+  const vecs = await embed(chunks);
+  await pool.query("DELETE FROM vector_chunks WHERE collection=$1 AND doc_id LIKE $2", [collection, `${docId}#%`]);
+  const ids = [];
+  for (let i = 0; i < chunks.length; i++) {
+    const id = `${docId}#${i}`;
+    if (pgvector) {
+      await pool.query(
+        "INSERT INTO vector_chunks (collection, doc_id, content, embedding, metadata) VALUES ($1,$2,$3,$4::vector,$5)",
+        [collection, id, chunks[i], toVectorLiteral(vecs[i]), JSON.stringify({ doc: docId, chunk: i })]
+      );
+    } else {
+      await pool.query(
+        "INSERT INTO vector_chunks (collection, doc_id, content, embedding, metadata) VALUES ($1,$2,$3,$4,$5)",
+        [collection, id, chunks[i], JSON.stringify(vecs[i]), JSON.stringify({ doc: docId, chunk: i })]
+      );
+    }
+    ids.push(id);
+  }
+  return ids;
+}
+function cosine2(a, b) {
+  let dot = 0, na = 0, nb = 0;
+  const n = Math.min(a.length, b.length);
+  for (let i = 0; i < n; i++) {
+    dot += a[i] * b[i];
+    na += a[i] * a[i];
+    nb += b[i] * b[i];
+  }
+  return na && nb ? dot / (Math.sqrt(na) * Math.sqrt(nb)) : 0;
 }
 
 // src/lib/agent-executor.ts
@@ -59683,6 +59881,79 @@ async function delegationHandler(args, _ctx) {
 }
 registry2.register("delegate_to_agent", delegationHandler);
 registry2.register("agent_send", delegationHandler);
+var MEM_SCOPE = "global";
+function okData(data, message) {
+  return { ok: true, data, message, error: null };
+}
+function failData(error40, message) {
+  return { ok: false, error: error40, message };
+}
+registry2.register("memory_put", async (a) => {
+  try {
+    await putMemory(MEM_SCOPE, String(a.key), a.value);
+    return okData({ key: a.key, saved: true, persistent: true }, "saved");
+  } catch (e) {
+    return failData("memory_put_failed", String(e));
+  }
+});
+registry2.register("memory_get", async (a) => {
+  try {
+    return okData({ key: a.key, value: await getMemory(MEM_SCOPE, String(a.key)) }, "get");
+  } catch (e) {
+    return failData("memory_get_failed", String(e));
+  }
+});
+registry2.register("memory_search", async (a) => {
+  try {
+    return okData(await searchMemory(MEM_SCOPE, String(a.query ?? ""), Number(a.limit ?? 5)), "memory_search");
+  } catch (e) {
+    return failData("memory_search_failed", String(e));
+  }
+});
+registry2.register("vector_upsert", async (a) => {
+  try {
+    await upsertVector(String(a.collection), String(a.id), String(a.text), a.metadata);
+    return okData({ collection: a.collection, id: a.id }, "upserted");
+  } catch (e) {
+    return failData("vector_upsert_failed", String(e));
+  }
+});
+registry2.register("vector_search", async (a) => {
+  try {
+    return okData(await searchVectors(String(a.collection), String(a.query), Number(a.limit ?? 5)), "vector_search");
+  } catch (e) {
+    return failData("vector_search_failed", String(e));
+  }
+});
+registry2.register("vector_delete", async (a) => {
+  try {
+    const n = await deleteVector(String(a.collection), String(a.id));
+    return okData({ deleted: n }, "deleted");
+  } catch (e) {
+    return failData("vector_delete_failed", String(e));
+  }
+});
+registry2.register("document_index", async (a, c) => {
+  try {
+    const r = await (async () => {
+      const read = await registry2.invoke("read_file", { path: a.path }, c);
+      if (!read.ok) return read;
+      const text2 = read.data.content;
+      const ids = await indexDocument(String(a.collection ?? "documents"), String(a.path), text2);
+      return okData({ collection: a.collection ?? "documents", chunks: ids }, "indexed");
+    })();
+    return r;
+  } catch (e) {
+    return failData("document_index_failed", String(e));
+  }
+});
+registry2.register("retrieve_context", async (a) => {
+  try {
+    return okData(await searchVectors(String(a.collection ?? "documents"), String(a.query), Number(a.limit ?? 5)), "retrieved");
+  } catch (e) {
+    return failData("retrieve_context_failed", String(e));
+  }
+});
 async function runAgent(agentId, userMessage, depth = 0) {
   const session = await getOrCreateSession(agentId);
   const provider = resolveProvider(session.model);
@@ -60413,7 +60684,7 @@ init_src();
 init_src();
 init_drizzle_orm();
 var router9 = (0, import_express9.Router)();
-var OPENROUTER_BASE2 = "https://openrouter.ai/api/v1";
+var OPENROUTER_BASE3 = "https://openrouter.ai/api/v1";
 var AGENT_PERSONAS = {
   // ABBY (id=1) - Master Orchestrator
   1: `You are ABBY, the master orchestrator of the OpenClaw multi-agent AI system. You coordinate 8 sub-agents: PLANNER (task decomposition), IDEATOR (idea generation), CRITIC (quality gate/SHARP evaluation), SURVEYOR (research), CODER (implementation), WRITER (documentation), REVIEWER (peer review), and SCOUT (trend monitoring). You delegate tasks to sub-agents based on their capabilities, manage inter-agent communication, and ensure quality through Critic's SHARP taste gate (SHARP >= 18 for ideas). You are strategic, decisive, and speak with authority. Never break character.`,
@@ -60446,7 +60717,7 @@ function openrouterHeaders2() {
 }
 router9.get("/ai/models", async (req, res) => {
   try {
-    const r = await fetch(`${OPENROUTER_BASE2}/models`, { headers: openrouterHeaders2() });
+    const r = await fetch(`${OPENROUTER_BASE3}/models`, { headers: openrouterHeaders2() });
     const data = await r.json();
     const featured = [
       "x-ai/grok-4.3",
@@ -60510,7 +60781,7 @@ router9.post("/ai/chat", async (req, res) => {
   };
   let fullResponse = "";
   try {
-    const orRes = await fetch(`${OPENROUTER_BASE2}/chat/completions`, {
+    const orRes = await fetch(`${OPENROUTER_BASE3}/chat/completions`, {
       method: "POST",
       headers: openrouterHeaders2(),
       body: JSON.stringify({
@@ -60599,7 +60870,7 @@ router9.post("/ai/complete", async (req, res) => {
   const model = overrideModel ?? agent?.model ?? "x-ai/grok-4.3";
   const systemPrompt2 = resolvedAgentId ? AGENT_PERSONAS[resolvedAgentId] ?? "" : "";
   try {
-    const r = await fetch(`${OPENROUTER_BASE2}/chat/completions`, {
+    const r = await fetch(`${OPENROUTER_BASE3}/chat/completions`, {
       method: "POST",
       headers: openrouterHeaders2(),
       body: JSON.stringify({
@@ -60758,7 +61029,7 @@ init_src();
 init_src();
 init_drizzle_orm();
 var router11 = (0, import_express11.Router)();
-var OPENROUTER_BASE3 = "https://openrouter.ai/api/v1";
+var OPENROUTER_BASE4 = "https://openrouter.ai/api/v1";
 var AGENT_NAME_MAP = {
   abby: 1,
   forge: 2,
@@ -60897,7 +61168,7 @@ router11.post("/external/v1/chat/completions", async (req, res) => {
 `);
     };
     try {
-      const orRes = await fetch(`${OPENROUTER_BASE3}/chat/completions`, {
+      const orRes = await fetch(`${OPENROUTER_BASE4}/chat/completions`, {
         method: "POST",
         headers: orHeaders,
         body: JSON.stringify({ model: agent.model, stream: true, messages: orMessages, max_tokens })
@@ -60947,7 +61218,7 @@ router11.post("/external/v1/chat/completions", async (req, res) => {
     return;
   }
   try {
-    const orRes = await fetch(`${OPENROUTER_BASE3}/chat/completions`, {
+    const orRes = await fetch(`${OPENROUTER_BASE4}/chat/completions`, {
       method: "POST",
       headers: orHeaders,
       body: JSON.stringify({ model: agent.model, messages: orMessages, max_tokens })
@@ -61303,7 +61574,12 @@ if (config3.openclawApiKey) {
 } else {
   logger.info("OPENCLAW_API_KEY not set - BOS-OMEGA integration disabled");
 }
-runMigrations().then(() => {
+runMigrations().then(async () => {
+  try {
+    await initMemoryStore();
+  } catch (err) {
+    logger.warn({ err }, "Memory store init failed \u2014 persistent RAG disabled");
+  }
   app_default.listen(port, (err) => {
     if (err) {
       logger.error({ err }, "Error listening on port");

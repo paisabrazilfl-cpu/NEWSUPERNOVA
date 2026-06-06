@@ -3,6 +3,7 @@ import { logger } from "./lib/logger";
 import { runMigrations } from "./migrate";
 import { logConfig, getConfig } from "./lib/config";
 import { initOpenClawConnector } from "./lib/openclaw-connector";
+import { initMemoryStore } from "./lib/memory-store";
 
 const rawPort = process.env["PORT"];
 
@@ -40,7 +41,13 @@ if (config.openclawApiKey) {
   logger.info("OPENCLAW_API_KEY not set - BOS-OMEGA integration disabled");
 }
 
-runMigrations().then(() => {
+runMigrations().then(async () => {
+  try {
+    await initMemoryStore();
+  } catch (err) {
+    logger.warn({ err }, "Memory store init failed — persistent RAG disabled");
+  }
+
   app.listen(port, (err) => {
     if (err) {
       logger.error({ err }, "Error listening on port");
