@@ -59498,12 +59498,19 @@ app.use((0, import_cors.default)());
 app.use(import_express13.default.json());
 app.use(import_express13.default.urlencoded({ extended: true }));
 app.use("/api", routes_default);
+app.get("/", (_req, res) => {
+  res.json({ status: "ok", service: "bos-aura-api" });
+});
 if (process.env["NODE_ENV"] === "production") {
-  const __dirname2 = path.dirname(fileURLToPath(import.meta.url));
-  const staticPath = path.join(__dirname2, "..", "..", "openclaw", "dist", "public");
+  const __filename_app = fileURLToPath(import.meta.url);
+  const __dirname_app = path.dirname(__filename_app);
+  const staticPath = path.join(__dirname_app, "..", "..", "openclaw", "dist", "public");
+  const indexHtml = path.join(staticPath, "index.html");
   app.use(import_express13.default.static(staticPath));
-  app.get("*", (_req, res) => {
-    res.sendFile(path.join(staticPath, "index.html"));
+  app.get("*", (_req, res, next) => {
+    res.sendFile(indexHtml, (err) => {
+      if (err) next();
+    });
   });
 }
 var app_default = app;
