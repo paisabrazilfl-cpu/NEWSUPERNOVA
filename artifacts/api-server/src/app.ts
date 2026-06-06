@@ -53,6 +53,9 @@ if (hasFrontend) {
   app.use(express.static(staticPath));
   app.get("/*path", (req, res, next) => {
     if (req.path.startsWith("/api")) return next();
+    // Missing static assets (paths with a file extension) should 404, not
+    // fall back to the SPA shell — otherwise stale asset requests get HTML 200.
+    if (path.extname(req.path)) return next();
     res.sendFile(indexHtml, (err) => {
       if (err) next();
     });
