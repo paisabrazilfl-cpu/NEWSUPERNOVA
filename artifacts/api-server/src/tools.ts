@@ -33,6 +33,7 @@ import {
   isPlatformConnected,
   callPlatformApi,
 } from "./lib/connectors";
+import { tavilySearch, exaSearch, e2bExec, e2bConfigured } from "./lib/integrations";
 
 const STEEL_BASE = "https://api.steel.dev/v1";
 const FIRECRAWL_BASE = "https://api.firecrawl.dev/v1";
@@ -142,9 +143,36 @@ async function firecrawlSearch(query: string, limit: number): Promise<string> {
   };
   const results = data.data ?? [];
   if (!results.length) return `no web results for "${query}".`;
-  return results
+  return `[search provider: firecrawl]\n${results
     .map((x, i) => `${i + 1}. ${x.title ?? "(untitled)"}\n   ${x.url ?? ""}\n   ${clip((x.description ?? "").trim(), 300)}`)
-    .join("\n\n");
+    .join("\n\n")}`;
+}
+
+// ─── Multi-provider web search ───────────────────────────────────────────────
+// Tries the configured search providers in order of preference: Tavily (broad,
+// fast) → Exa (neural/semantic) → Firecrawl. Falls through to the next provider
+// on any error so a single provider outage doesn't blind the swarm.
+
+async function webSearch(query: string, limit: number): Promise<string> {
+  const providers: Array<{ name: string; enabled: boolean; run: () => Promise<string> }> = [
+    { name: "tavily", enabled: !!process.env["TAVILY_API_KEY"], run: () => tavilySearch(query, limit) },
+    { name: "exa", enabled: !!process.env["EXA_API_KEY"], run: () => exaSearch(query, limit) },
+    { name: "firecrawl", enabled: !!process.env["FIRECRAWL_API_KEY"], run: () => firecrawlSearch(query, limit) },
+  ].filter((p) => p.enabled);
+
+  if (!providers.length) {
+    return "error: no web search provider is configured (set TAVILY_API_KEY, EXA_API_KEY, or FIRECRAWL_API_KEY).";
+  }
+
+  const errors: string[] = [];
+  for (const provider of providers) {
+    try {
+      return await provider.run();
+    } catch (e) {
+      errors.push(`${provider.name}: ${String(e instanceof Error ? e.message : e).slice(0, 120)}`);
+    }
+  }
+  return `error: all web search providers failed — ${errors.join("; ")}`;
 }
 
 // ─── Safe arithmetic ─────────────────────────────────────────────────────────
@@ -433,7 +461,7 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
   web_search: {
     name: "web_search",
     description:
-      "Search the live web and return the top results (title, URL, snippet). Use to discover current information and find pages worth reading. To read a result's full content, follow up with web_scrape on its URL.",
+      "Search the live web and return the top results (title, URL, snippet). Backed by Tavily, Exa, and Firecrawl with automatic failover. Use to discover current information and find pages worth reading. To read a result's full content, follow up with web_scrape on its URL.",
     parameters: {
       type: "object",
       properties: {
@@ -448,7 +476,7 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
       let limit = Number(args["limit"] ?? 5);
       if (!Number.isFinite(limit)) limit = 5;
       limit = Math.max(1, Math.min(10, Math.floor(limit)));
-      return firecrawlSearch(query, limit);
+      return webSearch(query, limit);
     },
   },
 
@@ -541,6 +569,29 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
       const source = String(args["source"] ?? "");
       if (!source.trim()) return "error: source is required.";
       return runSandboxed(language, source);
+    },
+  },
+
+  cloud_code_exec: {
+    name: "cloud_code_exec",
+    description:
+      "Execute code in a fully isolated E2B cloud sandbox (a real remote VM with network access and a full runtime). Supports 'python' and 'javascript'. Use this instead of code_exec when the code needs network access, pip/npm packages, or stronger isolation than the local sandbox. Returns stdout/stderr/result.",
+    parameters: {
+      type: "object",
+      properties: {
+        language: { type: "string", enum: ["python", "javascript"], description: "Runtime to use." },
+        source: { type: "string", description: "Self-contained source code. Print results to stdout." },
+      },
+      required: ["language", "source"],
+    },
+    run: async (args) => {
+      const language = String(args["language"] ?? "");
+      const source = String(args["source"] ?? "");
+      if (!source.trim()) return "error: source is required.";
+      if (!e2bConfigured()) {
+        return "error: E2B cloud sandbox is not configured (set E2B_API_KEY). Use code_exec for local execution instead.";
+      }
+      return e2bExec(language, source);
     },
   },
 
@@ -744,10 +795,10 @@ const ALL_TOOLS = Object.keys(TOOL_REGISTRY);
 
 export const AGENT_TOOLS: Record<number, string[]> = {
   1: ALL_TOOLS, // ABBY — full authority
-  2: ["code_exec", "calculator", "http_request", "web_scrape", "web_search", "memory_search", "memory_write", "vault_list", "send_message"], // FORGE — code
+  2: ["code_exec", "cloud_code_exec", "calculator", "http_request", "web_scrape", "web_search", "memory_search", "memory_write", "vault_list", "send_message"], // FORGE — code
   3: ["web_scrape", "web_screenshot", "web_search", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "send_message"], // CRAWLER — browser
   4: ["memory_write", "memory_search", "web_search", "web_scrape", "http_request", "calculator", "vault_list", "send_message"], // VAULT — memory/RAG
-  5: ["http_request", "web_scrape", "web_search", "code_exec", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "send_message"], // WIRE — APIs
+  5: ["http_request", "web_scrape", "web_search", "code_exec", "cloud_code_exec", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "send_message"], // WIRE — APIs
   6: ["web_scrape", "web_search", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "send_message"], // MR.NICE — social
 };
 

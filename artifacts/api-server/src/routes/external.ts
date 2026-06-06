@@ -20,9 +20,11 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import { db } from "@workspace/db";
 import { agentsTable, messagesTable, channelsTable } from "@workspace/db";
 import { eq, desc } from "drizzle-orm";
+import { llmBaseUrl, heliconeHeaders } from "../lib/integrations";
 
 const router = Router();
-const OPENROUTER_BASE = "https://openrouter.ai/api/v1";
+// Routed through Helicone when configured (see lib/integrations).
+const OPENROUTER_BASE = llmBaseUrl();
 
 const AGENT_NAME_MAP: Record<string, number> = {
   abby:    1,
@@ -156,6 +158,7 @@ router.post("/external/v1/chat/completions", async (req, res) => {
     "Content-Type": "application/json",
     "HTTP-Referer": "https://openclaw.abbyclaw.io",
     "X-Title": "OPENCLAW OMEGA External API",
+    ...heliconeHeaders(),
   };
 
   // ── Streaming response ───────────────────────────────────────────────────

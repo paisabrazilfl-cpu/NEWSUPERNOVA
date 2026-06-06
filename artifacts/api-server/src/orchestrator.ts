@@ -39,6 +39,7 @@ import {
   runTool,
   type ToolContext,
 } from "./tools";
+import { sendInngestEvent, traceLlmRun } from "./lib/integrations";
 
 type Agent = typeof agentsTable.$inferSelect;
 
@@ -78,26 +79,37 @@ export async function reconcileStaleWork(): Promise<void> {
 
 /** Non-streaming OpenRouter completion. Returns the assistant text. */
 async function completeChat(model: string, system: string, user: string): Promise<string> {
-  const r = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
-    method: "POST",
-    headers: openrouterHeaders(),
-    body: JSON.stringify({
-      model,
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: user },
-      ],
-      stream: false,
-      max_tokens: 800,
-    }),
-  });
+  const startedAt = new Date();
+  let r: Response;
+  try {
+    r = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+      method: "POST",
+      headers: openrouterHeaders(),
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: user },
+        ],
+        stream: false,
+        max_tokens: 800,
+      }),
+    });
+  } catch (err) {
+    traceLlmRun({ name: "completeChat", model, input: { system, user }, output: null, startedAt, error: String(err) });
+    throw err;
+  }
   if (!r.ok) {
-    throw new Error(`OpenRouter ${r.status}: ${(await r.text()).slice(0, 200)}`);
+    const errText = (await r.text()).slice(0, 200);
+    traceLlmRun({ name: "completeChat", model, input: { system, user }, output: null, startedAt, error: `OpenRouter ${r.status}: ${errText}` });
+    throw new Error(`OpenRouter ${r.status}: ${errText}`);
   }
   const data = (await r.json()) as {
     choices?: Array<{ message?: { content?: string } }>;
   };
-  return data?.choices?.[0]?.message?.content?.trim() || "(no response)";
+  const out = data?.choices?.[0]?.message?.content?.trim() || "(no response)";
+  traceLlmRun({ name: "completeChat", model, input: { system, user }, output: out, startedAt });
+  return out;
 }
 
 // ─── Native tool-calling primitives ─────────────────────────────────────────
@@ -532,6 +544,7 @@ export async function orchestrateGoal(opts: {
   priority: string;
 }): Promise<void> {
   const { goal, channelId, priority } = opts;
+  void sendInngestEvent("swarm/goal.received", { goal, channelId, priority });
   try {
     const agents = await db.select().from(agentsTable);
     const abby = agents.find((a) => a.id === ABBY_ID) ?? null;
@@ -659,8 +672,15 @@ If not, respond with ONLY a JSON array (no prose) of up to 2 follow-up directive
         messageType: "agent",
       });
     }
+    void sendInngestEvent("swarm/goal.completed", {
+      goal,
+      channelId,
+      clawReports: results.length,
+      results: results.map((r) => ({ name: r.name, result: r.result.slice(0, 500) })),
+    });
   } catch (err) {
     logger.error({ err }, "orchestrateGoal failed");
+    void sendInngestEvent("swarm/goal.failed", { goal, channelId, error: String(err).slice(0, 300) });
     await db
       .update(agentsTable)
       .set({ status: "idle" })

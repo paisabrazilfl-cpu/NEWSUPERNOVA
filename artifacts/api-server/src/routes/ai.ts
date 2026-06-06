@@ -2,10 +2,14 @@ import { Router } from "express";
 import { db } from "@workspace/db";
 import { agentsTable, messagesTable } from "@workspace/db";
 import { eq, and, inArray, desc } from "drizzle-orm";
+import { llmBaseUrl, heliconeHeaders } from "../lib/integrations";
 
 const router = Router();
 
-export const OPENROUTER_BASE = "https://openrouter.ai/api/v1";
+// LLM base URL — routed through Helicone's observability proxy when a Helicone
+// key is configured, otherwise straight to OpenRouter. Resolved once at module
+// load (env is fixed for the process lifetime).
+export const OPENROUTER_BASE = llmBaseUrl();
 
 export const AGENT_PERSONAS: Record<number, string> = {
   1: `You are ABBY, the sovereign master orchestrator of the ABBY CLAW multi-agent swarm running inside OPENCLAW OMEGA — a Discord-style command center.
@@ -64,6 +68,9 @@ export function openrouterHeaders() {
     "Content-Type": "application/json",
     "HTTP-Referer": "https://openclaw.abbyclaw.io",
     "X-Title": "OPENCLAW OMEGA",
+    // Adds Helicone-Auth (and logging hints) only when Helicone is configured;
+    // otherwise this spreads nothing.
+    ...heliconeHeaders(),
   };
 }
 

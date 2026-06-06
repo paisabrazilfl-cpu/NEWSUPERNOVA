@@ -27,6 +27,11 @@ node_modules
 !.vscode/launch.json
 !.vscode/extensions.json
 
+# env / secrets — never commit real keys; use .env.example as the template
+.env
+.env.*
+!.env.example
+
 # misc
 /.sass-cache
 /connect.lock

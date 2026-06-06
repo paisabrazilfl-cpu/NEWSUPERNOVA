@@ -33,6 +33,26 @@ services:
         sync: false
       - key: NEUROBUDDY_API_KEY
         sync: false
+      # ── Additional integrations (all optional; set the ones you use) ──
+      # Observability
+      - key: HELICONE_API_KEY
+        sync: false
+      - key: LANGSMITH_API_KEY
+        sync: false
+      - key: LANGSMITH_PROJECT
+        value: openclaw-omega
+      # Web search providers
+      - key: TAVILY_API_KEY
+        sync: false
+      - key: EXA_API_KEY
+        sync: false
+      # Event bus + cloud sandbox
+      - key: INNGEST_EVENT_KEY
+        sync: false
+      - key: INNGEST_SIGNING_KEY
+        sync: false
+      - key: E2B_API_KEY
+        sync: false
 
 databases:
   - name: bos-aura-db

@@ -19,6 +19,20 @@ const RENDER_API = "https://api.render.com/v1";
 
 const REQUIRED_KEYS = ["OPENROUTER_API_KEY", "STEEL_API_KEY", "FIRECRAWL_API_KEY"] as const;
 
+// Optional integration keys — pushed only when present in the local environment,
+// so the script never fails just because an integration isn't configured yet.
+const OPTIONAL_KEYS = [
+  "NEUROBUDDY_API_KEY",
+  "HELICONE_API_KEY",
+  "LANGSMITH_API_KEY",
+  "LANGSMITH_PROJECT",
+  "TAVILY_API_KEY",
+  "EXA_API_KEY",
+  "INNGEST_EVENT_KEY",
+  "INNGEST_SIGNING_KEY",
+  "E2B_API_KEY",
+] as const;
+
 function requireEnv(key: string): string {
   const val = process.env[key];
   if (!val) throw new Error(`Missing required env var: ${key}`);
@@ -59,11 +73,21 @@ async function main() {
   for (const key of REQUIRED_KEYS) {
     updates[key] = requireEnv(key);
   }
+  // Add any optional integration keys that happen to be set locally.
+  const includedOptional: string[] = [];
+  for (const key of OPTIONAL_KEYS) {
+    const val = process.env[key];
+    if (val) {
+      updates[key] = val;
+      includedOptional.push(key);
+    }
+  }
 
   const merged = { ...existing, ...updates };
   const payload = Object.entries(merged).map(([key, value]) => ({ key, value }));
 
-  console.log(`Updating ${payload.length} env vars (adding/overwriting: ${REQUIRED_KEYS.join(", ")})…`);
+  const pushedKeys = [...REQUIRED_KEYS, ...includedOptional];
+  console.log(`Updating ${payload.length} env vars (adding/overwriting: ${pushedKeys.join(", ")})…`);
   const result = (await renderFetch(`/services/${SERVICE_ID}/env-vars`, {
     method: "PUT",
     body: JSON.stringify(payload),

@@ -3,6 +3,7 @@ import { logger } from "./lib/logger";
 import { runMigrations } from "./migrate";
 import { startKeepAlive } from "./lib/keepAlive";
 import { reconcileStaleWork } from "./orchestrator";
+import { integrationStatus } from "./lib/integrations";
 
 const rawPort = process.env["PORT"];
 
@@ -20,6 +21,17 @@ if (missingKeys.length > 0) {
     "Missing API key env vars — AI chat and browser tool routes will fail at runtime",
   );
 }
+
+// Surface which optional third-party integrations are wired (booleans only —
+// no secret values are ever logged).
+const integrations = integrationStatus();
+logger.info(
+  {
+    configured: integrations.filter((i) => i.configured).map((i) => i.key),
+    notConfigured: integrations.filter((i) => !i.configured).map((i) => i.key),
+  },
+  "Third-party integrations status",
+);
 
 const port = Number(rawPort);
 

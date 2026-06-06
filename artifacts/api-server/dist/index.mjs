@@ -20501,27 +20501,27 @@ var require_router = __commonJS({
     var slice = Array.prototype.slice;
     var flatten = Array.prototype.flat;
     var methods = METHODS.map((method) => method.toLowerCase());
-    module.exports = Router16;
+    module.exports = Router17;
     module.exports.Route = Route;
-    function Router16(options) {
-      if (!(this instanceof Router16)) {
-        return new Router16(options);
+    function Router17(options) {
+      if (!(this instanceof Router17)) {
+        return new Router17(options);
       }
       const opts = options || {};
-      function router16(req, res, next) {
-        router16.handle(req, res, next);
+      function router17(req, res, next) {
+        router17.handle(req, res, next);
       }
-      Object.setPrototypeOf(router16, this);
-      router16.caseSensitive = opts.caseSensitive;
-      router16.mergeParams = opts.mergeParams;
-      router16.params = {};
-      router16.strict = opts.strict;
-      router16.stack = [];
-      return router16;
+      Object.setPrototypeOf(router17, this);
+      router17.caseSensitive = opts.caseSensitive;
+      router17.mergeParams = opts.mergeParams;
+      router17.params = {};
+      router17.strict = opts.strict;
+      router17.stack = [];
+      return router17;
     }
-    Router16.prototype = function() {
+    Router17.prototype = function() {
     };
-    Router16.prototype.param = function param(name, fn) {
+    Router17.prototype.param = function param(name, fn) {
       if (!name) {
         throw new TypeError("argument name is required");
       }
@@ -20541,7 +20541,7 @@ var require_router = __commonJS({
       params.push(fn);
       return this;
     };
-    Router16.prototype.handle = function handle(req, res, callback) {
+    Router17.prototype.handle = function handle(req, res, callback) {
       if (!callback) {
         throw new TypeError("argument callback is required");
       }
@@ -20668,7 +20668,7 @@ var require_router = __commonJS({
         }
       }
     };
-    Router16.prototype.use = function use(handler) {
+    Router17.prototype.use = function use(handler) {
       let offset = 0;
       let path2 = "/";
       if (typeof handler !== "function") {
@@ -20701,7 +20701,7 @@ var require_router = __commonJS({
       }
       return this;
     };
-    Router16.prototype.route = function route(path2) {
+    Router17.prototype.route = function route(path2) {
       const route2 = new Route(path2);
       const layer = new Layer(path2, {
         sensitive: this.caseSensitive,
@@ -20716,7 +20716,7 @@ var require_router = __commonJS({
       return route2;
     };
     methods.concat("all").forEach(function(method) {
-      Router16.prototype[method] = function(path2) {
+      Router17.prototype[method] = function(path2) {
         const route = this.route(path2);
         route[method].apply(route, slice.call(arguments, 1));
         return this;
@@ -20899,13 +20899,13 @@ var require_application = __commonJS({
     var compileTrust = require_utils3().compileTrust;
     var resolve = __require("node:path").resolve;
     var once = require_once();
-    var Router16 = require_router();
+    var Router17 = require_router();
     var slice = Array.prototype.slice;
     var flatten = Array.prototype.flat;
     var app2 = exports = module.exports = {};
     var trustProxyDefaultSymbol = "@@symbol:trust_proxy_default";
     app2.init = function init() {
-      var router16 = null;
+      var router17 = null;
       this.cache = /* @__PURE__ */ Object.create(null);
       this.engines = /* @__PURE__ */ Object.create(null);
       this.settings = /* @__PURE__ */ Object.create(null);
@@ -20914,13 +20914,13 @@ var require_application = __commonJS({
         configurable: true,
         enumerable: true,
         get: function getrouter() {
-          if (router16 === null) {
-            router16 = new Router16({
+          if (router17 === null) {
+            router17 = new Router17({
               caseSensitive: this.enabled("case sensitive routing"),
               strict: this.enabled("strict routing")
             });
           }
-          return router16;
+          return router17;
         }
       });
     };
@@ -20991,15 +20991,15 @@ var require_application = __commonJS({
       if (fns.length === 0) {
         throw new TypeError("app.use() requires a middleware function");
       }
-      var router16 = this.router;
+      var router17 = this.router;
       fns.forEach(function(fn2) {
         if (!fn2 || !fn2.handle || !fn2.set) {
-          return router16.use(path2, fn2);
+          return router17.use(path2, fn2);
         }
         debug(".use app under %s", path2);
         fn2.mountpath = path2;
         fn2.parent = this;
-        router16.use(path2, function mounted_app(req, res, next) {
+        router17.use(path2, function mounted_app(req, res, next) {
           var orig = req.app;
           fn2.handle(req, res, function(err) {
             Object.setPrototypeOf(req, orig.request);
@@ -23572,7 +23572,7 @@ var require_express = __commonJS({
     var EventEmitter = __require("node:events").EventEmitter;
     var mixin = require_merge_descriptors();
     var proto = require_application();
-    var Router16 = require_router();
+    var Router17 = require_router();
     var req = require_request();
     var res = require_response();
     exports = module.exports = createApplication;
@@ -23594,8 +23594,8 @@ var require_express = __commonJS({
     exports.application = proto;
     exports.request = req;
     exports.response = res;
-    exports.Route = Router16.Route;
-    exports.Router = Router16;
+    exports.Route = Router17.Route;
+    exports.Router = Router17;
     exports.json = bodyParser.json;
     exports.raw = bodyParser.raw;
     exports.static = require_serve_static();
@@ -28104,7 +28104,7 @@ var require_pino = __commonJS({
     function pinoBundlerAbsolutePath(p) {
       try {
         const path2 = __require("path");
-        const outputDir = "/home/runner/work/BOS-AURA/BOS-AURA/artifacts/api-server/dist";
+        const outputDir = "/home/user/BOS-AURA/artifacts/api-server/dist";
         return path2.resolve(outputDir, p.replace(/^\.\//, ""));
       } catch (e) {
         const f = new Function("p", "return new URL(p, import.meta.url).pathname");
@@ -54233,13 +54233,13 @@ var init_src = __esm({
 });
 
 // src/app.ts
-var import_express16 = __toESM(require_express2(), 1);
+var import_express17 = __toESM(require_express2(), 1);
 var import_cors = __toESM(require_lib3(), 1);
 var import_cookie_parser = __toESM(require_cookie_parser(), 1);
 var import_pino_http = __toESM(require_logger(), 1);
 
 // src/routes/index.ts
-var import_express15 = __toESM(require_express2(), 1);
+var import_express16 = __toESM(require_express2(), 1);
 
 // src/routes/health.ts
 var import_express = __toESM(require_express2(), 1);
@@ -58764,8 +58764,225 @@ var import_express7 = __toESM(require_express2(), 1);
 init_src();
 init_src();
 init_drizzle_orm();
+
+// src/lib/integrations.ts
+import { randomUUID } from "node:crypto";
+function clip(s, n) {
+  return s.length > n ? `${s.slice(0, n)}
+\u2026[truncated ${s.length - n} chars]` : s;
+}
+var OPENROUTER_DIRECT = "https://openrouter.ai/api/v1";
+var OPENROUTER_VIA_HELICONE = "https://openrouter.helicone.ai/api/v1";
+function heliconeEnabled() {
+  return !!process.env["HELICONE_API_KEY"];
+}
+function llmBaseUrl() {
+  return heliconeEnabled() ? OPENROUTER_VIA_HELICONE : OPENROUTER_DIRECT;
+}
+function heliconeHeaders(extra) {
+  const key = process.env["HELICONE_API_KEY"];
+  if (!key) return {};
+  return {
+    "Helicone-Auth": `Bearer ${key}`,
+    "Helicone-Cache-Enabled": "false",
+    ...extra
+  };
+}
+function formatHits(provider, query, hits) {
+  if (!hits.length) return `no web results for "${query}" (via ${provider}).`;
+  const body = hits.map((h, i) => `${i + 1}. ${h.title || "(untitled)"}
+   ${h.url}
+   ${clip(h.snippet.trim(), 300)}`).join("\n\n");
+  return `[search provider: ${provider}]
+${body}`;
+}
+async function tavilySearch(query, limit) {
+  const key = process.env["TAVILY_API_KEY"];
+  if (!key) throw new Error("TAVILY_API_KEY is not set");
+  const r = await fetch("https://api.tavily.com/search", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      query,
+      max_results: limit,
+      search_depth: "basic",
+      include_answer: false
+    })
+  });
+  if (!r.ok) throw new Error(`Tavily ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  const data = await r.json();
+  const hits = (data.results ?? []).map((x) => ({
+    title: x.title ?? "",
+    url: x.url ?? "",
+    snippet: x.content ?? ""
+  }));
+  return formatHits("tavily", query, hits);
+}
+async function exaSearch(query, limit) {
+  const key = process.env["EXA_API_KEY"];
+  if (!key) throw new Error("EXA_API_KEY is not set");
+  const r = await fetch("https://api.exa.ai/search", {
+    method: "POST",
+    headers: { "x-api-key": key, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      query,
+      numResults: limit,
+      type: "auto",
+      contents: { text: { maxCharacters: 600 } }
+    })
+  });
+  if (!r.ok) throw new Error(`Exa ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  const data = await r.json();
+  const hits = (data.results ?? []).map((x) => ({
+    title: x.title ?? "",
+    url: x.url ?? "",
+    snippet: x.text ?? ""
+  }));
+  return formatHits("exa", query, hits);
+}
+async function sendInngestEvent(name, data) {
+  const key = process.env["INNGEST_EVENT_KEY"];
+  if (!key) return;
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 5e3);
+    try {
+      const r = await fetch(`https://inn.gs/e/${encodeURIComponent(key)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, data, ts: Date.now() }),
+        signal: ctrl.signal
+      });
+      if (!r.ok) {
+        logger.debug({ status: r.status, event: name }, "inngest: event rejected");
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch (err) {
+    logger.debug({ err, event: name }, "inngest: event send failed");
+  }
+}
+function langsmithEnabled() {
+  const key = process.env["LANGSMITH_API_KEY"] ?? process.env["LANGCHAIN_API_KEY"];
+  if (!key) return false;
+  const flag = (process.env["LANGSMITH_TRACING"] ?? process.env["LANGCHAIN_TRACING_V2"] ?? "true").toLowerCase();
+  return flag !== "false" && flag !== "0";
+}
+function dottedTime(d) {
+  const iso = d.toISOString();
+  const [date6, time4] = iso.replace("Z", "").split("T");
+  const [hms, ms = "000"] = time4.split(".");
+  return `${date6.replace(/-/g, "")}T${hms.replace(/:/g, "")}${ms.padEnd(3, "0")}000Z`;
+}
+function traceLlmRun(trace) {
+  if (!langsmithEnabled()) return;
+  void (async () => {
+    try {
+      const key = process.env["LANGSMITH_API_KEY"] ?? process.env["LANGCHAIN_API_KEY"];
+      const endpoint = process.env["LANGSMITH_ENDPOINT"] ?? process.env["LANGCHAIN_ENDPOINT"] ?? "https://api.smith.langchain.com";
+      const project = process.env["LANGSMITH_PROJECT"] ?? process.env["LANGCHAIN_PROJECT"] ?? "openclaw-omega";
+      const id = randomUUID();
+      const start = trace.startedAt;
+      const end = trace.endedAt ?? /* @__PURE__ */ new Date();
+      const body = {
+        id,
+        trace_id: id,
+        dotted_order: `${dottedTime(start)}${id}`,
+        name: trace.name,
+        run_type: "llm",
+        session_name: project,
+        start_time: start.toISOString(),
+        end_time: end.toISOString(),
+        inputs: { input: trace.input },
+        outputs: trace.error ? void 0 : { output: trace.output },
+        error: trace.error,
+        extra: { metadata: { model: trace.model, ...trace.metadata ?? {} } }
+      };
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 5e3);
+      try {
+        const r = await fetch(`${endpoint.replace(/\/$/, "")}/runs`, {
+          method: "POST",
+          headers: { "x-api-key": key, "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+          signal: ctrl.signal
+        });
+        if (!r.ok) logger.debug({ status: r.status }, "langsmith: run rejected");
+      } finally {
+        clearTimeout(timer);
+      }
+    } catch (err) {
+      logger.debug({ err }, "langsmith: trace failed");
+    }
+  })();
+}
+function e2bConfigured() {
+  return !!process.env["E2B_API_KEY"];
+}
+var E2B_PKG = "@e2b/code-interpreter";
+var E2B_TIMEOUT_MS = 3e4;
+async function e2bExec(language, source) {
+  const apiKey = process.env["E2B_API_KEY"];
+  if (!apiKey) return "error: E2B_API_KEY is not set \u2014 cloud sandbox is unavailable.";
+  let mod;
+  try {
+    mod = await import(E2B_PKG);
+  } catch {
+    return `error: the E2B SDK (${E2B_PKG}) is not installed on the server. Install it to enable cloud_code_exec.`;
+  }
+  const Sandbox = mod?.Sandbox;
+  if (!Sandbox || typeof Sandbox.create !== "function") {
+    return "error: E2B SDK loaded but no Sandbox export was found.";
+  }
+  const lang = language.toLowerCase();
+  const e2bLanguage = lang === "javascript" || lang === "js" || lang === "node" ? "js" : "python";
+  let sandbox;
+  try {
+    sandbox = await Sandbox.create({ apiKey, timeoutMs: E2B_TIMEOUT_MS });
+    const execution = await sandbox.runCode(source, { language: e2bLanguage });
+    const stdout = (execution.logs?.stdout ?? []).join("");
+    const stderr = (execution.logs?.stderr ?? []).join("");
+    const parts = ["[e2b cloud sandbox]"];
+    if (stdout) parts.push(`stdout:
+${clip(stdout.trim(), 4e3)}`);
+    if (stderr) parts.push(`stderr:
+${clip(stderr.trim(), 4e3)}`);
+    if (execution.error) {
+      parts.push(`error: ${execution.error.name ?? ""} ${execution.error.value ?? ""}`.trim());
+    }
+    if (execution.text && !stdout) parts.push(`result:
+${clip(execution.text.trim(), 4e3)}`);
+    if (parts.length === 1) parts.push("(no output)");
+    return parts.join("\n");
+  } catch (err) {
+    return `error: E2B execution failed: ${String(err).slice(0, 300)}`;
+  } finally {
+    try {
+      await sandbox?.kill();
+    } catch {
+    }
+  }
+}
+function integrationStatus() {
+  const has = (k) => !!process.env[k];
+  return [
+    { key: "openrouter", name: "OpenRouter", category: "llm", envVar: "OPENROUTER_API_KEY", configured: has("OPENROUTER_API_KEY") },
+    { key: "neurobuddy", name: "Buddy AI (NeuroBuddy)", category: "llm", envVar: "NEUROBUDDY_API_KEY", configured: has("NEUROBUDDY_API_KEY") },
+    { key: "helicone", name: "Helicone", category: "observability", envVar: "HELICONE_API_KEY", configured: has("HELICONE_API_KEY") },
+    { key: "langsmith", name: "LangSmith (LangChain)", category: "observability", envVar: "LANGSMITH_API_KEY", configured: langsmithEnabled() },
+    { key: "tavily", name: "Tavily", category: "search", envVar: "TAVILY_API_KEY", configured: has("TAVILY_API_KEY") },
+    { key: "exa", name: "Exa", category: "search", envVar: "EXA_API_KEY", configured: has("EXA_API_KEY") },
+    { key: "firecrawl", name: "Firecrawl", category: "search", envVar: "FIRECRAWL_API_KEY", configured: has("FIRECRAWL_API_KEY") },
+    { key: "steel", name: "Steel", category: "browser", envVar: "STEEL_API_KEY", configured: has("STEEL_API_KEY") },
+    { key: "inngest", name: "Inngest", category: "events", envVar: "INNGEST_EVENT_KEY", configured: has("INNGEST_EVENT_KEY") },
+    { key: "e2b", name: "E2B", category: "sandbox", envVar: "E2B_API_KEY", configured: has("E2B_API_KEY") }
+  ];
+}
+
+// src/routes/ai.ts
 var router7 = (0, import_express7.Router)();
-var OPENROUTER_BASE = "https://openrouter.ai/api/v1";
+var OPENROUTER_BASE = llmBaseUrl();
 var AGENT_PERSONAS = {
   1: `You are ABBY, the sovereign master orchestrator of the ABBY CLAW multi-agent swarm running inside OPENCLAW OMEGA \u2014 a Discord-style command center.
 
@@ -58809,7 +59026,10 @@ function openrouterHeaders() {
     "Authorization": `Bearer ${key}`,
     "Content-Type": "application/json",
     "HTTP-Referer": "https://openclaw.abbyclaw.io",
-    "X-Title": "OPENCLAW OMEGA"
+    "X-Title": "OPENCLAW OMEGA",
+    // Adds Helicone-Auth (and logging hints) only when Helicone is configured;
+    // otherwise this spreads nothing.
+    ...heliconeHeaders()
   };
 }
 router7.get("/ai/models", async (req, res) => {
@@ -59297,7 +59517,7 @@ async function ssrfGuard(url2) {
   }
   return null;
 }
-function clip(s, n) {
+function clip2(s, n) {
   return s.length > n ? `${s.slice(0, n)}
 \u2026[truncated ${s.length - n} chars]` : s;
 }
@@ -59313,9 +59533,29 @@ async function firecrawlSearch(query, limit) {
   const data = await r.json();
   const results = data.data ?? [];
   if (!results.length) return `no web results for "${query}".`;
-  return results.map((x, i) => `${i + 1}. ${x.title ?? "(untitled)"}
+  return `[search provider: firecrawl]
+${results.map((x, i) => `${i + 1}. ${x.title ?? "(untitled)"}
    ${x.url ?? ""}
-   ${clip((x.description ?? "").trim(), 300)}`).join("\n\n");
+   ${clip2((x.description ?? "").trim(), 300)}`).join("\n\n")}`;
+}
+async function webSearch(query, limit) {
+  const providers = [
+    { name: "tavily", enabled: !!process.env["TAVILY_API_KEY"], run: () => tavilySearch(query, limit) },
+    { name: "exa", enabled: !!process.env["EXA_API_KEY"], run: () => exaSearch(query, limit) },
+    { name: "firecrawl", enabled: !!process.env["FIRECRAWL_API_KEY"], run: () => firecrawlSearch(query, limit) }
+  ].filter((p) => p.enabled);
+  if (!providers.length) {
+    return "error: no web search provider is configured (set TAVILY_API_KEY, EXA_API_KEY, or FIRECRAWL_API_KEY).";
+  }
+  const errors = [];
+  for (const provider of providers) {
+    try {
+      return await provider.run();
+    } catch (e) {
+      errors.push(`${provider.name}: ${String(e instanceof Error ? e.message : e).slice(0, 120)}`);
+    }
+  }
+  return `error: all web search providers failed \u2014 ${errors.join("; ")}`;
 }
 function safeCalc(expr) {
   const cleaned = expr.trim();
@@ -59492,8 +59732,8 @@ function runSandboxed(language, source) {
     child.on("close", (code) => {
       clearTimeout(timer);
       cleanup();
-      const out = clip(stdout.trim(), CODE_OUTPUT_CAP);
-      const errOut = clip(stderr.trim(), CODE_OUTPUT_CAP);
+      const out = clip2(stdout.trim(), CODE_OUTPUT_CAP);
+      const errOut = clip2(stderr.trim(), CODE_OUTPUT_CAP);
       if (killReason === "timeout") {
         resolve(`error: execution killed (timeout ${CODE_TIMEOUT_MS}ms).
 stdout:
@@ -59531,7 +59771,7 @@ var TOOL_REGISTRY = {
       const url2 = String(args["url"] ?? "").trim();
       if (!/^https?:\/\//i.test(url2)) return "error: a valid absolute http(s) url is required.";
       const content = await steelScrape(url2);
-      return clip(content, 6e3);
+      return clip2(content, 6e3);
     }
   },
   web_screenshot: {
@@ -59553,7 +59793,7 @@ var TOOL_REGISTRY = {
   },
   web_search: {
     name: "web_search",
-    description: "Search the live web and return the top results (title, URL, snippet). Use to discover current information and find pages worth reading. To read a result's full content, follow up with web_scrape on its URL.",
+    description: "Search the live web and return the top results (title, URL, snippet). Backed by Tavily, Exa, and Firecrawl with automatic failover. Use to discover current information and find pages worth reading. To read a result's full content, follow up with web_scrape on its URL.",
     parameters: {
       type: "object",
       properties: {
@@ -59568,7 +59808,7 @@ var TOOL_REGISTRY = {
       let limit = Number(args["limit"] ?? 5);
       if (!Number.isFinite(limit)) limit = 5;
       limit = Math.max(1, Math.min(10, Math.floor(limit)));
-      return firecrawlSearch(query, limit);
+      return webSearch(query, limit);
     }
   },
   http_request: {
@@ -59620,7 +59860,7 @@ var TOOL_REGISTRY = {
         const text2 = await r.text();
         const safe = redactSecrets(text2, usedSecrets);
         return `HTTP ${r.status} ${r.statusText}
-${clip(safe, 4e3)}`;
+${clip2(safe, 4e3)}`;
       } catch (e) {
         return redactSecrets(`error: request failed: ${String(e).slice(0, 200)}`, usedSecrets);
       } finally {
@@ -59644,6 +59884,27 @@ ${clip(safe, 4e3)}`;
       const source = String(args["source"] ?? "");
       if (!source.trim()) return "error: source is required.";
       return runSandboxed(language, source);
+    }
+  },
+  cloud_code_exec: {
+    name: "cloud_code_exec",
+    description: "Execute code in a fully isolated E2B cloud sandbox (a real remote VM with network access and a full runtime). Supports 'python' and 'javascript'. Use this instead of code_exec when the code needs network access, pip/npm packages, or stronger isolation than the local sandbox. Returns stdout/stderr/result.",
+    parameters: {
+      type: "object",
+      properties: {
+        language: { type: "string", enum: ["python", "javascript"], description: "Runtime to use." },
+        source: { type: "string", description: "Self-contained source code. Print results to stdout." }
+      },
+      required: ["language", "source"]
+    },
+    run: async (args) => {
+      const language = String(args["language"] ?? "");
+      const source = String(args["source"] ?? "");
+      if (!source.trim()) return "error: source is required.";
+      if (!e2bConfigured()) {
+        return "error: E2B cloud sandbox is not configured (set E2B_API_KEY). Use code_exec for local execution instead.";
+      }
+      return e2bExec(language, source);
     }
   },
   memory_write: {
@@ -59687,7 +59948,7 @@ ${clip(safe, 4e3)}`;
       const like2 = `%${query}%`;
       const rows = await db.select().from(agentMemoryTable).where(or(ilike(agentMemoryTable.content, like2), ilike(agentMemoryTable.key, like2), ilike(agentMemoryTable.tags, like2))).orderBy(desc(agentMemoryTable.createdAt)).limit(5);
       if (!rows.length) return `no memory entries matched "${query}".`;
-      return rows.map((m) => `#${m.id} [${m.agentName ?? "?"}${m.key ? ` \xB7 ${m.key}` : ""}] ${clip(m.content, 600)}`).join("\n---\n");
+      return rows.map((m) => `#${m.id} [${m.agentName ?? "?"}${m.key ? ` \xB7 ${m.key}` : ""}] ${clip2(m.content, 600)}`).join("\n---\n");
     }
   },
   calculator: {
@@ -59802,7 +60063,7 @@ ${clip(safe, 4e3)}`;
       try {
         const res = await callPlatformApi({ platform, method, path: path2, query, body });
         return `${platform.displayName} API \u2192 HTTP ${res.status} ${res.statusText}
-${clip(res.body, 4e3)}`;
+${clip2(res.body, 4e3)}`;
       } catch (e) {
         return `error: ${String(e instanceof Error ? e.message : e).slice(0, 300)}`;
       }
@@ -59813,13 +60074,13 @@ var ALL_TOOLS = Object.keys(TOOL_REGISTRY);
 var AGENT_TOOLS = {
   1: ALL_TOOLS,
   // ABBY — full authority
-  2: ["code_exec", "calculator", "http_request", "web_scrape", "web_search", "memory_search", "memory_write", "vault_list", "send_message"],
+  2: ["code_exec", "cloud_code_exec", "calculator", "http_request", "web_scrape", "web_search", "memory_search", "memory_write", "vault_list", "send_message"],
   // FORGE — code
   3: ["web_scrape", "web_screenshot", "web_search", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "send_message"],
   // CRAWLER — browser
   4: ["memory_write", "memory_search", "web_search", "web_scrape", "http_request", "calculator", "vault_list", "send_message"],
   // VAULT — memory/RAG
-  5: ["http_request", "web_scrape", "web_search", "code_exec", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "send_message"],
+  5: ["http_request", "web_scrape", "web_search", "code_exec", "cloud_code_exec", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "send_message"],
   // WIRE — APIs
   6: ["web_scrape", "web_search", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "send_message"]
   // MR.NICE — social
@@ -59863,24 +60124,35 @@ async function reconcileStaleWork() {
   }
 }
 async function completeChat(model, system, user) {
-  const r = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
-    method: "POST",
-    headers: openrouterHeaders(),
-    body: JSON.stringify({
-      model,
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: user }
-      ],
-      stream: false,
-      max_tokens: 800
-    })
-  });
+  const startedAt = /* @__PURE__ */ new Date();
+  let r;
+  try {
+    r = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+      method: "POST",
+      headers: openrouterHeaders(),
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: user }
+        ],
+        stream: false,
+        max_tokens: 800
+      })
+    });
+  } catch (err) {
+    traceLlmRun({ name: "completeChat", model, input: { system, user }, output: null, startedAt, error: String(err) });
+    throw err;
+  }
   if (!r.ok) {
-    throw new Error(`OpenRouter ${r.status}: ${(await r.text()).slice(0, 200)}`);
+    const errText = (await r.text()).slice(0, 200);
+    traceLlmRun({ name: "completeChat", model, input: { system, user }, output: null, startedAt, error: `OpenRouter ${r.status}: ${errText}` });
+    throw new Error(`OpenRouter ${r.status}: ${errText}`);
   }
   const data = await r.json();
-  return data?.choices?.[0]?.message?.content?.trim() || "(no response)";
+  const out = data?.choices?.[0]?.message?.content?.trim() || "(no response)";
+  traceLlmRun({ name: "completeChat", model, input: { system, user }, output: out, startedAt });
+  return out;
 }
 async function completeChatTurn(model, messages, tools) {
   const body = { model, messages, stream: false, max_tokens: 1024 };
@@ -60159,6 +60431,7 @@ async function dispatchDirectives(directives, claws, channelId, priority, abby) 
 }
 async function orchestrateGoal(opts) {
   const { goal, channelId, priority } = opts;
+  void sendInngestEvent("swarm/goal.received", { goal, channelId, priority });
   try {
     const agents = await db.select().from(agentsTable);
     const abby = agents.find((a) => a.id === ABBY_ID) ?? null;
@@ -60258,8 +60531,15 @@ If not, respond with ONLY a JSON array (no prose) of up to 2 follow-up directive
         messageType: "agent"
       });
     }
+    void sendInngestEvent("swarm/goal.completed", {
+      goal,
+      channelId,
+      clawReports: results.length,
+      results: results.map((r) => ({ name: r.name, result: r.result.slice(0, 500) }))
+    });
   } catch (err) {
     logger.error({ err }, "orchestrateGoal failed");
+    void sendInngestEvent("swarm/goal.failed", { goal, channelId, error: String(err).slice(0, 300) });
     await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.id, ABBY_ID)).catch(() => {
     });
     await postMessage({
@@ -60779,7 +61059,7 @@ init_src();
 init_src();
 init_drizzle_orm();
 var router11 = (0, import_express11.Router)();
-var OPENROUTER_BASE2 = "https://openrouter.ai/api/v1";
+var OPENROUTER_BASE2 = llmBaseUrl();
 var AGENT_NAME_MAP = {
   abby: 1,
   forge: 2,
@@ -60900,7 +61180,8 @@ router11.post("/external/v1/chat/completions", async (req, res) => {
     "Authorization": `Bearer ${orKey}`,
     "Content-Type": "application/json",
     "HTTP-Referer": "https://openclaw.abbyclaw.io",
-    "X-Title": "OPENCLAW OMEGA External API"
+    "X-Title": "OPENCLAW OMEGA External API",
+    ...heliconeHeaders()
   };
   if (stream) {
     res.setHeader("Content-Type", "text/event-stream");
@@ -61018,8 +61299,21 @@ router11.post("/external/v1/messages", async (req, res) => {
 });
 var external_default = router11;
 
-// src/routes/auth.ts
+// src/routes/integrations.ts
 var import_express12 = __toESM(require_express2(), 1);
+var router12 = (0, import_express12.Router)();
+router12.get("/integrations", (_req, res) => {
+  const items = integrationStatus();
+  res.json({
+    integrations: items,
+    configuredCount: items.filter((i) => i.configured).length,
+    total: items.length
+  });
+});
+var integrations_default = router12;
+
+// src/routes/auth.ts
+var import_express13 = __toESM(require_express2(), 1);
 
 // src/lib/auth.ts
 import {
@@ -61126,8 +61420,8 @@ function requireOperator(req, res, next) {
 }
 
 // src/routes/auth.ts
-var router12 = (0, import_express12.Router)();
-router12.post("/auth/login", (req, res) => {
+var router13 = (0, import_express13.Router)();
+router13.post("/auth/login", (req, res) => {
   const password = req.body?.password;
   if (!verifyPassword(password)) {
     res.status(401).json({ error: "Invalid operator password" });
@@ -61137,22 +61431,22 @@ router12.post("/auth/login", (req, res) => {
   res.cookie(SESSION_COOKIE, token, sessionCookieOptions());
   res.status(200).json({ authenticated: true });
 });
-router12.post("/auth/logout", (_req, res) => {
+router13.post("/auth/logout", (_req, res) => {
   const opts = sessionCookieOptions();
   res.clearCookie(SESSION_COOKIE, { ...opts, maxAge: void 0 });
   res.status(200).json({ authenticated: false });
 });
-router12.get("/auth/me", (req, res) => {
+router13.get("/auth/me", (req, res) => {
   const token = req.cookies?.[SESSION_COOKIE];
   res.status(200).json({ authenticated: verifySessionToken(token) });
 });
-var auth_default = router12;
+var auth_default = router13;
 
 // src/routes/vault.ts
-var import_express13 = __toESM(require_express2(), 1);
+var import_express14 = __toESM(require_express2(), 1);
 init_src();
 init_drizzle_orm();
-var router13 = (0, import_express13.Router)();
+var router14 = (0, import_express14.Router)();
 function fmt2(row) {
   return {
     id: row.id,
@@ -61162,11 +61456,11 @@ function fmt2(row) {
     updatedAt: row.updatedAt.toISOString()
   };
 }
-router13.get("/vault", async (_req, res) => {
+router14.get("/vault", async (_req, res) => {
   const rows = await db.select().from(vaultSecretsTable).orderBy(desc(vaultSecretsTable.updatedAt));
   res.json(rows.map(fmt2));
 });
-router13.put("/vault", async (req, res) => {
+router14.put("/vault", async (req, res) => {
   const parsed = setVaultSecretSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid secret data" });
@@ -61197,7 +61491,7 @@ router13.put("/vault", async (req, res) => {
     res.status(500).json({ error: "Failed to store secret" });
   }
 });
-router13.delete("/vault/:name", async (req, res) => {
+router14.delete("/vault/:name", async (req, res) => {
   const name = req.params.name;
   try {
     const [row] = await db.delete(vaultSecretsTable).where(eq(vaultSecretsTable.name, name)).returning();
@@ -61211,12 +61505,12 @@ router13.delete("/vault/:name", async (req, res) => {
     res.status(500).json({ error: "Failed to delete secret" });
   }
 });
-var vault_default = router13;
+var vault_default = router14;
 
 // src/routes/social.ts
-var import_express14 = __toESM(require_express2(), 1);
-var router14 = (0, import_express14.Router)();
-router14.get("/social/platforms", async (_req, res) => {
+var import_express15 = __toESM(require_express2(), 1);
+var router15 = (0, import_express15.Router)();
+router15.get("/social/platforms", async (_req, res) => {
   const platforms = Object.values(PLATFORMS);
   const rows = await Promise.all(
     platforms.map(async (p) => ({
@@ -61230,30 +61524,31 @@ router14.get("/social/platforms", async (_req, res) => {
   );
   res.json(rows);
 });
-var social_default = router14;
+var social_default = router15;
 
 // src/routes/index.ts
-var router15 = (0, import_express15.Router)();
-router15.use(health_default);
-router15.use("/agents", agents_default);
-router15.use("/channels", channels_default);
-router15.use("/tasks", tasks_default);
-router15.use(telemetry_default);
-router15.use("/swarm", swarm_default);
-router15.use(commands_default);
-router15.use(steel_default);
-router15.use(ai_default);
-router15.use(neurobuddy_default);
-router15.use(external_default);
-router15.use(auth_default);
-router15.use(requireOperator, vault_default);
-router15.use(requireOperator, social_default);
-var routes_default = router15;
+var router16 = (0, import_express16.Router)();
+router16.use(health_default);
+router16.use("/agents", agents_default);
+router16.use("/channels", channels_default);
+router16.use("/tasks", tasks_default);
+router16.use(telemetry_default);
+router16.use("/swarm", swarm_default);
+router16.use(commands_default);
+router16.use(steel_default);
+router16.use(ai_default);
+router16.use(neurobuddy_default);
+router16.use(external_default);
+router16.use(integrations_default);
+router16.use(auth_default);
+router16.use(requireOperator, vault_default);
+router16.use(requireOperator, social_default);
+var routes_default = router16;
 
 // src/app.ts
 import path from "path";
 import { fileURLToPath } from "url";
-var app = (0, import_express16.default)();
+var app = (0, import_express17.default)();
 app.use(
   (0, import_pino_http.default)({
     logger,
@@ -61275,8 +61570,8 @@ app.use(
 );
 app.use((0, import_cors.default)());
 app.use((0, import_cookie_parser.default)());
-app.use(import_express16.default.json());
-app.use(import_express16.default.urlencoded({ extended: true }));
+app.use(import_express17.default.json());
+app.use(import_express17.default.urlencoded({ extended: true }));
 app.use("/api", routes_default);
 app.get("/", (_req, res) => {
   res.json({ status: "ok", service: "bos-aura-api" });
@@ -61286,7 +61581,7 @@ if (process.env["NODE_ENV"] === "production") {
   const __dirname_app = path.dirname(__filename_app);
   const staticPath = path.join(__dirname_app, "..", "..", "openclaw", "dist", "public");
   const indexHtml = path.join(staticPath, "index.html");
-  app.use(import_express16.default.static(staticPath));
+  app.use(import_express17.default.static(staticPath));
   app.get("/*path", (_req, res, next) => {
     res.sendFile(indexHtml, (err) => {
       if (err) next();
@@ -61556,6 +61851,14 @@ if (missingKeys.length > 0) {
     "Missing API key env vars \u2014 AI chat and browser tool routes will fail at runtime"
   );
 }
+var integrations = integrationStatus();
+logger.info(
+  {
+    configured: integrations.filter((i) => i.configured).map((i) => i.key),
+    notConfigured: integrations.filter((i) => !i.configured).map((i) => i.key)
+  },
+  "Third-party integrations status"
+);
 var port = Number(rawPort);
 if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
