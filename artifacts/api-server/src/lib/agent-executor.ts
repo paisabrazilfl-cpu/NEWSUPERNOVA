@@ -46,6 +46,12 @@ const AGENT_PROMPTS: Record<string, string> = {
 
 // Role -> allowed tool categories. Control + catalog tools are always included.
 const ALWAYS_TOOLS = new Set(["finish", "ask_user", "update_plan", "reflect", "tool_search", "tool_describe", "memory_get", "memory_put"]);
+// Global tools EVERY agent gets (Firecrawl + Steel + core web), when their keys/gates allow.
+const GLOBAL_TOOLS = new Set([
+  "firecrawl_scrape", "firecrawl_map", "firecrawl_search", "firecrawl_crawl",
+  "browser_scrape", "browser_screenshot",
+  "web_fetch", "web_search",
+]);
 const ROLE_CATEGORIES: Record<string, string[]> = {
   abby: ["agents", "control", "tool_catalog"],
   forge: ["fs", "runtime", "git", "devops", "control", "tool_catalog"],
@@ -70,7 +76,7 @@ function systemPrompt(name: string): string {
 
 function makeContextSync(workspace: string): ToolContext {
   const env: Record<string, string> = {};
-  for (const k of ["STEEL_API_KEY", "GITHUB_TOKEN", "SLACK_WEBHOOK_URL", "DISCORD_WEBHOOK_URL", "TELEGRAM_BOT_TOKEN", "GOOGLE_API_KEY", "GOOGLE_CSE_ID", "NEWSAPI_KEY"]) {
+  for (const k of ["STEEL_API_KEY", "FIRECRAWL_API_KEY", "GITHUB_TOKEN", "SLACK_WEBHOOK_URL", "DISCORD_WEBHOOK_URL", "TELEGRAM_BOT_TOKEN", "GOOGLE_API_KEY", "GOOGLE_CSE_ID", "NEWSAPI_KEY"]) {
     if (process.env[k]) env[k] = process.env[k] as string;
   }
   return {
@@ -98,7 +104,7 @@ async function makeContext(agentId: number): Promise<ToolContext> {
 function agentToolSpecs(agentName: string, ctx: ToolContext): Array<Record<string, unknown>> {
   const cats = new Set(ROLE_CATEGORIES[agentName.toLowerCase()] ?? ["fs", "web", "memory", "control", "tool_catalog"]);
   return registry.availableDefs(ctx)
-    .filter((def) => cats.has(def.category) || ALWAYS_TOOLS.has(def.name))
+    .filter((def) => cats.has(def.category) || ALWAYS_TOOLS.has(def.name) || GLOBAL_TOOLS.has(def.name))
     .map((def) => ({ type: "function", function: { name: def.name, description: def.description, parameters: def.inputSchema } }));
 }
 

@@ -145,6 +145,11 @@ export const TOOL_DEFS: ToolDef[] = [
   d("github_search", "web", "low", "Search GitHub (repos/code/issues).", obj({ query: S("Query."), search_type: S("Type.", "repositories"), max_results: I("Max.", 10) }, ["query"]), { needsNetwork: true }),
   d("reddit_search", "web", "low", "Search Reddit JSON.", obj({ query: S("Query."), subreddit: S("Subreddit."), max_results: I("Max.", 10) }, ["query"]), { needsNetwork: true }),
   d("crawl_site", "web", "medium", "Shallow single-domain crawl.", obj({ start_url: S("URL."), max_pages: I("Max pages.", 5) }, ["start_url"]), { needsNetwork: true }),
+  // Firecrawl (real, global — every agent gets these when FIRECRAWL_API_KEY is set)
+  d("firecrawl_scrape", "web", "medium", "Scrape a URL to clean markdown via Firecrawl.", obj({ url: S("URL."), only_main: B("Main content only.", true) }, ["url"]), { enabledByDefault: true, needsNetwork: true, needsEnv: ["FIRECRAWL_API_KEY"] }),
+  d("firecrawl_map", "web", "low", "Map all discoverable URLs on a site via Firecrawl.", obj({ url: S("URL."), search: S("Optional filter.") }, ["url"]), { needsNetwork: true, needsEnv: ["FIRECRAWL_API_KEY"] }),
+  d("firecrawl_search", "web", "medium", "Web search with scraped page content via Firecrawl.", obj({ query: S("Query."), limit: I("Limit.", 5) }, ["query"]), { needsNetwork: true, needsEnv: ["FIRECRAWL_API_KEY"] }),
+  d("firecrawl_crawl", "web", "high", "Crawl a site (async, polled) via Firecrawl.", obj({ url: S("URL."), limit: I("Max pages.", 20) }, ["url"]), { needsNetwork: true, needsEnv: ["FIRECRAWL_API_KEY"] }),
   d("google_search", "web", "medium", "Google CSE (needs keys).", obj({ query: S("Query.") }, ["query"]), { needsNetwork: true, needsEnv: ["GOOGLE_API_KEY", "GOOGLE_CSE_ID"] }),
   d("news_search", "web", "medium", "News search (needs key).", obj({ query: S("Query.") }, ["query"]), { needsNetwork: true, needsEnv: ["NEWSAPI_KEY"] }),
   d("x_search", "web", "medium", "Declared: X/Twitter search.", obj({ query: S("Query.") }, ["query"]), {}),
@@ -404,6 +409,11 @@ export class ToolRegistry {
     H.set("hackernews_search", (a, c) => httpJson(c, "GET", `https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(String(a.query))}&tags=story&hitsPerPage=${a.max_results ?? 10}`));
     H.set("reddit_search", handleRedditSearch);
     H.set("crawl_site", handleCrawl);
+    // firecrawl
+    H.set("firecrawl_scrape", handleFirecrawlScrape);
+    H.set("firecrawl_map", handleFirecrawlMap);
+    H.set("firecrawl_search", handleFirecrawlSearch);
+    H.set("firecrawl_crawl", handleFirecrawlCrawl);
     // browser (steel)
     H.set("browser_scrape", handleSteelScrape); H.set("browser_screenshot", handleSteelScreenshot);
     // memory / rag
@@ -678,13 +688,63 @@ async function handleCrawl(a: Record<string, unknown>, c: ToolContext): Promise<
   return ok({ pages, visited: [...seen] }, `crawled ${pages.length} pages`);
 }
 
-// steel browser
+// steel browser (auth via Steel-Api-Key header)
 const STEEL_BASE = "https://api.steel.dev/v1";
+function steelHeaders(c: ToolContext): Record<string, string> {
+  return { "Steel-Api-Key": String(c.env.STEEL_API_KEY ?? ""), "Content-Type": "application/json" };
+}
 async function handleSteelScrape(a: Record<string, unknown>, c: ToolContext): Promise<ToolResult> {
-  try { const r = await fetch(`${STEEL_BASE}/scrape`, { method: "POST", headers: { Authorization: `Bearer ${c.env.STEEL_API_KEY}`, "Content-Type": "application/json" }, body: JSON.stringify({ url: a.url }) }); const data = await r.json(); return r.ok ? ok(data, "scraped") : fail("steel_error", `HTTP ${r.status}`, data); } catch (err) { return fail("steel_failed", String(err)); }
+  try {
+    const r = await fetch(`${STEEL_BASE}/scrape`, { method: "POST", headers: steelHeaders(c), body: JSON.stringify({ url: a.url, format: ["markdown"] }) });
+    const data = await r.json() as { content?: { markdown?: string }; metadata?: unknown };
+    return r.ok ? ok({ url: a.url, markdown: data.content?.markdown ?? "", metadata: data.metadata }, "scraped") : fail("steel_error", `HTTP ${r.status}`, data);
+  } catch (err) { return fail("steel_failed", String(err)); }
 }
 async function handleSteelScreenshot(a: Record<string, unknown>, c: ToolContext): Promise<ToolResult> {
-  try { const r = await fetch(`${STEEL_BASE}/screenshot`, { method: "POST", headers: { Authorization: `Bearer ${c.env.STEEL_API_KEY}`, "Content-Type": "application/json" }, body: JSON.stringify({ url: a.url, fullPage: a.fullPage === true }) }); return r.ok ? ok({ url: a.url, captured: true }, "captured") : fail("steel_error", `HTTP ${r.status}`); } catch (err) { return fail("steel_failed", String(err)); }
+  try { const r = await fetch(`${STEEL_BASE}/screenshot`, { method: "POST", headers: steelHeaders(c), body: JSON.stringify({ url: a.url, fullPage: a.fullPage === true }) }); return r.ok ? ok({ url: a.url, captured: true }, "captured") : fail("steel_error", `HTTP ${r.status}`); } catch (err) { return fail("steel_failed", String(err)); }
+}
+
+// firecrawl (auth via Bearer)
+const FIRECRAWL_BASE = "https://api.firecrawl.dev/v1";
+function fcHeaders(c: ToolContext): Record<string, string> {
+  return { Authorization: `Bearer ${c.env.FIRECRAWL_API_KEY ?? ""}`, "Content-Type": "application/json" };
+}
+async function handleFirecrawlScrape(a: Record<string, unknown>, c: ToolContext): Promise<ToolResult> {
+  try {
+    const r = await fetch(`${FIRECRAWL_BASE}/scrape`, { method: "POST", headers: fcHeaders(c), body: JSON.stringify({ url: a.url, formats: ["markdown"], onlyMainContent: a.only_main !== false }) });
+    const data = await r.json() as { success?: boolean; data?: { markdown?: string; metadata?: unknown } };
+    return r.ok && data.success ? ok({ url: a.url, markdown: data.data?.markdown ?? "", metadata: data.data?.metadata }, "scraped") : fail("firecrawl_error", `HTTP ${r.status}`, data);
+  } catch (err) { return fail("firecrawl_failed", String(err)); }
+}
+async function handleFirecrawlMap(a: Record<string, unknown>, c: ToolContext): Promise<ToolResult> {
+  try {
+    const body: Record<string, unknown> = { url: a.url }; if (a.search) body.search = a.search;
+    const r = await fetch(`${FIRECRAWL_BASE}/map`, { method: "POST", headers: fcHeaders(c), body: JSON.stringify(body) });
+    const data = await r.json() as { success?: boolean; links?: unknown[] };
+    return r.ok && data.success ? ok({ url: a.url, links: data.links ?? [] }, `${(data.links ?? []).length} links`) : fail("firecrawl_error", `HTTP ${r.status}`, data);
+  } catch (err) { return fail("firecrawl_failed", String(err)); }
+}
+async function handleFirecrawlSearch(a: Record<string, unknown>, c: ToolContext): Promise<ToolResult> {
+  try {
+    const r = await fetch(`${FIRECRAWL_BASE}/search`, { method: "POST", headers: fcHeaders(c), body: JSON.stringify({ query: a.query, limit: Number(a.limit ?? 5) }) });
+    const data = await r.json() as { success?: boolean; data?: unknown };
+    return r.ok ? ok({ query: a.query, results: data.data ?? data }, "searched") : fail("firecrawl_error", `HTTP ${r.status}`, data);
+  } catch (err) { return fail("firecrawl_failed", String(err)); }
+}
+async function handleFirecrawlCrawl(a: Record<string, unknown>, c: ToolContext): Promise<ToolResult> {
+  try {
+    const start = await fetch(`${FIRECRAWL_BASE}/crawl`, { method: "POST", headers: fcHeaders(c), body: JSON.stringify({ url: a.url, limit: Number(a.limit ?? 20) }) });
+    const started = await start.json() as { success?: boolean; id?: string };
+    if (!start.ok || !started.id) return fail("firecrawl_error", `HTTP ${start.status}`, started);
+    // Poll a bounded number of times (crawl is async).
+    for (let i = 0; i < 10; i++) {
+      await new Promise((res) => setTimeout(res, 3000));
+      const poll = await fetch(`${FIRECRAWL_BASE}/crawl/${started.id}`, { headers: fcHeaders(c) });
+      const status = await poll.json() as { status?: string; data?: unknown[]; completed?: number; total?: number };
+      if (status.status === "completed") return ok({ url: a.url, pages: status.data ?? [], count: (status.data ?? []).length }, "crawled");
+    }
+    return ok({ url: a.url, id: started.id, status: "in_progress", note: "Crawl still running; poll with the id." }, "crawl_started");
+  } catch (err) { return fail("firecrawl_failed", String(err)); }
 }
 
 // memory / rag
