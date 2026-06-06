@@ -45,7 +45,7 @@ if (process.env["NODE_ENV"] === "production") {
   const staticPath = path.join(__dirname_app, "..", "..", "openclaw", "dist", "public");
   const indexHtml = path.join(staticPath, "index.html");
   app.use(express.static(staticPath));
-  app.get("*", (_req, res, next) => {
+  app.get("/*path", (_req, res, next) => {
     res.sendFile(indexHtml, (err) => {
       if (err) next();
     });
