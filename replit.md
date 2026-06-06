@@ -66,6 +66,40 @@ A Discord-style multi-agent AI orchestrator dashboard for monitoring and directi
 - Do not ask to fix things that can be self-fixed — self-reflect, plan, execute, verify
 - Keep the cyberpunk dark aesthetic: zinc-950 background, neon cyan/purple accents
 
+## OpenRouter AI Integration
+
+- `OPENROUTER_API_KEY` — stored as a shared env var
+- Base URL: `https://openrouter.ai/api/v1` — OpenAI-compatible with streaming SSE
+- Backend routes: `POST /api/ai/chat` (SSE streaming), `POST /api/ai/complete` (non-streaming), `GET /api/ai/models`
+- Each agent has a cyberpunk persona system prompt in `artifacts/api-server/src/routes/ai.ts`
+- Client hook: `artifacts/openclaw/src/hooks/useAiStream.ts` — fetch-based SSE reader with abort, clear, token accumulation
+- CommandBar CHAT tab has `AI ON/OFF` toggle — when ON, sending a message triggers a streaming AI response from the targeted agent
+- Streaming tokens appear live in a banner above the input (agent-colored neon border + cursor blink)
+- On completion, full response is saved to the `messages` table and ChatStream picks it up via polling
+
+**Agent → Model mapping:**
+| Agent | Model |
+|-------|-------|
+| ABBY | `x-ai/grok-4.3` |
+| FORGE | `qwen/qwen3.7-plus` |
+| CRAWLER | `x-ai/grok-build-0.1` |
+| VAULT | `qwen/qwen3.7-max` |
+| WIRE | `x-ai/grok-4.20` |
+| MR.NICE | `qwen/qwen3.6-plus` |
+
+## Steel Dev Browser API
+
+- `STEEL_API_KEY` — stored as a shared env var
+- API proxy at `/api/steel/` routes to `https://api.steel.dev/v1/`
+- Endpoints: `GET/POST /api/steel/sessions`, `DELETE /api/steel/sessions/:id`, `POST /api/steel/scrape`, `POST /api/steel/screenshot`, `POST /api/steel/pdf`
+- Session object: `{ id, status, debugUrl (player iframe), sessionViewerUrl (Steel UI), websocketUrl, creditsUsed }`
+- Frontend panel: click **STEEL** tab in LeftPanel toggle → `SteelBrowser.tsx` component
+  - **LIVE VIEW** tab — embeds `session.debugUrl` as an iframe for real-time browser viewing
+  - **SCRAPED** tab — shows extracted content from `/api/steel/scrape`
+  - **SCREENSHOT** tab — shows full-page capture from `/api/steel/screenshot`
+- CRAWLER agent (id=3, color=#0066ff) is the designated browser agent for Steel sessions
+- CommandBar presets include `steel_browser:`, `steel_scrape:`, `steel_screenshot:`, `steel_pdf:` commands
+
 ## Gotchas
 
 - Do NOT use `zod/v4` imports in `artifacts/api-server/src/` — esbuild can't resolve the subpath. Use `zod` or avoid zod entirely
