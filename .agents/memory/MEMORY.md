@@ -1,3 +1,12 @@
-- [ABBYCLAW repo](abbyclaw-repo.md) — paisabrazilfl-cpu/ABBYCLAW is a private fork of OpenClaw; full tool manifest used to seed agent capabilities
-- [Zod/v4 api-server restriction](zod-restriction.md) — api-server routes must never import zod/v4; use plain zod or no zod
-- [SVG transform percentages](svg-percentages.md) — SVG transform cannot use percentages; use viewBox + CSS centering instead
+- [ABBYCLAW repo](abbyclaw-repo.md) — ABBYCLAW is a private fork of OpenClaw; full tool inventory powering agent capability profiles.
+- [Agent tool security](agent-tool-security.md) — security posture for autonomous CLAW tools (http_request, code_exec).
+- [code_exec sandboxing](code-exec-sandbox.md) — code_exec isolated via unshare net+mount (repo hidden, no network); cwd/env-scrub alone is NOT isolation.
+- [Commands & cron schema](commands-cron-schema.md) — agent_commands + cron_jobs tables, REST API, and frontend wiring.
+- [Operator auth](operator-auth.md) — cookie-based operator sign-in guards the secrets-vault routes; why web auth is cookie-based here.
+- [Orchestration execution](orchestration-execution.md) — how real agent orchestration runs and the invariant keeping dashboard status honest.
+- [Render deploy](render-deploy.md) — BOS-AURA service on Render: service IDs, URL, pending DATABASE_URL setup.
+- [Secrets vault](secrets-vault.md) — security model + non-obvious constraints for the encrypted secrets vault and how agents consume secrets.
+- [Social connectors](social-connectors.md) — official platform API access via Replit-managed OAuth; no passwords, no browser login.
+- [Steel browser](steel-browser.md) — constraints and known limitations of the Steel.dev live browser embed.
+- [Swarm activation UX](swarm-ux.md) — swarm looks dead when CommandBar global action isn't "dispatch"; backend orchestration is pull-based and real.
+- [Toolcall status enum](toolcall-status-enum.md) — allowed tool_calls status values are fixed by the OpenAPI spec.

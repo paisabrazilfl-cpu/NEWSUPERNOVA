@@ -26,14 +26,14 @@ router.post("/", async (req, res) => {
   if (!parse.success) return res.status(400).json({ error: "Invalid task data" });
   try {
     const [task] = await db.insert(tasksTable).values(parse.data).returning();
-    res.status(201).json({
+    return res.status(201).json({
       ...task,
       createdAt: task.createdAt.toISOString(),
       completedAt: task.completedAt?.toISOString() ?? null,
     });
   } catch (err) {
     req.log.error({ err }, "Failed to create task");
-    res.status(500).json({ error: "Failed to create task" });
+    return res.status(500).json({ error: "Failed to create task" });
   }
 });
 
@@ -56,14 +56,14 @@ router.patch("/:taskId", async (req, res) => {
   try {
     const [task] = await db.update(tasksTable).set(updates).where(eq(tasksTable.id, taskId)).returning();
     if (!task) return res.status(404).json({ error: "Task not found" });
-    res.json({
+    return res.json({
       ...task,
       createdAt: task.createdAt.toISOString(),
       completedAt: task.completedAt?.toISOString() ?? null,
     });
   } catch (err) {
     req.log.error({ err }, "Failed to update task");
-    res.status(500).json({ error: "Failed to update task" });
+    return res.status(500).json({ error: "Failed to update task" });
   }
 });
 

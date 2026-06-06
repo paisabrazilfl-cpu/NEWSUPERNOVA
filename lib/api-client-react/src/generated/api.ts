@@ -24,15 +24,22 @@ import type {
   AgentInput,
   AgentTelemetry,
   AgentUpdate,
+  AuthStatus,
   Channel,
   ChannelInput,
+  DeleteVaultSecretResult,
+  Error,
   HealthStatus,
+  LoginRequest,
   Message,
   MessageInput,
+  SetVaultSecretRequest,
+  SocialPlatform,
   SwarmStatus,
   Task,
   TaskInput,
-  TaskUpdate
+  TaskUpdate,
+  VaultSecret
 } from './api.schemas';
 
 import { customFetch } from '../custom-fetch';
@@ -1307,5 +1314,518 @@ export const useResumeSwarm = <TError = ErrorType<unknown>,
         TContext
       > => {
       return useMutation(getResumeSwarmMutationOptions(options));
+    }
+
+export const getLoginUrl = () => {
+
+
+
+
+  return `/api/auth/login`
+}
+
+/**
+ * @summary Sign in as an operator (sets an HttpOnly session cookie)
+ */
+export const login = async (loginRequest: LoginRequest, options?: RequestInit): Promise<AuthStatus> => {
+
+  return customFetch<AuthStatus>(getLoginUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      loginRequest,)
+  }
+);}
+
+
+
+
+export const getLoginMutationOptions = <TError = ErrorType<Error>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof login>>, TError,{data: BodyType<LoginRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof login>>, TError,{data: BodyType<LoginRequest>}, TContext> => {
+
+const mutationKey = ['login'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof login>>, {data: BodyType<LoginRequest>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  login(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type LoginMutationResult = NonNullable<Awaited<ReturnType<typeof login>>>
+    export type LoginMutationBody = BodyType<LoginRequest>
+    export type LoginMutationError = ErrorType<Error>
+
+    /**
+ * @summary Sign in as an operator (sets an HttpOnly session cookie)
+ */
+export const useLogin = <TError = ErrorType<Error>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof login>>, TError,{data: BodyType<LoginRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof login>>,
+        TError,
+        {data: BodyType<LoginRequest>},
+        TContext
+      > => {
+      return useMutation(getLoginMutationOptions(options));
+    }
+
+export const getLogoutUrl = () => {
+
+
+
+
+  return `/api/auth/logout`
+}
+
+/**
+ * @summary Sign out (clears the session cookie)
+ */
+export const logout = async ( options?: RequestInit): Promise<AuthStatus> => {
+
+  return customFetch<AuthStatus>(getLogoutUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+export const getLogoutMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof logout>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof logout>>, TError,void, TContext> => {
+
+const mutationKey = ['logout'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof logout>>, void> = () => {
+
+
+          return  logout(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type LogoutMutationResult = NonNullable<Awaited<ReturnType<typeof logout>>>
+
+    export type LogoutMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Sign out (clears the session cookie)
+ */
+export const useLogout = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof logout>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof logout>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getLogoutMutationOptions(options));
+    }
+
+export const getGetAuthStatusUrl = () => {
+
+
+
+
+  return `/api/auth/me`
+}
+
+/**
+ * @summary Whether the caller holds a valid operator session
+ */
+export const getAuthStatus = async ( options?: RequestInit): Promise<AuthStatus> => {
+
+  return customFetch<AuthStatus>(getGetAuthStatusUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetAuthStatusQueryKey = () => {
+    return [
+    `/api/auth/me`
+    ] as const;
+    }
+
+
+export const getGetAuthStatusQueryOptions = <TData = Awaited<ReturnType<typeof getAuthStatus>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAuthStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetAuthStatusQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getAuthStatus>>> = ({ signal }) => getAuthStatus({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getAuthStatus>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetAuthStatusQueryResult = NonNullable<Awaited<ReturnType<typeof getAuthStatus>>>
+export type GetAuthStatusQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Whether the caller holds a valid operator session
+ */
+
+export function useGetAuthStatus<TData = Awaited<ReturnType<typeof getAuthStatus>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getAuthStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetAuthStatusQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getListSocialPlatformsUrl = () => {
+
+
+
+
+  return `/api/social/platforms`
+}
+
+/**
+ * @summary List official social platforms, their docs/console URLs, and live connection status
+ */
+export const listSocialPlatforms = async ( options?: RequestInit): Promise<SocialPlatform[]> => {
+
+  return customFetch<SocialPlatform[]>(getListSocialPlatformsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListSocialPlatformsQueryKey = () => {
+    return [
+    `/api/social/platforms`
+    ] as const;
+    }
+
+
+export const getListSocialPlatformsQueryOptions = <TData = Awaited<ReturnType<typeof listSocialPlatforms>>, TError = ErrorType<Error>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listSocialPlatforms>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListSocialPlatformsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listSocialPlatforms>>> = ({ signal }) => listSocialPlatforms({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listSocialPlatforms>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListSocialPlatformsQueryResult = NonNullable<Awaited<ReturnType<typeof listSocialPlatforms>>>
+export type ListSocialPlatformsQueryError = ErrorType<Error>
+
+
+/**
+ * @summary List official social platforms, their docs/console URLs, and live connection status
+ */
+
+export function useListSocialPlatforms<TData = Awaited<ReturnType<typeof listSocialPlatforms>>, TError = ErrorType<Error>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listSocialPlatforms>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListSocialPlatformsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getListVaultSecretsUrl = () => {
+
+
+
+
+  return `/api/vault`
+}
+
+/**
+ * @summary List stored secrets (metadata only, values never returned)
+ */
+export const listVaultSecrets = async ( options?: RequestInit): Promise<VaultSecret[]> => {
+
+  return customFetch<VaultSecret[]>(getListVaultSecretsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListVaultSecretsQueryKey = () => {
+    return [
+    `/api/vault`
+    ] as const;
+    }
+
+
+export const getListVaultSecretsQueryOptions = <TData = Awaited<ReturnType<typeof listVaultSecrets>>, TError = ErrorType<Error>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listVaultSecrets>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListVaultSecretsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listVaultSecrets>>> = ({ signal }) => listVaultSecrets({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listVaultSecrets>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListVaultSecretsQueryResult = NonNullable<Awaited<ReturnType<typeof listVaultSecrets>>>
+export type ListVaultSecretsQueryError = ErrorType<Error>
+
+
+/**
+ * @summary List stored secrets (metadata only, values never returned)
+ */
+
+export function useListVaultSecrets<TData = Awaited<ReturnType<typeof listVaultSecrets>>, TError = ErrorType<Error>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listVaultSecrets>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListVaultSecretsQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+
+
+
+
+
+
+export const getSetVaultSecretUrl = () => {
+
+
+
+
+  return `/api/vault`
+}
+
+/**
+ * @summary Create or update a secret (encrypted at rest)
+ */
+export const setVaultSecret = async (setVaultSecretRequest: SetVaultSecretRequest, options?: RequestInit): Promise<VaultSecret> => {
+
+  return customFetch<VaultSecret>(getSetVaultSecretUrl(),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      setVaultSecretRequest,)
+  }
+);}
+
+
+
+
+export const getSetVaultSecretMutationOptions = <TError = ErrorType<Error>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setVaultSecret>>, TError,{data: BodyType<SetVaultSecretRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof setVaultSecret>>, TError,{data: BodyType<SetVaultSecretRequest>}, TContext> => {
+
+const mutationKey = ['setVaultSecret'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof setVaultSecret>>, {data: BodyType<SetVaultSecretRequest>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  setVaultSecret(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SetVaultSecretMutationResult = NonNullable<Awaited<ReturnType<typeof setVaultSecret>>>
+    export type SetVaultSecretMutationBody = BodyType<SetVaultSecretRequest>
+    export type SetVaultSecretMutationError = ErrorType<Error>
+
+    /**
+ * @summary Create or update a secret (encrypted at rest)
+ */
+export const useSetVaultSecret = <TError = ErrorType<Error>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof setVaultSecret>>, TError,{data: BodyType<SetVaultSecretRequest>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof setVaultSecret>>,
+        TError,
+        {data: BodyType<SetVaultSecretRequest>},
+        TContext
+      > => {
+      return useMutation(getSetVaultSecretMutationOptions(options));
+    }
+
+export const getDeleteVaultSecretUrl = (name: string,) => {
+
+
+
+
+  return `/api/vault/${name}`
+}
+
+/**
+ * @summary Delete a secret by name
+ */
+export const deleteVaultSecret = async (name: string, options?: RequestInit): Promise<DeleteVaultSecretResult> => {
+
+  return customFetch<DeleteVaultSecretResult>(getDeleteVaultSecretUrl(name),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+export const getDeleteVaultSecretMutationOptions = <TError = ErrorType<Error>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteVaultSecret>>, TError,{name: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteVaultSecret>>, TError,{name: string}, TContext> => {
+
+const mutationKey = ['deleteVaultSecret'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteVaultSecret>>, {name: string}> = (props) => {
+          const {name} = props ?? {};
+
+          return  deleteVaultSecret(name,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteVaultSecretMutationResult = NonNullable<Awaited<ReturnType<typeof deleteVaultSecret>>>
+
+    export type DeleteVaultSecretMutationError = ErrorType<Error>
+
+    /**
+ * @summary Delete a secret by name
+ */
+export const useDeleteVaultSecret = <TError = ErrorType<Error>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteVaultSecret>>, TError,{name: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof deleteVaultSecret>>,
+        TError,
+        {name: string},
+        TContext
+      > => {
+      return useMutation(getDeleteVaultSecretMutationOptions(options));
     }
 

@@ -2,10 +2,13 @@ import { Router } from "express";
 import { db } from "@workspace/db";
 import { agentCommandsTable, cronJobsTable, agentsTable } from "@workspace/db";
 import { eq, desc } from "drizzle-orm";
+import { executeAgentCommand, orchestrateGoal } from "../orchestrator";
+import { isSwarmPaused } from "./swarm";
 
 const router = Router();
 
 const ABBY_ID = 1;
+const DEFAULT_CHANNEL_ID = 1;
 
 function fmt(cmd: typeof agentCommandsTable.$inferSelect) {
   return {
@@ -40,13 +43,16 @@ router.get("/commands", async (req, res) => {
   }
 });
 
-// ABBY issues a command to one agent or broadcasts to all
+// ABBY issues a command. Targeted → that CLAW actually executes it. Broadcast
+// (no toAgentId) → ABBY decomposes the goal and dispatches real directives.
+// Execution runs in the background; the dashboard fills in as agents report.
 router.post("/commands", async (req, res) => {
-  const { toAgentId, command, payload, priority = "normal" } = req.body as {
+  const { toAgentId, command, payload, priority = "normal", channelId } = req.body as {
     toAgentId?: number;
     command: string;
     payload?: string;
     priority?: string;
+    channelId?: number;
   };
 
   if (!command?.trim()) {
@@ -54,35 +60,48 @@ router.post("/commands", async (req, res) => {
     return;
   }
 
+  const targetChannelId = Number(channelId) > 0 ? Number(channelId) : DEFAULT_CHANNEL_ID;
+
   try {
+    // ── Targeted: one CLAW executes the literal command for real ──
     if (toAgentId) {
       const [agent] = await db.select().from(agentsTable).where(eq(agentsTable.id, toAgentId));
       if (!agent) {
         res.status(404).json({ error: "Target agent not found" });
         return;
       }
-    }
 
-    const targets = toAgentId
-      ? [toAgentId]
-      : (await db.select({ id: agentsTable.id }).from(agentsTable))
-          .map(a => a.id)
-          .filter(id => id !== ABBY_ID);
+      const [cmd] = await db.insert(agentCommandsTable).values({
+        fromAgentId: ABBY_ID,
+        toAgentId: agent.id,
+        command,
+        payload: payload ?? null,
+        priority,
+        status: "queued",
+      }).returning();
 
-    const created = await Promise.all(
-      targets.map(tid =>
-        db.insert(agentCommandsTable).values({
-          fromAgentId: ABBY_ID,
-          toAgentId: tid,
+      if (!isSwarmPaused()) {
+        void executeAgentCommand({
+          commandId: cmd.id,
+          agent,
           command,
           payload: payload ?? null,
-          priority,
-          status: "queued",
-        }).returning()
-      )
-    );
+          channelId: targetChannelId,
+        }).catch(err => req.log.error({ err }, "executeAgentCommand crashed"));
+      }
 
-    res.status(201).json(created.flat().map(fmt));
+      res.status(201).json([fmt(cmd)]);
+      return;
+    }
+
+    // ── Broadcast: treat the command as a goal for ABBY to orchestrate ──
+    void orchestrateGoal({
+      goal: command,
+      channelId: targetChannelId,
+      priority,
+    }).catch(err => req.log.error({ err }, "orchestrateGoal crashed"));
+
+    res.status(202).json({ orchestrating: true, goal: command });
   } catch (err) {
     req.log.error({ err }, "Failed to create command");
     res.status(500).json({ error: "Failed to create command" });

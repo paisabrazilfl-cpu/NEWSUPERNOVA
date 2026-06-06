@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { useGetSwarmStatus, usePauseSwarm, useResumeSwarm, useListAgents, useSendMessage, getListMessagesQueryKey } from "@workspace/api-client-react";
+import { useGetSwarmStatus, usePauseSwarm, useResumeSwarm, useListAgents, useSendMessage, getListMessagesQueryKey, resolveApiUrl } from "@workspace/api-client-react";
 import { Send, Pause, Play, Globe, AtSign, Zap, ChevronDown, BrainCircuit, Loader, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useQueryClient } from "@tanstack/react-query";
@@ -36,6 +36,11 @@ export function CommandBar({ activeChannelId }: CommandBarProps) {
   const [routingMode, setRoutingMode] = useState<"global" | "targeted">("global");
   const [targetAgentId, setTargetAgentId] = useState<number | null>(null);
   const [aiEnabled, setAiEnabled] = useState(true);
+  // In global mode: "chat" streams a reply from ABBY (live banner); "dispatch"
+  // hands the goal to ABBY's orchestrator so she decomposes it and the whole
+  // swarm executes for real. Default to DISPATCH so a global message actually
+  // activates the swarm (agents collaborate) rather than just one ABBY reply.
+  const [globalAction, setGlobalAction] = useState<"chat" | "dispatch">("dispatch");
 
   // ── ABBY command state ──────────────────────────────────────────────────
   const [cmdTarget, setCmdTarget] = useState<number | "all">("all");
@@ -82,11 +87,32 @@ export function CommandBar({ activeChannelId }: CommandBarProps) {
       {
         onSuccess: () => {
           queryClient.invalidateQueries({ queryKey: getListMessagesQueryKey(activeChannelId) });
-          // 2. Trigger AI response if enabled
-          if (aiEnabled) {
-            const agentId = routingMode === "targeted" ? targetAgentId : null; // null → defaults to ABBY
-            ai.send({ message: msg, agentId, channelId: activeChannelId });
+          if (!aiEnabled) return;
+          // 2a. Targeted → chat directly (stream) with the selected agent.
+          if (routingMode === "targeted") {
+            ai.send({ message: msg, agentId: targetAgentId, channelId: activeChannelId });
+            return;
           }
+          // 2b. Global DISPATCH → hand the goal to ABBY's orchestrator. ABBY
+          // decides which CLAW to use (e.g. CRAWLER opens a site) and they
+          // execute for real; the plan + results land in the feed via polling.
+          if (globalAction === "dispatch") {
+            fetch(resolveApiUrl("/api/commands"), {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ command: msg, priority: "high", channelId: activeChannelId }),
+            })
+              .then(() => {
+                setTimeout(
+                  () => queryClient.invalidateQueries({ queryKey: getListMessagesQueryKey(activeChannelId) }),
+                  1500,
+                );
+              })
+              .catch(() => {});
+            return;
+          }
+          // 2c. Global CHAT (default) → stream a live reply from ABBY.
+          ai.send({ message: msg, agentId: null, channelId: activeChannelId });
         },
       }
     );
@@ -103,7 +129,8 @@ export function CommandBar({ activeChannelId }: CommandBarProps) {
       const body: Record<string, unknown> = { command: cmdText, priority: cmdPriority };
       if (cmdTarget !== "all") body.toAgentId = cmdTarget;
       if (cmdPayload.trim()) body.payload = cmdPayload;
-      const res = await fetch("/api/commands", {
+      if (activeChannelId) body.channelId = activeChannelId;
+      const res = await fetch(resolveApiUrl("/api/commands"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -265,6 +292,32 @@ export function CommandBar({ activeChannelId }: CommandBarProps) {
 
                 {/* AI toggle */}
                 <div className="ml-auto flex items-center gap-1.5">
+                  {routingMode === "global" && aiEnabled && (
+                    <div className="flex items-center rounded-md border border-card-border overflow-hidden">
+                      <button
+                        onClick={() => setGlobalAction("chat")}
+                        className={cn(
+                          "text-[9px] font-mono uppercase px-2 py-0.5 transition-all",
+                          globalAction === "chat"
+                            ? "bg-[#00e5ff]/15 text-[#00e5ff]"
+                            : "text-muted-foreground/50 hover:text-muted-foreground"
+                        )}
+                        title="Chat with ABBY (live streaming reply)"
+                        data-testid="global-action-chat"
+                      >CHAT</button>
+                      <button
+                        onClick={() => setGlobalAction("dispatch")}
+                        className={cn(
+                          "text-[9px] font-mono uppercase px-2 py-0.5 transition-all",
+                          globalAction === "dispatch"
+                            ? "bg-[#bf00ff]/20 text-[#bf00ff]"
+                            : "text-muted-foreground/50 hover:text-muted-foreground"
+                        )}
+                        title="Dispatch a goal — ABBY decides which CLAW executes it"
+                        data-testid="global-action-dispatch"
+                      >DISPATCH</button>
+                    </div>
+                  )}
                   <button
                     onClick={() => setAiEnabled(v => !v)}
                     className={cn(
@@ -331,7 +384,10 @@ export function CommandBar({ activeChannelId }: CommandBarProps) {
                 onKeyDown={handleChatKey}
                 placeholder={
                   routingMode === "global"
-                    ? aiEnabled ? "Message ABBY & the swarm (AI will respond)..." : "Broadcast to swarm..."
+                    ? !aiEnabled ? "Broadcast to swarm..."
+                      : globalAction === "dispatch"
+                        ? "Tell ABBY a goal (e.g. open https://example.com) — she'll dispatch the right CLAW..."
+                        : "Message ABBY — she'll reply live..."
                     : aiEnabled
                       ? `Message @${targetAgent?.name ?? "agent"} — ${targetAgent?.model ?? "AI"} will respond...`
                       : "Message to selected agent..."
@@ -412,7 +468,9 @@ export function CommandBar({ activeChannelId }: CommandBarProps) {
               </div>
               {cmdStatus === "sent" && (
                 <div className="text-[10px] text-green-400 font-mono px-2">
-                  ✓ Dispatched → {cmdTarget === "all" ? "all agents" : agents.find(a => a.id === cmdTarget)?.name}
+                  {cmdTarget === "all"
+                    ? "✓ ABBY orchestrating → decomposing & dispatching to CLAWs…"
+                    : `✓ Executing → ${agents.find(a => a.id === cmdTarget)?.name}`}
                 </div>
               )}
               {cmdStatus === "error" && (

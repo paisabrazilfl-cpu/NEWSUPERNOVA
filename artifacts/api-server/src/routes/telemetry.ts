@@ -22,7 +22,7 @@ router.get("/agents/:agentId/telemetry", async (req, res) => {
       .orderBy(desc(toolCallsTable.startedAt))
       .limit(10);
 
-    res.json({
+    return res.json({
       agentId,
       monologue: monologue.reverse().map(m => ({
         ...m,
@@ -39,7 +39,7 @@ router.get("/agents/:agentId/telemetry", async (req, res) => {
     });
   } catch (err) {
     req.log.error({ err }, "Failed to get telemetry");
-    res.status(500).json({ error: "Failed to get telemetry" });
+    return res.status(500).json({ error: "Failed to get telemetry" });
   }
 });
 
@@ -49,14 +49,14 @@ router.get("/agents/:agentId/tasks", async (req, res) => {
   try {
     const { tasksTable: tbl } = await import("@workspace/db");
     const tasks = await db.select().from(tbl).where(eq(tbl.agentId, agentId));
-    res.json(tasks.map(t => ({
+    return res.json(tasks.map(t => ({
       ...t,
       createdAt: t.createdAt.toISOString(),
       completedAt: t.completedAt?.toISOString() ?? null,
     })));
   } catch (err) {
     req.log.error({ err }, "Failed to get agent tasks");
-    res.status(500).json({ error: "Failed to get agent tasks" });
+    return res.status(500).json({ error: "Failed to get agent tasks" });
   }
 });
 

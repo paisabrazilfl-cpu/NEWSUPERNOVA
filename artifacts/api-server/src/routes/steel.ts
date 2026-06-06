@@ -35,10 +35,29 @@ router.get("/steel/sessions/:id", async (req, res) => {
 
 // Create a new session
 router.post("/steel/sessions", async (req, res) => {
-  const { useProxy = false, solveCaptcha = false, sessionTimeout = 600000, userAgent } = req.body ?? {};
+  const { useProxy = false, solveCaptcha = false, sessionTimeout = 600000, userAgent, dimensions } = req.body ?? {};
   try {
     const body: Record<string, unknown> = { sessionTimeout, solveCaptcha, useProxy };
     if (userAgent) body.userAgent = userAgent;
+    // Match the live browser viewport to the embedding container so the player
+    // fills the panel instead of floating a fixed 1920x1080 window inside it.
+    // Dimensions MUST be even — the live-stream H.264 encoder rejects odd
+    // width/height with "Invalid live-stream request" (WHEP 400).
+    if (
+      dimensions &&
+      typeof dimensions === "object" &&
+      Number(dimensions.width) > 0 &&
+      Number(dimensions.height) > 0
+    ) {
+      const toEven = (v: unknown, lo: number, hi: number) => {
+        const n = Math.max(lo, Math.min(hi, Math.round(Number(v))));
+        return n - (n % 2);
+      };
+      body.dimensions = {
+        width: toEven(dimensions.width, 640, 1920),
+        height: toEven(dimensions.height, 480, 1200),
+      };
+    }
     const r = await fetch(`${STEEL_BASE}/sessions`, {
       method: "POST",
       headers: steelHeaders(),

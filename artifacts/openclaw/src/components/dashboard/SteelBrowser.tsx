@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { Globe, Plus, Trash2, RefreshCw, Camera, FileText, X, ExternalLink, Wifi, WifiOff, Copy, ChevronRight, Loader } from "lucide-react";
+import { resolveApiUrl } from "@workspace/api-client-react";
 import { cn } from "@/lib/utils";
 
 interface SteelSession {
@@ -24,6 +25,45 @@ interface ScrapeResult {
   error?: string;
 }
 
+/** Coerce any value to a displayable string (Steel may return objects). */
+function asText(v: unknown): string | undefined {
+  if (v == null) return undefined;
+  if (typeof v === "string") return v;
+  if (typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    return (
+      asText(o["markdown"]) ??
+      asText(o["text"]) ??
+      asText(o["content"]) ??
+      asText(o["html"]) ??
+      JSON.stringify(v)
+    );
+  }
+  return String(v);
+}
+
+/**
+ * Steel's /scrape response shape varies: `content` may be a plain string OR an
+ * object like { html, markdown, text }. Flatten it to strings so React never
+ * tries to render a raw object (which throws "objects are not valid as a child").
+ */
+function normalizeScrape(data: unknown, fallbackUrl: string): ScrapeResult {
+  const d = (data ?? {}) as Record<string, unknown>;
+  if (typeof d["error"] === "string") {
+    return { url: (d["url"] as string) ?? fallbackUrl, error: d["error"] as string };
+  }
+  const links = Array.isArray(d["links"])
+    ? (d["links"] as unknown[]).map(asText).filter((s): s is string => !!s)
+    : undefined;
+  return {
+    url: (d["url"] as string) ?? fallbackUrl,
+    title: asText(d["title"]),
+    content: asText(d["content"]) ?? asText(d["markdown"]) ?? asText(d["html"]),
+    html: asText(d["html"]),
+    ...(links && links.length ? { links } : {}),
+  };
+}
+
 export function SteelBrowser() {
   const [sessions, setSessions] = useState<SteelSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
@@ -35,6 +75,15 @@ export function SteelBrowser() {
   const [screenshotUrl, setScreenshotUrl] = useState<string | null>(null);
   const [tab, setTab] = useState<"live" | "scrape" | "screenshot">("live");
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+
+  /** Measure the panel so the remote browser viewport matches its container. */
+  function measureViewport() {
+    const rect = contentRef.current?.getBoundingClientRect();
+    if (!rect || rect.width === 0) return { width: 1280, height: 800 };
+    // Subtract the tab bar (~33px) + live status bar (~33px) above the iframe.
+    return { width: Math.round(rect.width), height: Math.max(1, Math.round(rect.height - 66)) };
+  }
 
   const activeSession = sessions.find(s => s.id === activeSessionId);
 
@@ -45,7 +94,7 @@ export function SteelBrowser() {
 
   async function loadSessions() {
     try {
-      const r = await fetch("/api/steel/sessions");
+      const r = await fetch(resolveApiUrl("/api/steel/sessions"));
       const data = await r.json();
       setSessions(data.sessions ?? []);
     } catch {
@@ -56,10 +105,10 @@ export function SteelBrowser() {
   async function createSession() {
     setLoading(true);
     try {
-      const r = await fetch("/api/steel/sessions", {
+      const r = await fetch(resolveApiUrl("/api/steel/sessions"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionTimeout: 600000 }),
+        body: JSON.stringify({ sessionTimeout: 600000, dimensions: measureViewport() }),
       });
       const session: SteelSession = await r.json();
       setSessions(prev => [session, ...prev]);
@@ -71,7 +120,7 @@ export function SteelBrowser() {
 
   async function releaseSession(id: string) {
     try {
-      await fetch(`/api/steel/sessions/${id}`, { method: "DELETE" });
+      await fetch(resolveApiUrl(`/api/steel/sessions/${id}`), { method: "DELETE" });
       setSessions(prev => prev.filter(s => s.id !== id));
       if (activeSessionId === id) {
         setActiveSessionId(sessions.find(s => s.id !== id)?.id ?? null);
@@ -86,7 +135,7 @@ export function SteelBrowser() {
     setScraping(true);
     setScrapeResult(null);
     try {
-      const r = await fetch("/api/steel/scrape", {
+      const r = await fetch(resolveApiUrl("/api/steel/scrape"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -95,7 +144,7 @@ export function SteelBrowser() {
         }),
       });
       const data = await r.json();
-      setScrapeResult(data);
+      setScrapeResult(normalizeScrape(data, navUrl));
       setTab("scrape");
     } catch (err) {
       setScrapeResult({ url: navUrl, error: String(err) });
@@ -109,7 +158,7 @@ export function SteelBrowser() {
     setScreenshotting(true);
     setScreenshotUrl(null);
     try {
-      const r = await fetch("/api/steel/screenshot", {
+      const r = await fetch(resolveApiUrl("/api/steel/screenshot"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -228,7 +277,7 @@ export function SteelBrowser() {
       </div>
 
       {/* Content tabs + body */}
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div ref={contentRef} className="flex-1 flex flex-col overflow-hidden">
         {/* Tab bar */}
         <div className="flex items-center gap-1 px-4 pt-2 border-b border-card-border shrink-0">
           {[

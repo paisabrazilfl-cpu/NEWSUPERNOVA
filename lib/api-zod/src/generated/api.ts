@@ -316,3 +316,88 @@ export const ResumeSwarmResponse = zod.object({
 })
 
 
+/**
+ * @summary Sign in as an operator (sets an HttpOnly session cookie)
+ */
+export const LoginBody = zod.object({
+  "password": zod.string()
+})
+
+export const LoginResponse = zod.object({
+  "authenticated": zod.boolean()
+})
+
+
+/**
+ * @summary Sign out (clears the session cookie)
+ */
+export const LogoutResponse = zod.object({
+  "authenticated": zod.boolean()
+})
+
+
+/**
+ * @summary Whether the caller holds a valid operator session
+ */
+export const GetAuthStatusResponse = zod.object({
+  "authenticated": zod.boolean()
+})
+
+
+/**
+ * @summary List official social platforms, their docs/console URLs, and live connection status
+ */
+export const ListSocialPlatformsResponseItem = zod.object({
+  "key": zod.string(),
+  "displayName": zod.string(),
+  "apiBase": zod.string(),
+  "docsUrl": zod.string(),
+  "consoleUrl": zod.string(),
+  "connected": zod.boolean()
+})
+export const ListSocialPlatformsResponse = zod.array(ListSocialPlatformsResponseItem)
+
+
+/**
+ * @summary List stored secrets (metadata only, values never returned)
+ */
+export const ListVaultSecretsResponseItem = zod.object({
+  "id": zod.number(),
+  "name": zod.string(),
+  "description": zod.string().nullish(),
+  "createdAt": zod.string(),
+  "updatedAt": zod.string()
+})
+export const ListVaultSecretsResponse = zod.array(ListVaultSecretsResponseItem)
+
+
+/**
+ * @summary Create or update a secret (encrypted at rest)
+ */
+export const SetVaultSecretBody = zod.object({
+  "name": zod.string(),
+  "value": zod.string(),
+  "description": zod.string().optional()
+})
+
+export const SetVaultSecretResponse = zod.object({
+  "id": zod.number(),
+  "name": zod.string(),
+  "description": zod.string().nullish(),
+  "createdAt": zod.string(),
+  "updatedAt": zod.string()
+})
+
+
+/**
+ * @summary Delete a secret by name
+ */
+export const DeleteVaultSecretParams = zod.object({
+  "name": zod.coerce.string()
+})
+
+export const DeleteVaultSecretResponse = zod.object({
+  "deleted": zod.string()
+})
+
+

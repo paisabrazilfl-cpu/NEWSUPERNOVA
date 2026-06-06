@@ -24,14 +24,14 @@ router.post("/", async (req, res) => {
   if (!parse.success) return res.status(400).json({ error: "Invalid channel data" });
   try {
     const [channel] = await db.insert(channelsTable).values(parse.data).returning();
-    res.status(201).json({
+    return res.status(201).json({
       ...channel,
       createdAt: channel.createdAt.toISOString(),
       lastActivity: channel.lastActivity?.toISOString() ?? null,
     });
   } catch (err) {
     req.log.error({ err }, "Failed to create channel");
-    res.status(500).json({ error: "Failed to create channel" });
+    return res.status(500).json({ error: "Failed to create channel" });
   }
 });
 
@@ -43,13 +43,13 @@ router.get("/:channelId/messages", async (req, res) => {
       .where(eq(messagesTable.channelId, channelId))
       .orderBy(messagesTable.timestamp)
       .limit(100);
-    res.json(messages.map(m => ({
+    return res.json(messages.map(m => ({
       ...m,
       timestamp: m.timestamp.toISOString(),
     })));
   } catch (err) {
     req.log.error({ err }, "Failed to list messages");
-    res.status(500).json({ error: "Failed to list messages" });
+    return res.status(500).json({ error: "Failed to list messages" });
   }
 });
 
@@ -63,10 +63,10 @@ router.post("/:channelId/messages", async (req, res) => {
     await db.update(channelsTable)
       .set({ lastActivity: new Date() })
       .where(eq(channelsTable.id, channelId));
-    res.status(201).json({ ...message, timestamp: message.timestamp.toISOString() });
+    return res.status(201).json({ ...message, timestamp: message.timestamp.toISOString() });
   } catch (err) {
     req.log.error({ err }, "Failed to send message");
-    res.status(500).json({ error: "Failed to send message" });
+    return res.status(500).json({ error: "Failed to send message" });
   }
 });
 

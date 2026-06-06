@@ -1,4 +1,4 @@
-import { useListAgents } from "@workspace/api-client-react";
+import { useListAgents, getListAgentsQueryKey } from "@workspace/api-client-react";
 import { motion } from "framer-motion";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
@@ -7,7 +7,7 @@ interface SwarmCanvasProps {
 }
 
 export function SwarmCanvas({ onAgentClick }: SwarmCanvasProps) {
-  const { data: agents = [] } = useListAgents({ query: { refetchInterval: 3000 } });
+  const { data: agents = [] } = useListAgents({ query: { refetchInterval: 3000, queryKey: getListAgentsQueryKey() } });
   
   // Create stable positions for agents based on their ID
   const positions = useMemo(() => {

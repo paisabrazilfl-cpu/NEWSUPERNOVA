@@ -107,6 +107,14 @@ A Discord-style multi-agent AI orchestrator dashboard for monitoring and directi
 - Always run codegen after OpenAPI spec changes before building frontend
 - Swarm status aggregation uses raw SQL via `drizzle-orm/sql` — ensure imports include `sql` from `drizzle-orm`
 
+## Official Social API Connectors
+
+- The safe/legal way for agents to act on a user's social account: **official APIs via Replit-managed OAuth** (NOT browser username/password login — refused, ToS + ban risk even for owned accounts)
+- `artifacts/api-server/src/lib/connectors.ts` — platform registry + Replit connector-proxy token fetch (token minted at request time, never persisted, scrubbed from responses)
+- Supported platforms (first-party account connectors): `instagram`, `facebook`, `x`, `reddit`, `youtube`, `tiktok`. **LinkedIn has no first-party account connector** (only third-party prospecting tools)
+- Agent tools: `social_accounts` (lists connected platforms) and `social_api` (calls the official API). Granted to ABBY, CRAWLER, WIRE, MR.NICE
+- Each platform requires a one-time OAuth authorize by the operator via the integration flow; `proposeIntegration` exits the agent loop, so platforms are authorized one at a time
+
 ## Pointers
 
 - See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details

@@ -1,4 +1,4 @@
-import { useGetAgent, useGetAgentTelemetry } from "@workspace/api-client-react";
+import { useGetAgent, useGetAgentTelemetry, getGetAgentQueryKey, getGetAgentTelemetryQueryKey } from "@workspace/api-client-react";
 import { X, Activity, Terminal, Database, Code, CheckCircle, Clock, AlertCircle, Cpu, Zap } from "lucide-react";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -15,7 +15,7 @@ const TOOL_CATEGORIES: { label: string; color: string; tools: string[] }[] = [
   {
     label: "Runtime",
     color: "#bf00ff",
-    tools: ["exec", "code_execution", "process"],
+    tools: ["code_exec", "exec", "code_execution", "process"],
   },
   {
     label: "Files",
@@ -25,17 +25,17 @@ const TOOL_CATEGORIES: { label: string; color: string; tools: string[] }[] = [
   {
     label: "Web",
     color: "#0066ff",
-    tools: ["web_search", "x_search", "web_fetch"],
+    tools: ["web_scrape", "http_request", "web_search", "x_search", "web_fetch"],
   },
   {
     label: "Browser",
     color: "#00cc88",
-    tools: ["browser", "screenshot", "pdf"],
+    tools: ["web_screenshot", "browser", "screenshot", "pdf"],
   },
   {
     label: "Memory",
     color: "#ff6b00",
-    tools: ["memory_lancedb", "memory_wiki"],
+    tools: ["memory_write", "memory_search", "memory_lancedb", "memory_wiki"],
   },
   {
     label: "Agents",
@@ -83,11 +83,11 @@ function getMonologuePrefix(type: string) {
 
 export function AgentInspector({ agentId, onClose }: AgentInspectorProps) {
   const { data: agent } = useGetAgent(agentId ?? 0, {
-    query: { enabled: !!agentId }
+    query: { enabled: !!agentId, queryKey: getGetAgentQueryKey(agentId ?? 0) }
   });
 
   const { data: telemetry } = useGetAgentTelemetry(agentId ?? 0, {
-    query: { enabled: !!agentId, refetchInterval: 2000 }
+    query: { enabled: !!agentId, refetchInterval: 2000, queryKey: getGetAgentTelemetryQueryKey(agentId ?? 0) }
   });
 
   const monologueRef = useRef<HTMLDivElement>(null);
@@ -235,7 +235,7 @@ export function AgentInspector({ agentId, onClose }: AgentInspectorProps) {
                   <span className="text-muted-foreground/30 shrink-0 select-none">
                     [{format(new Date(line.timestamp), "HH:mm:ss")}]
                   </span>
-                  <span className="shrink-0 select-none" style={{ color: line.type === "system" ? "#a78bfa" : line.type === "action" ? "#22d3ee" : line.type === "result" ? "#4ade80" : "#71717a" }}>
+                  <span className="shrink-0 select-none" style={{ color: line.type === "conclusion" ? "#a78bfa" : line.type === "action" ? "#22d3ee" : line.type === "observation" ? "#4ade80" : "#71717a" }}>
                     {getMonologuePrefix(line.type)}
                   </span>
                   <span className={cn("whitespace-pre-wrap break-words", getMonologueColor(line.type))}>

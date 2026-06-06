@@ -1,0 +1,678 @@
+/**
+ * OPENCLAW OMEGA — Real Orchestration Engine
+ *
+ * This is what makes the swarm REAL instead of scripted text:
+ *  - ABBY (Grok) decomposes an operator goal into concrete per-CLAW directives.
+ *  - Each target CLAW actually executes its directive via its real OpenRouter model.
+ *  - CRAWLER (browser agent) runs a real Steel scrape when a URL is present and
+ *    feeds the real web content back into its reasoning.
+ *  - Real messages, tool calls, tasks, monologue lines, agent status, and command
+ *    rows are written to the DB so the live dashboard reflects actual work.
+ *
+ * Execution runs in the background (fire-and-forget) so the HTTP request returns
+ * immediately and the feed fills in as agents report, via the dashboard's polling.
+ */
+
+import { db } from "@workspace/db";
+import {
+  agentsTable,
+  messagesTable,
+  tasksTable,
+  toolCallsTable,
+  monologueLinesTable,
+  agentCommandsTable,
+} from "@workspace/db";
+import { eq } from "drizzle-orm";
+import { logger } from "./lib/logger";
+import {
+  AGENT_PERSONAS,
+  ABBY_ID,
+  OPENROUTER_BASE,
+  resolveModel,
+  openrouterHeaders,
+} from "./routes/ai";
+import { isSwarmPaused } from "./routes/swarm";
+import {
+  steelScrape,
+  getOpenAiToolsForAgent,
+  getToolNamesForAgent,
+  runTool,
+  type ToolContext,
+} from "./tools";
+
+type Agent = typeof agentsTable.$inferSelect;
+
+const ABBY_COLOR = "#00e5ff";
+
+/** Max autonomous reasoning/tool steps per CLAW directive (cost guardrail). */
+const MAX_AGENT_STEPS = 6;
+
+/**
+ * Crash/restart recovery. Execution is in-process and fire-and-forget, so a
+ * restart mid-run can leave commands/tasks stuck `running` and agents stuck in a
+ * non-idle status. On boot we fail those orphans and reset agent status so the
+ * dashboard never shows phantom "thinking" agents or perpetually running work.
+ */
+export async function reconcileStaleWork(): Promise<void> {
+  try {
+    const now = new Date();
+    await db
+      .update(agentCommandsTable)
+      .set({ status: "failed", result: "Interrupted by server restart.", completedAt: now })
+      .where(eq(agentCommandsTable.status, "running"));
+    await db
+      .update(tasksTable)
+      .set({ status: "failed", completedAt: now })
+      .where(eq(tasksTable.status, "running"));
+    await db.update(toolCallsTable).set({ status: "error", completedAt: now }).where(eq(toolCallsTable.status, "running"));
+    for (const status of ["thinking", "executing", "waiting"]) {
+      await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.status, status));
+    }
+    logger.info("reconcileStaleWork: cleared interrupted orchestration state");
+  } catch (err) {
+    logger.error({ err }, "reconcileStaleWork failed");
+  }
+}
+
+// ─── Low-level helpers ───────────────────────────────────────────────────────
+
+/** Non-streaming OpenRouter completion. Returns the assistant text. */
+async function completeChat(model: string, system: string, user: string): Promise<string> {
+  const r = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+    method: "POST",
+    headers: openrouterHeaders(),
+    body: JSON.stringify({
+      model,
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
+      stream: false,
+      max_tokens: 800,
+    }),
+  });
+  if (!r.ok) {
+    throw new Error(`OpenRouter ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  }
+  const data = (await r.json()) as {
+    choices?: Array<{ message?: { content?: string } }>;
+  };
+  return data?.choices?.[0]?.message?.content?.trim() || "(no response)";
+}
+
+// ─── Native tool-calling primitives ─────────────────────────────────────────
+
+interface ToolCallReq {
+  id: string;
+  type: "function";
+  function: { name: string; arguments: string };
+}
+
+interface AssistantMessage {
+  role: "assistant";
+  content: string | null;
+  tool_calls?: ToolCallReq[];
+}
+
+type ChatMessage =
+  | { role: "system" | "user"; content: string }
+  | AssistantMessage
+  | { role: "tool"; tool_call_id: string; name: string; content: string };
+
+/**
+ * One OpenRouter chat turn that may request tools. Returns the raw assistant
+ * message (content and/or tool_calls). Falls back to a tool-free call if the
+ * model/provider rejects the `tools` parameter.
+ */
+async function completeChatTurn(
+  model: string,
+  messages: ChatMessage[],
+  tools: Array<Record<string, unknown>>,
+): Promise<AssistantMessage> {
+  const body: Record<string, unknown> = { model, messages, stream: false, max_tokens: 1024 };
+  if (tools.length) {
+    body["tools"] = tools;
+    body["tool_choice"] = "auto";
+  }
+  let r = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+    method: "POST",
+    headers: openrouterHeaders(),
+    body: JSON.stringify(body),
+  });
+  if (!r.ok && tools.length) {
+    // Some providers reject function-calling — retry once without tools.
+    delete body["tools"];
+    delete body["tool_choice"];
+    r = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+      method: "POST",
+      headers: openrouterHeaders(),
+      body: JSON.stringify(body),
+    });
+  }
+  if (!r.ok) {
+    throw new Error(`OpenRouter ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  }
+  const data = (await r.json()) as {
+    choices?: Array<{ message?: AssistantMessage }>;
+  };
+  const msg = data?.choices?.[0]?.message;
+  return {
+    role: "assistant",
+    content: msg?.content ?? null,
+    tool_calls: msg?.tool_calls,
+  };
+}
+
+function summarizeArgs(args: Record<string, unknown>): string {
+  return Object.entries(args)
+    .map(([k, v]) => `${k}=${JSON.stringify(v).slice(0, 60)}`)
+    .join(" ")
+    .slice(0, 160);
+}
+
+const URL_RE = /https?:\/\/[^\s"')<>]+/i;
+function extractUrl(text: string): string | null {
+  return text.match(URL_RE)?.[0] ?? null;
+}
+
+function isBrowserAgent(agent: Agent): boolean {
+  return (
+    agent.id === 3 ||
+    /crawler|claw-2/i.test(agent.name) ||
+    /browser|scrap|crawl|web/i.test(agent.role ?? "")
+  );
+}
+
+async function postMessage(opts: {
+  channelId: number;
+  agent?: Agent | null;
+  agentId?: number | null;
+  agentName?: string | null;
+  agentColor?: string | null;
+  content: string;
+  messageType: string;
+}): Promise<void> {
+  await db.insert(messagesTable).values({
+    channelId: opts.channelId,
+    agentId: opts.agent?.id ?? opts.agentId ?? null,
+    agentName: opts.agent?.name ?? opts.agentName ?? null,
+    agentColor: opts.agent?.color ?? opts.agentColor ?? null,
+    content: opts.content,
+    messageType: opts.messageType,
+  });
+}
+
+// ─── Single-command execution ────────────────────────────────────────────────
+
+/**
+ * Execute one already-created command end-to-end as a genuinely autonomous,
+ * tool-using agent:
+ *  - The CLAW reasons over the directive with its real OpenRouter model.
+ *  - It decides for itself which of its permitted tools to call (web_scrape,
+ *    web_screenshot, http_request, code_exec, memory_write, memory_search) via
+ *    native function-calling, in a bounded loop (MAX_AGENT_STEPS).
+ *  - Every tool call, monologue line, tool_output message, and the final result
+ *    are persisted so the live dashboard reflects real multi-step work.
+ *
+ * Returns the agent's final reported result text (used by ABBY's coordinator).
+ */
+export async function executeAgentCommand(opts: {
+  commandId: number;
+  agent: Agent;
+  command: string;
+  payload: string | null;
+  channelId: number;
+}): Promise<string> {
+  const { commandId, agent, command, payload, channelId } = opts;
+  let taskId: number | null = null;
+  try {
+    await db
+      .update(agentCommandsTable)
+      .set({ status: "running" })
+      .where(eq(agentCommandsTable.id, commandId));
+    await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, agent.id));
+
+    const [task] = await db
+      .insert(tasksTable)
+      .values({
+        title: command.slice(0, 140),
+        description: payload ?? null,
+        agentId: agent.id,
+        agentName: agent.name,
+        status: "running",
+        priority: "high",
+        progress: 10,
+        channelId,
+      })
+      .returning();
+    taskId = task?.id ?? null;
+
+    await db.insert(monologueLinesTable).values({
+      agentId: agent.id,
+      text: `Directive received: ${command}`,
+      type: "thought",
+    });
+
+    const ctx: ToolContext = { agentId: agent.id, agentName: agent.name, agentColor: agent.color, channelId };
+    const toolNames = getToolNamesForAgent(agent.id);
+    const tools = getOpenAiToolsForAgent(agent.id);
+
+    // Convenience pre-scrape: if the browser CLAW is handed a URL, fetch it once
+    // up front so it starts the loop with live data (it can still call more tools).
+    let priming = "";
+    const url = extractUrl(`${command} ${payload ?? ""}`);
+    if (url && isBrowserAgent(agent) && process.env["STEEL_API_KEY"]) {
+      const [tc] = await db
+        .insert(toolCallsTable)
+        .values({ agentId: agent.id, toolName: "web_scrape", args: JSON.stringify({ url }), status: "running" })
+        .returning();
+      try {
+        const scraped = (await steelScrape(url)).slice(0, 6000);
+        priming = scraped;
+        await db
+          .update(toolCallsTable)
+          .set({ status: "success", result: scraped.slice(0, 4000), completedAt: new Date() })
+          .where(eq(toolCallsTable.id, tc.id));
+        await postMessage({
+          channelId,
+          agent,
+          content: `web_scrape("${url}")\n\n${scraped.slice(0, 1400)}${scraped.length > 1400 ? "\n…" : ""}`,
+          messageType: "tool_output",
+        });
+        if (taskId) await db.update(tasksTable).set({ progress: 35 }).where(eq(tasksTable.id, taskId));
+      } catch (e) {
+        await db
+          .update(toolCallsTable)
+          .set({ status: "error", result: String(e).slice(0, 1000), completedAt: new Date() })
+          .where(eq(toolCallsTable.id, tc.id));
+      }
+    }
+
+    // ── Autonomous reasoning + tool loop ──
+    const model = resolveModel(agent.id, agent.model, undefined);
+    const persona =
+      AGENT_PERSONAS[agent.id] ??
+      `You are ${agent.name}, an autonomous agent of the ABBY CLAW swarm. Execute directives precisely.`;
+    const toolGuide = toolNames.length
+      ? `\n\nYou are an autonomous tool-using agent. You have these tools: ${toolNames.join(", ")}. Call tools to gather real data and perform real work instead of guessing — chain multiple calls when needed. When the directive is fully satisfied, stop calling tools and reply with your final concrete result (no preamble).`
+      : "";
+    const system = persona + toolGuide;
+
+    const messages: ChatMessage[] = [
+      { role: "system", content: system },
+      {
+        role: "user",
+        content:
+          `Directive from ABBY (orchestrator): ${command}\n${payload ? `Payload: ${payload}\n` : ""}` +
+          (priming ? `\nLive page content already retrieved for you:\n"""\n${priming}\n"""\n` : "") +
+          `\nExecute the directive now. Use your tools for anything requiring real data or computation.`,
+      },
+    ];
+
+    let finalText = "";
+    let steps = 0;
+    while (steps < MAX_AGENT_STEPS) {
+      steps++;
+      const assistant = await completeChatTurn(model, messages, tools);
+      const calls = assistant.tool_calls ?? [];
+
+      if (calls.length === 0) {
+        finalText = (assistant.content ?? "").trim();
+        break;
+      }
+
+      // Record the assistant turn (with its tool requests) before resolving them.
+      messages.push({ role: "assistant", content: assistant.content ?? "", tool_calls: calls });
+      await db.update(agentsTable).set({ status: "executing" }).where(eq(agentsTable.id, agent.id));
+
+      for (const call of calls) {
+        const name = call.function?.name ?? "unknown";
+        let parsedArgs: Record<string, unknown> = {};
+        try {
+          parsedArgs = call.function?.arguments ? JSON.parse(call.function.arguments) : {};
+        } catch {
+          parsedArgs = {};
+        }
+
+        const [tc] = await db
+          .insert(toolCallsTable)
+          .values({ agentId: agent.id, toolName: name, args: JSON.stringify(parsedArgs).slice(0, 2000), status: "running" })
+          .returning();
+        await db.insert(monologueLinesTable).values({
+          agentId: agent.id,
+          text: `${name}(${summarizeArgs(parsedArgs)})`,
+          type: "action",
+        });
+
+        let toolResult: string;
+        let ok = true;
+        try {
+          toolResult = await runTool(name, parsedArgs, ctx);
+          if (toolResult.startsWith("error:")) ok = false;
+        } catch (e) {
+          ok = false;
+          toolResult = `error: ${String(e).slice(0, 300)}`;
+        }
+
+        await db
+          .update(toolCallsTable)
+          .set({ status: ok ? "success" : "error", result: toolResult.slice(0, 4000), completedAt: new Date() })
+          .where(eq(toolCallsTable.id, tc.id));
+        await db.insert(monologueLinesTable).values({
+          agentId: agent.id,
+          text: ok ? `${name} → ${toolResult.slice(0, 200)}` : `${name} failed: ${toolResult.slice(0, 200)}`,
+          type: ok ? "result" : "system",
+        });
+        await postMessage({
+          channelId,
+          agent,
+          content: `${name}(${summarizeArgs(parsedArgs)})\n\n${toolResult.slice(0, 1400)}${toolResult.length > 1400 ? "\n…" : ""}`,
+          messageType: "tool_output",
+        });
+
+        messages.push({ role: "tool", tool_call_id: call.id, name, content: toolResult.slice(0, 6000) });
+      }
+
+      if (taskId) {
+        const progress = Math.min(90, 35 + steps * 12);
+        await db.update(tasksTable).set({ progress }).where(eq(tasksTable.id, taskId));
+      }
+      await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, agent.id));
+    }
+
+    // If the loop hit the step cap mid-tool-use, force a final summary turn.
+    if (!finalText) {
+      messages.push({
+        role: "user",
+        content: "Step budget reached. Stop using tools and give your final concrete result now based on what you have.",
+      });
+      const wrap = await completeChatTurn(model, messages, []);
+      finalText = (wrap.content ?? "").trim();
+    }
+    if (!finalText) finalText = "(no result produced)";
+
+    await postMessage({ channelId, agent, content: finalText, messageType: "agent" });
+
+    await db
+      .update(agentCommandsTable)
+      .set({ status: "done", result: finalText.slice(0, 4000), completedAt: new Date() })
+      .where(eq(agentCommandsTable.id, commandId));
+    if (taskId) {
+      await db
+        .update(tasksTable)
+        .set({ status: "completed", progress: 100, completedAt: new Date() })
+        .where(eq(tasksTable.id, taskId));
+    }
+    await db.insert(monologueLinesTable).values({
+      agentId: agent.id,
+      text: `Directive complete after ${steps} step${steps === 1 ? "" : "s"}. Result reported to ABBY.`,
+      type: "conclusion",
+    });
+    return finalText;
+  } catch (err) {
+    logger.error({ err, commandId, agentId: agent.id }, "executeAgentCommand failed");
+    await db
+      .update(agentCommandsTable)
+      .set({ status: "failed", result: String(err).slice(0, 2000), completedAt: new Date() })
+      .where(eq(agentCommandsTable.id, commandId))
+      .catch(() => {});
+    if (taskId) {
+      await db
+        .update(tasksTable)
+        .set({ status: "failed", completedAt: new Date() })
+        .where(eq(tasksTable.id, taskId))
+        .catch(() => {});
+    }
+    await postMessage({
+      channelId,
+      agent,
+      content: `Execution failed: ${String(err).slice(0, 300)}`,
+      messageType: "system",
+    }).catch(() => {});
+    return "";
+  } finally {
+    await db
+      .update(agentsTable)
+      .set({ status: "idle" })
+      .where(eq(agentsTable.id, agent.id))
+      .catch(() => {});
+  }
+}
+
+// ─── Goal orchestration ──────────────────────────────────────────────────────
+
+interface Directive {
+  agentId: number;
+  directive: string;
+}
+
+function parseDirectives(raw: string, claws: Agent[]): Directive[] {
+  const ids = new Set(claws.map((c) => c.id));
+  const start = raw.indexOf("[");
+  const end = raw.lastIndexOf("]");
+  if (start !== -1 && end > start) {
+    try {
+      const parsed = JSON.parse(raw.slice(start, end + 1)) as unknown[];
+      const out: Directive[] = [];
+      for (const item of parsed) {
+        if (item && typeof item === "object") {
+          const rec = item as Record<string, unknown>;
+          const agentId = Number(rec["agentId"]);
+          const directive = String(rec["directive"] ?? "").trim();
+          if (ids.has(agentId) && directive) out.push({ agentId, directive });
+        }
+      }
+      if (out.length) return out.slice(0, 5);
+    } catch {
+      // fall through to fallback
+    }
+  }
+  return [];
+}
+
+/**
+ * Create command rows for a set of directives and run each target CLAW's
+ * autonomous loop sequentially (so the feed reads naturally). Returns each
+ * CLAW's final result for ABBY's coordinator review. Honors mid-run pause.
+ */
+async function dispatchDirectives(
+  directives: Directive[],
+  claws: Agent[],
+  channelId: number,
+  priority: string,
+  abby: Agent | null,
+): Promise<Array<{ name: string; result: string }>> {
+  const results: Array<{ name: string; result: string }> = [];
+  for (const d of directives) {
+    if (isSwarmPaused()) {
+      await postMessage({
+        channelId,
+        agentId: ABBY_ID,
+        agentName: "ABBY",
+        agentColor: abby?.color ?? ABBY_COLOR,
+        content: "SWARM paused mid-orchestration. Remaining directives halted.",
+        messageType: "system",
+      });
+      break;
+    }
+    const agent = claws.find((c) => c.id === d.agentId);
+    if (!agent) continue;
+    const [cmd] = await db
+      .insert(agentCommandsTable)
+      .values({
+        fromAgentId: ABBY_ID,
+        toAgentId: agent.id,
+        command: d.directive,
+        payload: null,
+        priority,
+        status: "queued",
+      })
+      .returning();
+    if (cmd) {
+      const result = await executeAgentCommand({
+        commandId: cmd.id,
+        agent,
+        command: d.directive,
+        payload: null,
+        channelId,
+      });
+      results.push({ name: agent.name, result });
+    }
+  }
+  return results;
+}
+
+/**
+ * ABBY decomposes an operator goal and dispatches real directives to the CLAWs,
+ * each of which actually executes. Runs sequentially so the feed reads naturally.
+ */
+export async function orchestrateGoal(opts: {
+  goal: string;
+  channelId: number;
+  priority: string;
+}): Promise<void> {
+  const { goal, channelId, priority } = opts;
+  try {
+    const agents = await db.select().from(agentsTable);
+    const abby = agents.find((a) => a.id === ABBY_ID) ?? null;
+    const claws = agents.filter((a) => a.id !== ABBY_ID);
+
+    if (isSwarmPaused()) {
+      await postMessage({
+        channelId,
+        agentId: ABBY_ID,
+        agentName: "ABBY",
+        agentColor: abby?.color ?? ABBY_COLOR,
+        content: "SWARM is paused. Resume the swarm to execute directives.",
+        messageType: "system",
+      });
+      return;
+    }
+
+    await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, ABBY_ID));
+
+    // ABBY (Grok) decomposes the goal into per-CLAW directives.
+    const roster = claws
+      .map((c) => `${c.id}=${c.name} (${c.role ?? "agent"})`)
+      .join(", ");
+    const planSystem = AGENT_PERSONAS[ABBY_ID] ?? "You are ABBY, the swarm orchestrator.";
+    const planUser = `Operator goal: "${goal}"
+
+Available CLAWs you command: ${roster}.
+
+Decompose this goal into concrete, actionable directives — ONE per CLAW that is genuinely relevant (skip CLAWs that add nothing). For web/competitor/scraping work, route to the browser CLAW and INCLUDE a concrete https:// URL inside the directive so it can actually fetch live data.
+
+Respond with ONLY a JSON array (no prose, no code fences) of objects shaped: {"agentId": <number>, "directive": "<single actionable instruction>"}. Maximum 5 directives.`;
+
+    const model = resolveModel(ABBY_ID, abby?.model, undefined);
+    const planRaw = await completeChat(model, planSystem, planUser);
+    let directives = parseDirectives(planRaw, claws);
+
+    // Fallback: if ABBY didn't return parseable directives, route the raw goal
+    // to the most relevant single CLAW (browser if a URL is present, else FORGE).
+    if (directives.length === 0) {
+      const url = extractUrl(goal);
+      const fallback =
+        (url ? claws.find((c) => isBrowserAgent(c)) : null) ??
+        claws.find((c) => c.id === 2) ??
+        claws[0];
+      if (fallback) directives = [{ agentId: fallback.id, directive: goal }];
+    }
+
+    await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.id, ABBY_ID));
+
+    await postMessage({
+      channelId,
+      agentId: ABBY_ID,
+      agentName: "ABBY",
+      agentColor: abby?.color ?? ABBY_COLOR,
+      content: directives.length
+        ? `Orchestrating: "${goal}"\n\n` +
+          directives
+            .map((d) => {
+              const c = claws.find((x) => x.id === d.agentId);
+              return `→ ${c?.name ?? `agent#${d.agentId}`}: ${d.directive}`;
+            })
+            .join("\n")
+        : `No actionable directives could be derived from: "${goal}"`,
+      messageType: "agent",
+    });
+
+    // Dispatch + execute the first round of directives for real.
+    const results: Array<{ name: string; result: string }> = await dispatchDirectives(
+      directives,
+      claws,
+      channelId,
+      priority,
+      abby,
+    );
+
+    // ── ABBY coordinator pass ──
+    // ABBY reviews the CLAWs' real results and, if the goal isn't fully met,
+    // issues ONE bounded follow-up round before committing.
+    if (results.length && !isSwarmPaused()) {
+      await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, ABBY_ID));
+      const reviewUser = `Operator goal: "${goal}"
+
+Round 1 CLAW results:
+${results.map((r) => `- ${r.name}: ${r.result.slice(0, 500)}`).join("\n")}
+
+Is the goal now FULLY satisfied? If yes, respond with exactly: []
+If not, respond with ONLY a JSON array (no prose) of up to 2 follow-up directives to finish it, shaped {"agentId": <number>, "directive": "<instruction>"}. Available CLAWs: ${roster}.`;
+      let followups: Directive[] = [];
+      try {
+        const reviewRaw = await completeChat(model, planSystem, reviewUser);
+        followups = parseDirectives(reviewRaw, claws).slice(0, 2);
+      } catch (e) {
+        logger.error({ e }, "coordinator review failed");
+      }
+      await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.id, ABBY_ID));
+
+      if (followups.length && !isSwarmPaused()) {
+        await postMessage({
+          channelId,
+          agentId: ABBY_ID,
+          agentName: "ABBY",
+          agentColor: abby?.color ?? ABBY_COLOR,
+          content:
+            `Coordinator review: goal not yet complete. Follow-up round:\n\n` +
+            followups
+              .map((d) => {
+                const c = claws.find((x) => x.id === d.agentId);
+                return `→ ${c?.name ?? `agent#${d.agentId}`}: ${d.directive}`;
+              })
+              .join("\n"),
+          messageType: "agent",
+        });
+        const more = await dispatchDirectives(followups, claws, channelId, priority, abby);
+        results.push(...more);
+      }
+    }
+
+    if (results.length) {
+      await postMessage({
+        channelId,
+        agentId: ABBY_ID,
+        agentName: "ABBY",
+        agentColor: abby?.color ?? ABBY_COLOR,
+        content: `Orchestration complete. ${results.length} CLAW report${results.length === 1 ? "" : "s"} in. Status: COMMIT.`,
+        messageType: "agent",
+      });
+    }
+  } catch (err) {
+    logger.error({ err }, "orchestrateGoal failed");
+    await db
+      .update(agentsTable)
+      .set({ status: "idle" })
+      .where(eq(agentsTable.id, ABBY_ID))
+      .catch(() => {});
+    await postMessage({
+      channelId,
+      agentId: ABBY_ID,
+      agentName: "ABBY",
+      agentColor: ABBY_COLOR,
+      content: `Orchestration error: ${String(err).slice(0, 300)}`,
+      messageType: "system",
+    }).catch(() => {});
+  }
+}

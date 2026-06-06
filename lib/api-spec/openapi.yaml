@@ -21,6 +21,12 @@ tags:
     description: Agent telemetry and internal state
   - name: swarm
     description: Swarm control
+  - name: auth
+    description: Operator authentication
+  - name: vault
+    description: Encrypted secrets vault (operator only)
+  - name: social
+    description: Official social platform integrations (operator only)
 paths:
   /healthz:
     get:
@@ -323,6 +329,159 @@ paths:
               schema:
                 $ref: "#/components/schemas/SwarmStatus"
 
+  /auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Sign in as an operator (sets an HttpOnly session cookie)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Signed in
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthStatus"
+        "401":
+          description: Invalid operator password
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /auth/logout:
+    post:
+      operationId: logout
+      tags: [auth]
+      summary: Sign out (clears the session cookie)
+      responses:
+        "200":
+          description: Signed out
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthStatus"
+
+  /auth/me:
+    get:
+      operationId: getAuthStatus
+      tags: [auth]
+      summary: Whether the caller holds a valid operator session
+      responses:
+        "200":
+          description: Authentication status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthStatus"
+
+  /social/platforms:
+    get:
+      operationId: listSocialPlatforms
+      tags: [social]
+      summary: List official social platforms, their docs/console URLs, and live connection status
+      responses:
+        "200":
+          description: List of social platform integrations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SocialPlatform"
+        "401":
+          description: Operator sign-in required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /vault:
+    get:
+      operationId: listVaultSecrets
+      tags: [vault]
+      summary: List stored secrets (metadata only, values never returned)
+      responses:
+        "200":
+          description: List of secret metadata
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/VaultSecret"
+        "401":
+          description: Operator sign-in required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    put:
+      operationId: setVaultSecret
+      tags: [vault]
+      summary: Create or update a secret (encrypted at rest)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetVaultSecretRequest"
+      responses:
+        "200":
+          description: Stored secret metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VaultSecret"
+        "400":
+          description: Invalid secret data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Operator sign-in required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /vault/{name}:
+    delete:
+      operationId: deleteVaultSecret
+      tags: [vault]
+      summary: Delete a secret by name
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteVaultSecretResult"
+        "401":
+          description: Operator sign-in required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Secret not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
 components:
   schemas:
     HealthStatus:
@@ -593,3 +752,74 @@ components:
           type: integer
         uptimeSeconds:
           type: integer
+
+    SocialPlatform:
+      type: object
+      required: [key, displayName, apiBase, docsUrl, consoleUrl, connected]
+      properties:
+        key:
+          type: string
+        displayName:
+          type: string
+        apiBase:
+          type: string
+        docsUrl:
+          type: string
+        consoleUrl:
+          type: string
+        connected:
+          type: boolean
+
+    VaultSecret:
+      type: object
+      required: [id, name, createdAt, updatedAt]
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        description:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+
+    SetVaultSecretRequest:
+      type: object
+      required: [name, value]
+      properties:
+        name:
+          type: string
+        value:
+          type: string
+        description:
+          type: string
+
+    DeleteVaultSecretResult:
+      type: object
+      required: [deleted]
+      properties:
+        deleted:
+          type: string
+
+    LoginRequest:
+      type: object
+      required: [password]
+      properties:
+        password:
+          type: string
+
+    AuthStatus:
+      type: object
+      required: [authenticated]
+      properties:
+        authenticated:
+          type: boolean
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string

@@ -78,6 +78,23 @@ function resolveUrl(input: RequestInfo | URL): string {
   return input.url;
 }
 
+/**
+ * Resolve a relative API path (e.g. `/api/ai/chat`) to its final request URL
+ * using the same base-URL rules as `customFetch` (see `applyBaseUrl`).
+ *
+ * Use this for requests that cannot go through `customFetch` — most notably
+ * SSE / streaming `fetch` calls that must read `response.body` directly. It
+ * keeps such raw fetches consistent with the generated client: on the web the
+ * base URL is unset, so paths stay root-relative (`/api/...`) and work on both
+ * dev (Replit proxy) and production (same-origin server); on remote bundles
+ * configured via `setBaseUrl()` the configured host is prepended.
+ */
+export function resolveApiUrl(path: string): string {
+  if (!_baseUrl) return path;
+  if (!path.startsWith("/")) return path;
+  return `${_baseUrl}${path}`;
+}
+
 function mergeHeaders(...sources: Array<HeadersInit | undefined>): Headers {
   const headers = new Headers();
 

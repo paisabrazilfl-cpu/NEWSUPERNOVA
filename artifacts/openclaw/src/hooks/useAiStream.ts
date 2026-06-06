@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState } from "react";
+import { resolveApiUrl } from "@workspace/api-client-react";
 
 export interface AiStreamState {
   streaming: boolean;
@@ -35,7 +36,7 @@ export function useAiStream(onComplete?: (agentId: number | null) => void) {
     setState({ streaming: true, tokens: "", agentName: null, agentId: opts.agentId ?? null, model: null, error: null });
 
     try {
-      const res = await fetch("/api/ai/chat", {
+      const res = await fetch(resolveApiUrl("/api/ai/chat"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         signal: abort.signal,

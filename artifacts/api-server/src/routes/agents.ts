@@ -27,10 +27,10 @@ router.post("/", async (req, res) => {
   }
   try {
     const [agent] = await db.insert(agentsTable).values(parse.data).returning();
-    res.status(201).json({ ...agent, createdAt: agent.createdAt.toISOString() });
+    return res.status(201).json({ ...agent, createdAt: agent.createdAt.toISOString() });
   } catch (err) {
     req.log.error({ err }, "Failed to create agent");
-    res.status(500).json({ error: "Failed to create agent" });
+    return res.status(500).json({ error: "Failed to create agent" });
   }
 });
 
@@ -40,10 +40,10 @@ router.get("/:agentId", async (req, res) => {
   try {
     const [agent] = await db.select().from(agentsTable).where(eq(agentsTable.id, id));
     if (!agent) return res.status(404).json({ error: "Agent not found" });
-    res.json({ ...agent, createdAt: agent.createdAt.toISOString() });
+    return res.json({ ...agent, createdAt: agent.createdAt.toISOString() });
   } catch (err) {
     req.log.error({ err }, "Failed to get agent");
-    res.status(500).json({ error: "Failed to get agent" });
+    return res.status(500).json({ error: "Failed to get agent" });
   }
 });
 
@@ -67,10 +67,10 @@ router.patch("/:agentId", async (req, res) => {
   try {
     const [agent] = await db.update(agentsTable).set(updates).where(eq(agentsTable.id, id)).returning();
     if (!agent) return res.status(404).json({ error: "Agent not found" });
-    res.json({ ...agent, createdAt: agent.createdAt.toISOString() });
+    return res.json({ ...agent, createdAt: agent.createdAt.toISOString() });
   } catch (err) {
     req.log.error({ err }, "Failed to update agent");
-    res.status(500).json({ error: "Failed to update agent" });
+    return res.status(500).json({ error: "Failed to update agent" });
   }
 });
 

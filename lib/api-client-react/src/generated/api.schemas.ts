@@ -285,3 +285,43 @@ export interface SwarmStatus {
   uptimeSeconds?: number;
 }
 
+export interface SocialPlatform {
+  key: string;
+  displayName: string;
+  apiBase: string;
+  docsUrl: string;
+  consoleUrl: string;
+  connected: boolean;
+}
+
+export interface VaultSecret {
+  id: number;
+  name: string;
+  /** @nullable */
+  description?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SetVaultSecretRequest {
+  name: string;
+  value: string;
+  description?: string;
+}
+
+export interface DeleteVaultSecretResult {
+  deleted: string;
+}
+
+export interface LoginRequest {
+  password: string;
+}
+
+export interface AuthStatus {
+  authenticated: boolean;
+}
+
+export interface Error {
+  error: string;
+}
+

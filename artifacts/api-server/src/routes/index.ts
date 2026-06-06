@@ -10,6 +10,10 @@ import steelRouter from "./steel";
 import aiRouter from "./ai";
 import neurobuddyRouter from "./neurobuddy";
 import externalRouter from "./external";
+import authRouter from "./auth";
+import vaultRouter from "./vault";
+import socialRouter from "./social";
+import { requireOperator } from "../lib/auth";
 
 const router: IRouter = Router();
 
@@ -24,5 +28,8 @@ router.use(steelRouter);
 router.use(aiRouter);
 router.use(neurobuddyRouter);
 router.use(externalRouter);
+router.use(authRouter);
+router.use(requireOperator, vaultRouter);
+router.use(requireOperator, socialRouter);
 
 export default router;

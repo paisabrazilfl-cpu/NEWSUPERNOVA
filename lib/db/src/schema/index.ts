@@ -4,3 +4,5 @@ export * from "./messages";
 export * from "./tasks";
 export * from "./telemetry";
 export * from "./commands";
+export * from "./memory";
+export * from "./vault";
