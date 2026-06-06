@@ -33,6 +33,20 @@ services:
         sync: false
       - key: NEUROBUDDY_API_KEY
         sync: false
+      - key: EXA_API_KEY
+        sync: false
+      - key: TAVILY_API_KEY
+        sync: false
+      - key: E2B_API_KEY
+        sync: false
+      - key: HELICONE_API_KEY
+        sync: false
+      - key: LANGCHAIN_API_KEY
+        sync: false
+      - key: INNGEST_SIGNING_KEY
+        sync: false
+      - key: INNGEST_EVENT_URL
+        sync: false
 
 databases:
   - name: bos-aura-db
