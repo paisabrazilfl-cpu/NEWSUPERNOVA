@@ -1,0 +1,35 @@
+services:
+  - type: web
+    name: bos-aura
+    runtime: node
+    plan: free
+    region: oregon
+    branch: main
+    buildCommand: npm install -g pnpm@latest && pnpm install --frozen-lockfile=false && pnpm --filter @workspace/openclaw run build && pnpm --filter @workspace/api-server run build
+    startCommand: node artifacts/api-server/dist/index.mjs
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: BASE_PATH
+        value: /
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: FIRECRAWL_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: STEEL_API_KEY
+        sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: bos-aura-db
+          property: connectionString
+
+databases:
+  - name: bos-aura-db
+    plan: free
+    region: oregon
+    databaseName: bosaura
+    user: bosaura_user
