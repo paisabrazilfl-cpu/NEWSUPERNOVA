@@ -1,0 +1,3 @@
+- [ABBYCLAW repo](abbyclaw-repo.md) — paisabrazilfl-cpu/ABBYCLAW is a private fork of OpenClaw; full tool manifest used to seed agent capabilities
+- [Zod/v4 api-server restriction](zod-restriction.md) — api-server routes must never import zod/v4; use plain zod or no zod
+- [SVG transform percentages](svg-percentages.md) — SVG transform cannot use percentages; use viewBox + CSS centering instead
