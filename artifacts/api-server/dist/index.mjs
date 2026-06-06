@@ -61291,6 +61291,7 @@ if (hasFrontend) {
   app.use(import_express16.default.static(staticPath));
   app.get("/*path", (req, res, next) => {
     if (req.path.startsWith("/api")) return next();
+    if (path.extname(req.path)) return next();
     res.sendFile(indexHtml, (err) => {
       if (err) next();
     });
