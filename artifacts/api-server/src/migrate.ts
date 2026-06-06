@@ -101,19 +101,16 @@ CREATE TABLE IF NOT EXISTS "cron_jobs" (
 );
 `;
 
-// Real OpenClaw multi-agent system with inter-agent communication
+// ABBY CLAW swarm — 6 agents (ids 1-6 align with external.ts AGENT_NAME_MAP)
 const SEED_AGENTS = `
 INSERT INTO agents (name, role, description, status, color, avatar_initials, model, capabilities)
 VALUES
-  ('ABBY', 'Operations and Monitoring', 'Master orchestrator and system monitor. Delegates tasks to sub-agents and manages inter-agent communication.', 'idle', '#00e5ff', 'AB', 'x-ai/grok-4.3', ARRAY['orchestration', 'planning', 'routing', 'reply', 'monologue']),
-  ('PLANNER', 'Task Decomposition', 'Task decomposition and project management. Creates and maintains project plans.', 'idle', '#bf00ff', 'PL', 'x-ai/grok-4.3', ARRAY['planning', 'task_decomposition', 'project_management', 'progress_tracking']),
-  ('IDEATOR', 'Creative Design', 'Idea generation and novelty assessment. Collaborates with critic for idea evaluation.', 'idle', '#0066ff', 'ID', 'anthropic/claude-sonnet-4-5', ARRAY['idea_generation', 'novelty_assessment', 'creativity_evaluation', 'idea_screening']),
-  ('CRITIC', 'Quality Assessment', 'SHARP taste gate for ideas and content. Maintains quality standards and rejects inferior work.', 'idle', '#ff0000', 'CR', 'anthropic/claude-sonnet-4-5', ARRAY['quality_assessment', 'sharp_evaluation', 'antipattern_detection', 'rejection_reasoning']),
-  ('SURVEYOR', 'Research and Intelligence', 'Literature search and information gathering. Identifies research gaps and contributes facts.', 'idle', '#00cc88', 'SR', 'qwen/qwen3.7-plus', ARRAY['research', 'information_gathering', 'rag_retrieval', 'literature_review']),
-  ('CODER', 'Engineering and Coding', 'Algorithm implementation, code generation and execution. Runs experiments and validates results.', 'idle', '#ff6b00', 'CD', 'qwen/qwen3.7-plus', ARRAY['code_generation', 'execution', 'debugging', 'experiment_run', 'validation']),
-  ('WRITER', 'Writing and Distribution', 'Paper and document writing. Formats content for publication or reports.', 'idle', '#ff2d78', 'WR', 'x-ai/grok-4.3', ARRAY['writing', 'formatting', 'documentation', 'publication']),
-  ('REVIEWER', 'Review and Quality Control', 'Internal peer review. Builds rebuttal strategies and feedback loops.', 'idle', '#ffff00', 'RV', 'anthropic/claude-sonnet-4-5', ARRAY['review', 'quality_control', 'rebuttal_strategy', 'feedback_loop']),
-  ('SCOUT', 'Intelligence and Survey', 'Daily intelligence digest and trend monitor. Reports evolving technology trends.', 'idle', '#f6600c', 'SC', 'qwen/qwen3.7-plus', ARRAY['intelligence_digest', 'trend_monitor', 'survey_reporting'])
+  ('ABBY', 'Orchestrator', 'Master orchestrator. Plans and delegates real work to the worker agents via delegate_to_agent, then synthesizes results.', 'idle', '#00e5ff', 'AB', 'x-ai/grok-4.3', ARRAY['orchestration', 'planning', 'routing', 'delegation', 'monologue']),
+  ('FORGE', 'Code Executor', 'Reads/writes/edits code in the workspace, greps, and runs commands/tests/git when shell is enabled.', 'idle', '#bf00ff', 'FG', 'qwen/qwen3.7-plus', ARRAY['filesystem', 'code_execution', 'git', 'devops', 'debugging']),
+  ('CRAWLER', 'Browser Agent', 'Web research and browser automation: web_search, web_fetch, page reading, link extraction, Steel browser.', 'idle', '#0066ff', 'CR', 'x-ai/grok-4.3', ARRAY['web_search', 'web_fetch', 'browser', 'crawl', 'extraction']),
+  ('VAULT', 'Memory & RAG', 'Durable memory and local vector store: indexing, vector search, knowledge graph, context retrieval.', 'idle', '#00cc88', 'VT', 'qwen/qwen3.7-plus', ARRAY['memory', 'vector_search', 'rag', 'knowledge_graph', 'indexing']),
+  ('WIRE', 'API Connector', 'External service integration via http_request/api_get/api_post/webhook_send/openapi_call.', 'idle', '#ff6b00', 'WR', 'x-ai/grok-4.3', ARRAY['http', 'api', 'webhooks', 'integration']),
+  ('MR.NICE', 'Social Agent', 'Communications and outbound messaging via Slack/Discord/Telegram webhooks and drafted copy.', 'idle', '#ff2d78', 'MN', 'anthropic/claude-sonnet-4-5', ARRAY['messaging', 'social', 'communications', 'drafting'])
 `;
 
 // Inter-agent command protocols
@@ -134,14 +131,11 @@ INSERT INTO channels (name, type, description)
 VALUES
   ('general', 'general', 'General swarm communications'),
   ('abby', 'agent', 'ABBY orchestrator channel'),
-  ('planner', 'agent', 'PLANNER task decomposition channel'),
-  ('ideator', 'agent', 'IDEATOR idea generation channel'),
-  ('critic', 'agent', 'CRITIC quality assessment channel'),
-  ('surveyor', 'agent', 'SURVEYOR research channel'),
-  ('coder', 'agent', 'CODER engineering channel'),
-  ('writer', 'agent', 'WRITER writing channel'),
-  ('reviewer', 'agent', 'REVIEWER review channel'),
-  ('scout', 'agent', 'SCOUT intelligence channel')
+  ('forge', 'agent', 'FORGE code executor channel'),
+  ('crawler', 'agent', 'CRAWLER browser agent channel'),
+  ('vault', 'agent', 'VAULT memory & RAG channel'),
+  ('wire', 'agent', 'WIRE API connector channel'),
+  ('mr.nice', 'agent', 'MR.NICE social agent channel')
 `;
 
 export async function runMigrations(): Promise<void> {
@@ -158,6 +152,29 @@ export async function runMigrations(): Promise<void> {
       await client.query(SEED_CHANNELS);
       logger.info("Default agents, commands and channels seeded");
     }
+
+    // Reconcile to the canonical ABBY CLAW roster (idempotent). Aligns ids 1-6
+    // with external.ts and undoes any earlier buddy:bos-omega routing on ABBY.
+    const roster: Array<[number, string, string, string, string, string]> = [
+      [1, "ABBY", "Orchestrator", "#00e5ff", "AB", "x-ai/grok-4.3"],
+      [2, "FORGE", "Code Executor", "#bf00ff", "FG", "qwen/qwen3.7-plus"],
+      [3, "CRAWLER", "Browser Agent", "#0066ff", "CR", "x-ai/grok-4.3"],
+      [4, "VAULT", "Memory & RAG", "#00cc88", "VT", "qwen/qwen3.7-plus"],
+      [5, "WIRE", "API Connector", "#ff6b00", "WR", "x-ai/grok-4.3"],
+      [6, "MR.NICE", "Social Agent", "#ff2d78", "MN", "anthropic/claude-sonnet-4-5"],
+    ];
+    const { rows: countRows } = await client.query("SELECT COUNT(*) AS n FROM agents");
+    if (parseInt(countRows[0].n, 10) >= 6) {
+      for (const [id, name, role, color, initials, model] of roster) {
+        await client.query(
+          "UPDATE agents SET name=$2, role=$3, color=$4, avatar_initials=$5, model=$6 WHERE id=$1",
+          [id, name, role, color, initials, model],
+        );
+      }
+      await client.query("DELETE FROM agents WHERE id > 6");
+    }
+    // Never leave any agent pointing at the dormant NeuroBuddy router.
+    await client.query("UPDATE agents SET model = 'x-ai/grok-4.3' WHERE model LIKE 'buddy:%'");
   } catch (err) {
     logger.error({ err }, "Migration failed — continuing anyway");
   } finally {

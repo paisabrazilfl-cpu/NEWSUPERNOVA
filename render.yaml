@@ -33,6 +33,8 @@ services:
         sync: false
       - key: NEUROBUDDY_API_KEY
         sync: false
+      - key: NEUROBUDDY_BASE_URL
+        value: https://neurobuddy-wg8b.onrender.com/api/external/v1
 
 databases:
   - name: bos-aura-db
