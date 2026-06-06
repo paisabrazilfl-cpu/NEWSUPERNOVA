@@ -8,6 +8,8 @@ import swarmRouter from "./swarm";
 import commandsRouter from "./commands";
 import steelRouter from "./steel";
 import aiRouter from "./ai";
+import neurobuddyRouter from "./neurobuddy";
+import externalRouter from "./external";
 
 const router: IRouter = Router();
 
@@ -20,5 +22,7 @@ router.use("/swarm", swarmRouter);
 router.use(commandsRouter);
 router.use(steelRouter);
 router.use(aiRouter);
+router.use(neurobuddyRouter);
+router.use(externalRouter);
 
 export default router;
