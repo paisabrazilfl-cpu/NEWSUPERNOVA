@@ -5,7 +5,12 @@ services:
     plan: free
     region: oregon
     branch: main
-    buildCommand: corepack enable && corepack prepare pnpm@9 --activate && pnpm install --no-frozen-lockfile && pnpm --filter @workspace/openclaw run build && pnpm --filter @workspace/api-server run build
+    # Build is handled by GitHub Actions (.github/workflows/deploy.yml):
+    #   1. GA installs deps + runs pnpm --filter @workspace/api-server run build
+    #   2. GA commits the built dist/ back to main with [skip ci]
+    #   3. GA triggers this Render service deploy via API
+    # Render itself just uses the prebuilt dist — no build step needed here.
+    buildCommand: echo dist is prebuilt
     startCommand: node artifacts/api-server/dist/index.mjs
     envVars:
       - key: NODE_ENV
@@ -16,20 +21,22 @@ services:
         value: /
       - key: SESSION_SECRET
         generateValue: true
-      - key: FIRECRAWL_API_KEY
-        sync: false
-      - key: OPENROUTER_API_KEY
-        sync: false
-      - key: STEEL_API_KEY
-        sync: false
       - key: DATABASE_URL
         fromDatabase:
           name: bos-aura-db
           property: connectionString
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: STEEL_API_KEY
+        sync: false
+      - key: FIRECRAWL_API_KEY
+        sync: false
+      - key: NEUROBUDDY_API_KEY
+        sync: false
 
 databases:
   - name: bos-aura-db
     plan: free
     region: oregon
-    databaseName: bosaura
-    user: bosaura_user
+    databaseName: openclaw_db_te42
+    user: openclaw_db_te42_user
