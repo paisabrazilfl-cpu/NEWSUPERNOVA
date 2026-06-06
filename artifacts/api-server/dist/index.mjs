@@ -59619,23 +59619,40 @@ CREATE TABLE IF NOT EXISTS "cron_jobs" (
 var SEED_AGENTS = `
 INSERT INTO agents (name, role, description, status, color, avatar_initials, model, capabilities)
 VALUES
-  ('ABBY',   'Orchestrator',  'Master orchestrator and directive router',       'idle', '#00e5ff', 'AB', 'x-ai/grok-4.3',         ARRAY['orchestration','planning','routing']),
-  ('CLAW-1', 'Code Executor', 'Code generation and execution specialist',       'idle', '#bf00ff', 'C1', 'qwen/qwen3.7-plus',      ARRAY['code','execution','debugging']),
-  ('CLAW-2', 'Browser Agent', 'Web browsing and scraping via Steel',            'idle', '#0066ff', 'C2', 'x-ai/grok-build-0.1',   ARRAY['browser','scraping','research']),
-  ('CLAW-3', 'Memory & RAG',  'Long-term memory and retrieval',                 'idle', '#00cc88', 'C3', 'qwen/qwen3.7-max',       ARRAY['memory','rag','search']),
-  ('CLAW-4', 'API Connector', 'External API integration and automation',        'idle', '#ff6b00', 'C4', 'x-ai/grok-4.20',         ARRAY['api','integration','automation']),
-  ('MR.NICE','Social Agent',  'Social media and communications specialist',     'idle', '#ff2d78', 'MN', 'qwen/qwen3.6-plus',      ARRAY['social','communications','engagement'])
+  ('ABBY', 'Operations and Monitoring', 'Master orchestrator and system monitor. Delegates tasks to sub-agents and manages inter-agent communication.', 'idle', '#00e5ff', 'AB', 'x-ai/grok-4.3', ARRAY['orchestration', 'planning', 'routing', 'reply', 'monologue']),
+  ('PLANNER', 'Task Decomposition', 'Task decomposition and project management. Creates and maintains project plans.', 'idle', '#bf00ff', 'PL', 'x-ai/grok-4.3', ARRAY['planning', 'task_decomposition', 'project_management', 'progress_tracking']),
+  ('IDEATOR', 'Creative Design', 'Idea generation and novelty assessment. Collaborates with critic for idea evaluation.', 'idle', '#0066ff', 'ID', 'anthropic/claude-sonnet-4-5', ARRAY['idea_generation', 'novelty_assessment', 'creativity_evaluation', 'idea_screening']),
+  ('CRITIC', 'Quality Assessment', 'SHARP taste gate for ideas and content. Maintains quality standards and rejects inferior work.', 'idle', '#ff0000', 'CR', 'anthropic/claude-sonnet-4-5', ARRAY['quality_assessment', 'sharp_evaluation', 'antipattern_detection', 'rejection_reasoning']),
+  ('SURVEYOR', 'Research and Intelligence', 'Literature search and information gathering. Identifies research gaps and contributes facts.', 'idle', '#00cc88', 'SR', 'qwen/qwen3.7-plus', ARRAY['research', 'information_gathering', 'rag_retrieval', 'literature_review']),
+  ('CODER', 'Engineering and Coding', 'Algorithm implementation, code generation and execution. Runs experiments and validates results.', 'idle', '#ff6b00', 'CD', 'qwen/qwen3.7-plus', ARRAY['code_generation', 'execution', 'debugging', 'experiment_run', 'validation']),
+  ('WRITER', 'Writing and Distribution', 'Paper and document writing. Formats content for publication or reports.', 'idle', '#ff2d78', 'WR', 'x-ai/grok-4.3', ARRAY['writing', 'formatting', 'documentation', 'publication']),
+  ('REVIEWER', 'Review and Quality Control', 'Internal peer review. Builds rebuttal strategies and feedback loops.', 'idle', '#ffff00', 'RV', 'anthropic/claude-sonnet-4-5', ARRAY['review', 'quality_control', 'rebuttal_strategy', 'feedback_loop']),
+  ('SCOUT', 'Intelligence and Survey', 'Daily intelligence digest and trend monitor. Reports evolving technology trends.', 'idle', '#f6600c', 'SC', 'qwen/qwen3.7-plus', ARRAY['intelligence_digest', 'trend_monitor', 'survey_reporting'])
+`;
+var KEYSPLIT_ABORT_SEED = `
+INSERT INTO agent_commands (from_agent_id, to_agent_id, command, payload, priority, status)
+VALUES
+  (1, 2, 'THInit', 'Task started: Study model architecture', 'priority_300', 'queued'),
+  (2, 3, 'THInit', 'Send idea to critic for evaluation', 'priority_300', 'queued'),
+  (3, 1, 'THResult', 'IDEA EVALUATED (SHARP=20), approved for phase 3.3', 'priority_300', 'queued'),
+  (1, 5, 'THPlanDeal', 'Plan dealing for literature review', 'priority_200', 'queued'),
+  (5, 6, 'THDispatch', 'Implement algorithm at: https://github.com/project/src', 'priority_400', 'queued'),
+  (6, 7, 'THInit', 'Write paper draft for review', 'priority_300', 'queued'),
+  (7, 1, 'THResult', 'Paper REVIEWED by critic. Ready for submission.', 'priority_300', 'queued')
 `;
 var SEED_CHANNELS = `
 INSERT INTO channels (name, type, description)
 VALUES
   ('general', 'general', 'General swarm communications'),
-  ('abby',    'agent',   'ABBY orchestrator channel'),
-  ('claw-1',  'agent',   'CLAW-1 code executor channel'),
-  ('claw-2',  'agent',   'CLAW-2 browser agent channel'),
-  ('claw-3',  'agent',   'CLAW-3 memory channel'),
-  ('claw-4',  'agent',   'CLAW-4 API connector channel'),
-  ('mr-nice', 'agent',   'MR.NICE social agent channel')
+  ('abby', 'agent', 'ABBY orchestrator channel'),
+  ('planner', 'agent', 'PLANNER task decomposition channel'),
+  ('ideator', 'agent', 'IDEATOR idea generation channel'),
+  ('critic', 'agent', 'CRITIC quality assessment channel'),
+  ('surveyor', 'agent', 'SURVEYOR research channel'),
+  ('coder', 'agent', 'CODER engineering channel'),
+  ('writer', 'agent', 'WRITER writing channel'),
+  ('reviewer', 'agent', 'REVIEWER review channel'),
+  ('scout', 'agent', 'SCOUT intelligence channel')
 `;
 async function runMigrations() {
   const client = await pool.connect();
@@ -59646,8 +59663,9 @@ async function runMigrations() {
     const { rows } = await client.query("SELECT COUNT(*) AS n FROM agents");
     if (parseInt(rows[0].n, 10) === 0) {
       await client.query(SEED_AGENTS);
+      await client.query(KEYSPLIT_ABORT_SEED);
       await client.query(SEED_CHANNELS);
-      logger.info("Default agents and channels seeded");
+      logger.info("Default agents, commands and channels seeded");
     }
   } catch (err) {
     logger.error({ err }, "Migration failed \u2014 continuing anyway");
