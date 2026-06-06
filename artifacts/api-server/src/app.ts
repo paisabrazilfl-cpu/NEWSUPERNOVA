@@ -33,13 +33,22 @@ app.use(express.urlencoded({ extended: true }));
 
 app.use("/api", router);
 
-// In production, serve the Vite-built frontend as static files
+// Health check — always responds 200 so Render / load-balancers pass
+app.get("/", (_req, res) => {
+  res.json({ status: "ok", service: "bos-aura-api" });
+});
+
+// In production, serve the Vite-built frontend as static files if present
 if (process.env["NODE_ENV"] === "production") {
-  const __dirname = path.dirname(fileURLToPath(import.meta.url));
-  const staticPath = path.join(__dirname, "..", "..", "openclaw", "dist", "public");
+  const __filename_app = fileURLToPath(import.meta.url);
+  const __dirname_app = path.dirname(__filename_app);
+  const staticPath = path.join(__dirname_app, "..", "..", "openclaw", "dist", "public");
+  const indexHtml = path.join(staticPath, "index.html");
   app.use(express.static(staticPath));
-  app.get("*", (_req, res) => {
-    res.sendFile(path.join(staticPath, "index.html"));
+  app.get("*", (_req, res, next) => {
+    res.sendFile(indexHtml, (err) => {
+      if (err) next();
+    });
   });
 }
 
