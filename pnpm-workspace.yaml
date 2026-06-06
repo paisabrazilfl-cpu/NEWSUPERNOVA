@@ -28,3 +28,9 @@ catalog:
   zod: ^3.25.76
 
 autoInstallPeers: false
+
+onlyBuiltDependencies:
+  - '@swc/core'
+  - esbuild
+  - msw
+  - unrs-resolver
