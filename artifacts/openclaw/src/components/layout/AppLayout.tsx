@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { Activity, LayoutGrid, Terminal, Settings as SettingsIcon, ShieldAlert, Clock } from "lucide-react";
+import { Activity, LayoutGrid, Terminal, Settings as SettingsIcon, ShieldAlert, Clock, MessageSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useGetSwarmStatus } from "@workspace/api-client-react";
 import { useEffect } from "react";
@@ -21,7 +21,8 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
   }, [queryClient]);
 
   const navItems = [
-    { href: "/", icon: Activity, label: "Swarm", hint: "Live command center — give the swarm a goal" },
+    { href: "/", icon: MessageSquare, label: "Chat", hint: "Talk to the agent swarm" },
+    { href: "/swarm", icon: Activity, label: "Swarm", hint: "Live swarm visualization & command center" },
     { href: "/tasks", icon: LayoutGrid, label: "Tasks", hint: "Work the agents are running" },
     { href: "/agents", icon: Terminal, label: "Agents", hint: "The six CLAW agents and their tools" },
     { href: "/cron", icon: Clock, label: "Cron", hint: "Scheduled, recurring jobs" },

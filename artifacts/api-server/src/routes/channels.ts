@@ -35,6 +35,43 @@ router.post("/", async (req, res) => {
   }
 });
 
+// Rename / update a conversation (channel).
+router.patch("/:channelId", async (req, res) => {
+  const channelId = parseInt(req.params.channelId);
+  if (isNaN(channelId)) return res.status(400).json({ error: "Invalid channel ID" });
+  const { name, description } = req.body as { name?: string; description?: string };
+  const updates: Record<string, unknown> = {};
+  if (typeof name === "string" && name.trim()) updates.name = name.trim().slice(0, 120);
+  if (typeof description === "string") updates.description = description.slice(0, 500);
+  if (Object.keys(updates).length === 0) return res.status(400).json({ error: "Nothing to update" });
+  try {
+    const [channel] = await db.update(channelsTable).set(updates).where(eq(channelsTable.id, channelId)).returning();
+    if (!channel) return res.status(404).json({ error: "Channel not found" });
+    return res.json({
+      ...channel,
+      createdAt: channel.createdAt.toISOString(),
+      lastActivity: channel.lastActivity?.toISOString() ?? null,
+    });
+  } catch (err) {
+    req.log.error({ err }, "Failed to update channel");
+    return res.status(500).json({ error: "Failed to update channel" });
+  }
+});
+
+// Delete a conversation and its messages.
+router.delete("/:channelId", async (req, res) => {
+  const channelId = parseInt(req.params.channelId);
+  if (isNaN(channelId)) return res.status(400).json({ error: "Invalid channel ID" });
+  try {
+    await db.delete(messagesTable).where(eq(messagesTable.channelId, channelId));
+    await db.delete(channelsTable).where(eq(channelsTable.id, channelId));
+    return res.status(204).send();
+  } catch (err) {
+    req.log.error({ err }, "Failed to delete channel");
+    return res.status(500).json({ error: "Failed to delete channel" });
+  }
+});
+
 router.get("/:channelId/messages", async (req, res) => {
   const channelId = parseInt(req.params.channelId);
   if (isNaN(channelId)) return res.status(400).json({ error: "Invalid channel ID" });

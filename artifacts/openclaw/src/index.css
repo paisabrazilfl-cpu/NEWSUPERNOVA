@@ -49,41 +49,43 @@
   --radius-xl: calc(var(--radius) + 4px);
 }
 
-:root {
-  --background: 240 10% 3.9%;
-  --foreground: 0 0% 98%;
+/* Calm, legible dark theme. One source of truth — both :root and .dark share it. */
+:root,
+.dark {
+  --background: 222 18% 9%;
+  --foreground: 213 24% 95%;
 
-  --card: 240 10% 3.9%;
-  --card-foreground: 0 0% 98%;
-  --card-border: 240 3.7% 15.9%;
+  --card: 222 16% 12%;
+  --card-foreground: 213 24% 95%;
+  --card-border: 220 13% 22%;
 
-  --popover: 240 10% 3.9%;
-  --popover-foreground: 0 0% 98%;
-  --popover-border: 240 3.7% 15.9%;
+  --popover: 222 17% 11%;
+  --popover-foreground: 213 24% 95%;
+  --popover-border: 220 13% 22%;
 
-  --primary: 190 100% 50%;
-  --primary-foreground: 240 5.9% 10%;
+  --primary: 190 68% 50%;
+  --primary-foreground: 200 45% 8%;
 
-  --secondary: 240 3.7% 15.9%;
-  --secondary-foreground: 0 0% 98%;
+  --secondary: 220 14% 18%;
+  --secondary-foreground: 213 20% 92%;
 
-  --muted: 240 3.7% 15.9%;
-  --muted-foreground: 240 5% 64.9%;
+  --muted: 220 14% 16%;
+  --muted-foreground: 217 13% 69%;
 
-  --accent: 280 100% 60%;
-  --accent-foreground: 0 0% 98%;
+  --accent: 255 58% 67%;
+  --accent-foreground: 0 0% 100%;
 
-  --destructive: 0 62.8% 30.6%;
-  --destructive-foreground: 0 0% 98%;
+  --destructive: 0 70% 57%;
+  --destructive-foreground: 0 0% 100%;
 
-  --border: 240 3.7% 15.9%;
-  --input: 240 3.7% 15.9%;
-  --ring: 190 100% 50%;
+  --border: 220 13% 22%;
+  --input: 220 13% 24%;
+  --ring: 190 68% 50%;
 
-  --app-font-sans: 'Rajdhani', sans-serif;
-  --app-font-serif: Georgia, serif;
-  --app-font-mono: 'Space Mono', monospace;
-  --radius: 0.25rem;
+  --app-font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --app-font-serif: 'Inter', Georgia, serif;
+  --app-font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --radius: 0.625rem;
 
   --sidebar-primary-border: hsl(var(--primary));
   --sidebar-accent-border: hsl(var(--accent));
@@ -94,48 +96,25 @@
   --destructive-border: hsl(var(--destructive));
 }
 
-.dark {
-  --background: 240 10% 3.9%;
-  --foreground: 0 0% 98%;
-
-  --card: 240 10% 3.9%;
-  --card-foreground: 0 0% 98%;
-  --card-border: 240 3.7% 15.9%;
-
-  --popover: 240 10% 3.9%;
-  --popover-foreground: 0 0% 98%;
-  --popover-border: 240 3.7% 15.9%;
-
-  --primary: 190 100% 50%;
-  --primary-foreground: 240 5.9% 10%;
-
-  --secondary: 240 3.7% 15.9%;
-  --secondary-foreground: 0 0% 98%;
-
-  --muted: 240 3.7% 15.9%;
-  --muted-foreground: 240 5% 64.9%;
-
-  --accent: 280 100% 60%;
-  --accent-foreground: 0 0% 98%;
-
-  --destructive: 0 62.8% 30.6%;
-  --destructive-foreground: 0 0% 98%;
-
-  --border: 240 3.7% 15.9%;
-  --input: 240 3.7% 15.9%;
-  --ring: 190 100% 50%;
-}
-
 @layer base {
   * {
     @apply border-border;
   }
 
+  html {
+    font-size: 15px;
+  }
+
   body {
     @apply font-sans antialiased bg-background text-foreground;
-    background-image: 
-      linear-gradient(to right, rgba(255,255,255,0.02) 1px, transparent 1px),
-      linear-gradient(to bottom, rgba(255,255,255,0.02) 1px, transparent 1px);
-    background-size: 20px 20px;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    line-height: 1.55;
+    letter-spacing: -0.006em;
+  }
+
+  /* Tame the cyberpunk SHOUTING: tracked-out uppercase becomes readable. */
+  .uppercase {
+    letter-spacing: 0.04em;
   }
 }

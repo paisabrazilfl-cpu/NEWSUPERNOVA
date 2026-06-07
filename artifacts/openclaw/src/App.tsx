@@ -5,6 +5,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as SonnerToaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
+import ChatPage from "@/pages/chat";
 import Dashboard from "@/pages/dashboard";
 import Agents from "@/pages/agents";
 import Tasks from "@/pages/tasks";
@@ -17,7 +18,8 @@ function Router() {
   return (
     <AppLayout>
       <Switch>
-        <Route path="/" component={Dashboard} />
+        <Route path="/" component={ChatPage} />
+        <Route path="/swarm" component={Dashboard} />
         <Route path="/agents" component={Agents} />
         <Route path="/tasks" component={Tasks} />
         <Route path="/cron" component={CronPage} />

@@ -61,6 +61,23 @@ branch is created, it gets its own dated section here.
 ### UI/UX Phase 3 — polish
 - Rewrote the `404` page to match the dark theme (was a stray light-mode page).
 
+### UI/UX — full redesign into a modern AI chat product
+- **Theme**: replaced the thin neon cyberpunk theme with a calm, legible, professional
+  dark palette (Inter + JetBrains Mono, softer radii, higher contrast), applied app-wide
+  via the design tokens. Removed the busy grid background.
+- **New chat experience (`/`)**: ChatGPT/Claude-style layout —
+  - Conversation sidebar (new / rename / delete / active highlight), backed by real
+    channel endpoints; collapses to a drawer on mobile.
+  - Clean message thread: distinct user vs assistant styling, chronological, auto-scroll,
+    word wrap, dependency-free markdown/code-block rendering with copy buttons.
+  - Composer: auto-growing textarea, Enter to send / Shift+Enter newline, send + loading
+    states, typing indicator, file-attach UI (stub — no upload backend yet, marked in code).
+  - Top bar: conversation title, export to `.txt`/`.json`, mobile menu.
+  - Empty/loading/error states throughout; accessible labels on all controls.
+- **Backend (real)**: added `PATCH`/`DELETE /api/channels/:id` (rename + delete w/ message
+  cascade) to power conversation management.
+- The swarm dashboard moved to `/swarm`; all other pages preserved. Nav rail updated.
+
 ### Notes
 - The GO/HOLD/ABORT policy/approval gate was prototyped and then **removed at the
   operator's request** — no risk-tiered governance ships.
