@@ -5,7 +5,8 @@ import { LeftPanel } from "@/components/dashboard/LeftPanel";
 import { SwarmCanvas } from "@/components/dashboard/SwarmCanvas";
 import { ChatStream } from "@/components/dashboard/ChatStream";
 import { AgentInspector } from "@/components/dashboard/AgentInspector";
-import { SwarmComposer } from "@/components/dashboard/SwarmComposer";
+import { SwarmStatusStrip } from "@/components/dashboard/SwarmStatusStrip";
+import { SwarmIdleHint } from "@/components/dashboard/SwarmIdleHint";
 import { SteelBrowser } from "@/components/dashboard/SteelBrowser";
 
 export default function Dashboard() {
@@ -59,13 +60,19 @@ export default function Dashboard() {
           </div>
         </div>
 
+        {/* Observation-first: a persistent status header replaces the goal composer.
+            Goal-setting lives in Chat (the single command surface). */}
+        <SwarmStatusStrip />
+
         <div className="flex-1 relative min-h-0">
           {viewMode === "canvas" && <SwarmCanvas onAgentClick={setSelectedAgentId} />}
           {viewMode === "chat" && <ChatStream channelId={activeChannelId} />}
           {viewMode === "browser" && <SteelBrowser />}
         </div>
 
-        <SwarmComposer channelId={activeChannelId} />
+        {/* Onboarding cue sits in normal flow (below the canvas) so it never
+            overlaps the orbs; it removes itself once any agent is working. */}
+        {viewMode === "canvas" && <SwarmIdleHint />}
       </div>
 
       <AgentInspector

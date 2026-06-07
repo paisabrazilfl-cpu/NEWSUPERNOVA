@@ -11,7 +11,7 @@ const navItems = [
   { href: "/swarm", icon: Activity, label: "Swarm", hint: "Live swarm visualization & command center" },
   { href: "/tasks", icon: LayoutGrid, label: "Tasks", hint: "Work the agents are running" },
   { href: "/agents", icon: Terminal, label: "Agents", hint: "The six CLAW agents and their tools" },
-  { href: "/cron", icon: Clock, label: "Cron", hint: "Scheduled, recurring jobs" },
+  { href: "/cron", icon: Clock, label: "Scheduled", hint: "Scheduled, recurring jobs" },
   { href: "/settings", icon: SettingsIcon, label: "Settings", hint: "Operator login, vault & integrations" },
 ];
 

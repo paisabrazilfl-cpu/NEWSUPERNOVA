@@ -10,6 +10,7 @@ import {
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAiStream } from "@/hooks/useAiStream";
+import { GOAL_DRAFT_KEY } from "@/lib/handoff";
 import { MessageContent } from "@/components/chat/MessageContent";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -38,6 +39,10 @@ export default function ChatPage() {
   useEffect(() => {
     if (activeId == null && channels.length) setActiveId(channels[0].id);
   }, [channels, activeId]);
+
+  // Goal handed off from the Swarm page: prefill the composer so the user lands
+  // in Chat (the command surface) ready to dispatch. We never auto-send.
+  const [pendingDraft, setPendingDraft] = useState(false);
 
   const activeChannel = channels.find((c) => c.id === activeId) ?? null;
 
@@ -76,6 +81,27 @@ export default function ChatPage() {
     ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
   };
   useEffect(autoGrow, [text]);
+
+  // Pick up a goal handed off from the Swarm page (set the composer text once,
+  // then clear the handoff). If there's no conversation yet, start one so the
+  // prefilled goal is immediately sendable.
+  useEffect(() => {
+    let draft: string | null = null;
+    try { draft = sessionStorage.getItem(GOAL_DRAFT_KEY); } catch { /* ignore */ }
+    if (draft) {
+      setText(draft);
+      setPendingDraft(true);
+      try { sessionStorage.removeItem(GOAL_DRAFT_KEY); } catch { /* ignore */ }
+      requestAnimationFrame(() => taRef.current?.focus());
+    }
+  }, []);
+
+  useEffect(() => {
+    if (pendingDraft && activeId == null && !channelsLoading && channels.length === 0) {
+      newChat();
+      setPendingDraft(false);
+    }
+  }, [pendingDraft, activeId, channelsLoading, channels.length]);
 
   // Auto-scroll to newest content (and while streaming).
   useEffect(() => {

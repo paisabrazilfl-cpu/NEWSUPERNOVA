@@ -1,6 +1,7 @@
 import { useListAgents, getListAgentsQueryKey } from "@workspace/api-client-react";
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { agentState } from "@/lib/agentState";
 
 interface SwarmCanvasProps {
   onAgentClick: (id: number) => void;
@@ -8,6 +9,7 @@ interface SwarmCanvasProps {
 
 export function SwarmCanvas({ onAgentClick }: SwarmCanvasProps) {
   const { data: agents = [] } = useListAgents({ query: { refetchInterval: 3000, queryKey: getListAgentsQueryKey() } });
+  const reduceMotion = useReducedMotion();
 
   // Measure the actual container so the layout is responsive (fixes orbs clipping
   // off-screen on mobile, where the old fixed pixel radius was larger than half
@@ -24,11 +26,11 @@ export function SwarmCanvas({ onAgentClick }: SwarmCanvasProps) {
     return () => ro.disconnect();
   }, []);
 
-  // Ring radius scaled to the container, leaving room for the 64px node + margin.
+  // Ring radius scaled to the container, leaving room for the node + its label.
   // Deterministic (no Math.random) so orbs don't jump around on every render.
   const radius = useMemo(() => {
     const minDim = Math.min(size.w || 600, size.h || 500);
-    return Math.max(70, Math.round(minDim / 2 - 56));
+    return Math.max(74, Math.round(minDim / 2 - 72));
   }, [size]);
 
   const positions = useMemo(() => {
@@ -43,30 +45,6 @@ export function SwarmCanvas({ onAgentClick }: SwarmCanvasProps) {
     });
   }, [agents, radius]);
 
-  const getStatusColor = (status: string, baseColor: string) => {
-    switch (status) {
-      case 'thinking':
-      case 'executing': return '#22c55e'; // Green
-      case 'waiting': return '#3b82f6'; // Blue
-      case 'hitl': return 'var(--color-accent)'; // Purple/Accent
-      case 'stalled': return '#ef4444'; // Red
-      case 'idle':
-      default: return '#888888'; // Gray
-    }
-  };
-
-  const getPulseAnimation = (status: string) => {
-    switch (status) {
-      case 'thinking':
-      case 'executing': 
-        return { scale: [1, 1.2, 1], opacity: [0.5, 0.8, 0.5] };
-      case 'hitl':
-        return { scale: [1, 1.3, 1], opacity: [0.6, 1, 0.6] };
-      default:
-        return { scale: 1, opacity: 0.5 };
-    }
-  };
-
   // Pixel-space viewBox centered at 0,0 so SVG line endpoints (pos.x,pos.y) line
   // up exactly with the absolutely-positioned nodes.
   const vbW = size.w || 1000;
@@ -74,75 +52,74 @@ export function SwarmCanvas({ onAgentClick }: SwarmCanvasProps) {
 
   return (
     <div ref={containerRef} className="w-full h-full relative overflow-hidden bg-background/50 flex items-center justify-center">
-      {/* Grid background is handled by parent, just need to draw connections and nodes */}
-
-      {/* Connections (SVG) - viewBox centers origin at 0,0 matching div offsets */}
+      {/* Connections (SVG) — only drawn between agents that are actively working,
+          so a calm swarm shows no lines. Animation is gated on reduced-motion. */}
       <svg className="absolute inset-0 w-full h-full pointer-events-none" viewBox={`${-vbW / 2} ${-vbH / 2} ${vbW} ${vbH}`} preserveAspectRatio="none">
         {positions.map((pos1, i) =>
           positions.slice(i + 1).map((pos2) => {
-            const agent1 = agents.find(a => a.id === pos1.id);
-            const agent2 = agents.find(a => a.id === pos2.id);
-            const isActive = (agent1?.status === 'executing' || agent1?.status === 'thinking') &&
-                             (agent2?.status === 'executing' || agent2?.status === 'thinking');
-            if (!isActive) return null;
+            const a1 = agents.find((a) => a.id === pos1.id);
+            const a2 = agents.find((a) => a.id === pos2.id);
+            const bothActive = !!a1 && !!a2 && agentState(a1.status).active && agentState(a2.status).active;
+            if (!bothActive) return null;
             return (
               <motion.line
                 key={`${pos1.id}-${pos2.id}`}
-                x1={pos1.x}
-                y1={pos1.y}
-                x2={pos2.x}
-                y2={pos2.y}
-                stroke="#00e5ff"
-                strokeWidth={1.5}
-                initial={{ opacity: 0 }}
-                animate={{ opacity: [0.15, 0.5, 0.15] }}
-                transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+                x1={pos1.x} y1={pos1.y} x2={pos2.x} y2={pos2.y}
+                stroke="#00e5ff" strokeWidth={1.5}
+                initial={{ opacity: reduceMotion ? 0.3 : 0 }}
+                animate={reduceMotion ? { opacity: 0.3 } : { opacity: [0.12, 0.45, 0.12] }}
+                transition={reduceMotion ? undefined : { duration: 2.4, repeat: Infinity, ease: "linear" }}
               />
             );
           })
         )}
       </svg>
 
-      {/* Agent Nodes */}
+      {/* Agent nodes */}
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-        {agents.map(agent => {
-          const pos = positions.find(p => p.id === agent.id) || { x: 0, y: 0 };
-          const statusColor = getStatusColor(agent.status, agent.color);
-          
+        {agents.map((agent) => {
+          const pos = positions.find((p) => p.id === agent.id) || { x: 0, y: 0 };
+          const view = agentState(agent.status);
+          const StateIcon = view.icon;
+          const animate = view.active && !reduceMotion;
+
           return (
             <motion.div
               key={agent.id}
               className="absolute pointer-events-auto cursor-pointer group"
               style={{ x: pos.x, y: pos.y }}
-              initial={{ opacity: 0, scale: 0 }}
+              initial={{ opacity: 0, scale: 0.6 }}
               animate={{ opacity: 1, scale: 1 }}
-              whileHover={{ scale: 1.1, zIndex: 10 }}
+              whileHover={{ scale: 1.06, zIndex: 10 }}
               onClick={() => onAgentClick(agent.id)}
               data-testid={`canvas-node-${agent.id}`}
             >
-              {/* Pulse effect */}
-              <motion.div 
+              {/* Ambient glow — only for active states, calmed for everyone else. */}
+              <motion.div
                 className="absolute inset-0 rounded-full blur-md -z-10"
-                style={{ backgroundColor: statusColor }}
-                animate={getPulseAnimation(agent.status)}
-                transition={{ duration: 1.5, repeat: Infinity }}
+                style={{ backgroundColor: view.active ? view.color : agent.color }}
+                animate={animate ? { scale: [1, 1.18, 1], opacity: [0.35, 0.6, 0.35] } : { scale: 1, opacity: view.attention ? 0.4 : 0.16 }}
+                transition={animate ? { duration: 1.8, repeat: Infinity } : undefined}
               />
-              
-              {/* Node body */}
-              <div 
-                className="w-16 h-16 rounded-full bg-card border-2 flex items-center justify-center flex-col shadow-lg relative overflow-hidden"
-                style={{ borderColor: agent.color }}
+
+              {/* Node body — ring colour reflects live state, not just brand colour. */}
+              <div
+                className="w-16 h-16 rounded-full bg-card border-2 flex items-center justify-center shadow-lg relative overflow-hidden"
+                style={{ borderColor: view.active || view.attention ? view.color : `${agent.color}99` }}
               >
                 <div className="absolute inset-0 opacity-20" style={{ backgroundColor: agent.color }} />
                 <span className="font-mono font-bold text-lg relative z-10" style={{ color: agent.color }}>
                   {agent.avatarInitials}
                 </span>
               </div>
-              
-              {/* Label */}
-              <div className="absolute top-full left-1/2 -translate-x-1/2 mt-3 text-center whitespace-nowrap bg-background/80 backdrop-blur-sm px-3 py-1 rounded-md border border-card-border opacity-0 group-hover:opacity-100 transition-opacity">
-                <div className="font-bold text-sm" style={{ color: agent.color }}>{agent.name}</div>
-                <div className="text-[10px] text-muted-foreground uppercase tracking-widest">{agent.status}</div>
+
+              {/* Always-on label: human role + plain-English state (text + icon + colour). */}
+              <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 text-center whitespace-nowrap">
+                <div className="text-[12px] font-semibold text-foreground leading-tight">{agent.role || agent.name}</div>
+                <div className="mt-0.5 inline-flex items-center gap-1 text-[10px] font-medium" style={{ color: view.color }}>
+                  <StateIcon className={animate && agent.status === "executing" ? "w-3 h-3 animate-spin" : "w-3 h-3"} />
+                  {view.label}
+                </div>
               </div>
             </motion.div>
           );
@@ -150,9 +127,7 @@ export function SwarmCanvas({ onAgentClick }: SwarmCanvasProps) {
       </div>
 
       {agents.length === 0 && (
-        <div className="text-muted-foreground font-mono text-sm uppercase tracking-widest animate-pulse">
-          No agents detected in swarm.
-        </div>
+        <div className="text-muted-foreground text-sm">No agents detected in the swarm.</div>
       )}
     </div>
   );
