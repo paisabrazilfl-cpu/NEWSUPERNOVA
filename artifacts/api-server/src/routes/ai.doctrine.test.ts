@@ -112,9 +112,28 @@ describe("RESEARCH_PLAYBOOKS — VPD(both) + market research + decks", () => {
     expect(RESEARCH_PLAYBOOKS).toContain("TAM/SAM/SOM");
   });
 
-  it("includes a deck/presentation building playbook", () => {
+  it("includes a deck/presentation playbook with per-slide spec + design system", () => {
     expect(RESEARCH_PLAYBOOKS).toContain("DECK / PRESENTATION BUILDING");
+    expect(RESEARCH_PLAYBOOKS.toLowerCase()).toContain("speaker notes");
     expect(RESEARCH_PLAYBOOKS.toLowerCase()).toContain("save_artifact");
+    expect(RESEARCH_PLAYBOOKS.toLowerCase()).toContain("canva");
+  });
+
+  it("covers the domain library (SEO/AEO, marketing, geofencing, money, engineering)", () => {
+    expect(RESEARCH_PLAYBOOKS).toContain("SEO / AEO / GEO");
+    expect(RESEARCH_PLAYBOOKS.toLowerCase()).toContain("llms.txt");
+    expect(RESEARCH_PLAYBOOKS.toLowerCase()).toContain("gptbot");
+    expect(RESEARCH_PLAYBOOKS).toContain("PERFORMANCE MARKETING");
+    expect(RESEARCH_PLAYBOOKS).toContain("GEOFENCING");
+    expect(RESEARCH_PLAYBOOKS).toContain("UNIT ECONOMICS");
+    expect(RESEARCH_PLAYBOOKS.toLowerCase()).toContain("cac");
+  });
+});
+
+describe("EXECUTION_DOCTRINE — no internal-state / navel-gazing", () => {
+  it("forbids reporting on the swarm itself", () => {
+    expect(EXECUTION_DOCTRINE).toContain("NEVER REPORT ON THE SWARM ITSELF");
+    expect(EXECUTION_DOCTRINE).toContain("DON'T NAVEL-GAZE IN MEMORY");
   });
 });
 

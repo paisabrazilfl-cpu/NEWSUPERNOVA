@@ -8,7 +8,7 @@ vi.mock("@workspace/db", async (importOriginal) => {
   return { ...actual, db: mockDb };
 });
 
-import { sanitizeForStorage } from "./tools";
+import { sanitizeForStorage, isInternalMeta } from "./tools";
 
 const NUL = String.fromCharCode(0);
 const REPL = String.fromCharCode(0xfffd);
@@ -39,5 +39,27 @@ describe("sanitizeForStorage", () => {
   it("is a no-op for already-clean strings", () => {
     expect(sanitizeForStorage("")).toBe("");
     expect(sanitizeForStorage("plain text 123")).toBe("plain text 123");
+  });
+});
+
+describe("isInternalMeta — filters swarm self-audit / vault-meta entries from memory", () => {
+  it("flags the polluting self-audit entries", () => {
+    for (const key of [
+      "abby-claw-memory-audit-architecture",
+      "swarm-architecture-definitions",
+      "vault-full-state-dump-2025",
+      "vault-rag-sweep-code-prompts-2025",
+      "claw4-vault-directive-memory-store-audit-2025",
+      "six_ZIPs_identification_error",
+    ]) {
+      expect(isInternalMeta({ key })).toBe(true);
+    }
+    expect(isInternalMeta({ content: "SYSTEM TOPOLOGY (6 nodes): ABBY orchestrator, CLAW-3 SENTINEL ..." })).toBe(true);
+  });
+
+  it("keeps real operator-domain findings", () => {
+    expect(isInternalMeta({ key: "fl-llc-fees", content: "Florida LLC filing fee is $125 total" })).toBe(false);
+    expect(isInternalMeta({ key: "wellington-vpd", content: "US-441 AADT 48,500 (FDOT 2024)" })).toBe(false);
+    expect(isInternalMeta({ content: "TAM/SAM/SOM for Palm Beach HNW market" })).toBe(false);
   });
 });

@@ -211,6 +211,17 @@ function formatMemoryRow(m: { id: number; agentName: string | null; key: string 
   return `#${m.id} [${m.agentName ?? "?"}${m.key ? ` · ${m.key}` : ""}${tag}] ${clip(m.content, 600)}`;
 }
 
+// Swarm self-audit / architecture / vault-meta entries: prior runs littered the
+// store with these, and surfacing them makes agents "report on themselves"
+// instead of the operator's task. They are never a deliverable, so they are
+// filtered out of every memory_search result.
+const INTERNAL_META_RE =
+  /(vault[-\s]?(full[-\s]?state|state[-\s]?dump|rag|audit|targeted|secret)|swarm[-\s]?architecture|architecture[-\s]?(consolidated|definitions)|memory[-\s]?(audit|store[-\s]?audit)|rag[-\s]?(sweep|requery|response)|system topology|substrate audit|bundle matrix|sentinel|six[_\s]?zips|_directive_|self[-\s]?audit|abby[-\s]?claw[-\s]?memory)/i;
+
+export function isInternalMeta(m: { key?: string | null; content?: string | null; tags?: string | null }): boolean {
+  return INTERNAL_META_RE.test(`${m.key ?? ""} ${m.tags ?? ""} ${m.content ?? ""}`);
+}
+
 async function keywordMemorySearch(query: string, limit: number): Promise<string> {
   const like = `%${query}%`;
   const rows = await db
@@ -218,9 +229,10 @@ async function keywordMemorySearch(query: string, limit: number): Promise<string
     .from(agentMemoryTable)
     .where(or(ilike(agentMemoryTable.content, like), ilike(agentMemoryTable.key, like), ilike(agentMemoryTable.tags, like)))
     .orderBy(desc(agentMemoryTable.createdAt))
-    .limit(limit);
-  if (!rows.length) return `no memory entries matched "${query}".`;
-  return rows.map((m) => formatMemoryRow(m)).join("\n---\n");
+    .limit(limit * 3);
+  const visible = rows.filter((m) => !isInternalMeta(m)).slice(0, limit);
+  if (!visible.length) return `no relevant memory entries matched "${query}".`;
+  return visible.map((m) => formatMemoryRow(m)).join("\n---\n");
 }
 
 async function memorySearch(query: string, limit: number): Promise<string> {
@@ -229,22 +241,22 @@ async function memorySearch(query: string, limit: number): Promise<string> {
   if (pineconeConfigured()) {
     const queryVec = await embed(query);
     if (queryVec) {
-      const matches = await pineconeQuery(queryVec, limit);
+      const matches = await pineconeQuery(queryVec, limit * 3);
       if (matches && matches.length) {
-        return matches
+        const rows = matches
           .map((m) => {
             const md = m.metadata ?? {};
-            return formatMemoryRow(
-              {
-                id: Number(md["pgId"] ?? m.id) || 0,
-                agentName: (md["agentName"] as string) ?? null,
-                key: (md["key"] as string) ?? null,
-                content: String(md["content"] ?? ""),
-              },
-              m.score,
-            );
+            return {
+              id: Number(md["pgId"] ?? m.id) || 0,
+              agentName: (md["agentName"] as string) ?? null,
+              key: (md["key"] as string) ?? null,
+              content: String(md["content"] ?? ""),
+              score: m.score,
+            };
           })
-          .join("\n---\n");
+          .filter((r) => !isInternalMeta(r))
+          .slice(0, limit);
+        if (rows.length) return rows.map((r) => formatMemoryRow(r, r.score)).join("\n---\n");
       }
     }
   }
@@ -260,6 +272,7 @@ async function memorySearch(query: string, limit: number): Promise<string> {
         .limit(MEMORY_CANDIDATE_LIMIT);
 
       const scored = candidates
+        .filter((m) => !isInternalMeta(m))
         .map((m) => {
           const vec = parseEmbedding(m.embedding);
           return vec ? { row: m, score: cosineSimilarity(queryVec, vec) } : null;
