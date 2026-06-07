@@ -86278,6 +86278,9 @@ function clip3(s, n) {
   return s.length > n ? `${s.slice(0, n)}
 \u2026[truncated ${s.length - n} chars]` : s;
 }
+function sanitizeForStorage(s) {
+  return s.replace(/ /g, "").replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, "\uFFFD").replace(/(^|[^\uD800-\uDBFF])([\uDC00-\uDFFF])/g, "$1\uFFFD");
+}
 async function firecrawlSearch(query, limit) {
   const key = process.env["FIRECRAWL_API_KEY"];
   if (!key) throw new Error("FIRECRAWL_API_KEY is not set");
@@ -86760,7 +86763,7 @@ ${clip3(safe, 4e3)}`;
   },
   sandbox_exec: {
     name: "sandbox_exec",
-    description: "Run a shell script inside a fresh, isolated E2B cloud VM (its own real computer \u2014 node, git, network, full Linux). Use for anything that needs a real dev environment: clone a public repo, install packages, run a build/test suite, run scripts, curl APIs, etc. Each call gets a clean disposable VM. This VM has NO access to the OpenClaw server or its secrets. For making changes to the OpenClaw repo and opening a PR, use sandbox_repo_pr instead.",
+    description: "Run a shell script inside a fresh, isolated E2B cloud VM (its own real computer \u2014 node, git, network, full Linux). Use for anything that needs a real dev environment: clone a public repo, install packages, run a build/test suite, run scripts, curl APIs, etc. It is also your INTERACTIVE-AUTOMATION substrate: pip/npm-install and drive real tools here \u2014 e.g. Playwright (`pip install playwright && playwright install chromium`) to navigate multi-step web forms, fill fields, click, and submit; or reportlab/fpdf2/fillpdf/pypdf to generate and fill official PDF forms (e.g. AcroForm fields). Print results/paths to stdout and read back any output. Each call gets a clean disposable VM with NO access to the OpenClaw server or its secrets. For making changes to the OpenClaw repo and opening a PR, use sandbox_repo_pr instead.",
     parameters: {
       type: "object",
       properties: {
@@ -87107,6 +87110,11 @@ SCHEDULING: the swarm can run recurring cron jobs (managed by ABBY/WIRE) \u2014 
   card += `
 
 GITHUB: query the GitHub REST API with http_request (https://api.github.com/...); it is auto-authenticated. Never web_scrape github.com pages \u2014 they are JS-rendered and return nothing useful.`;
+  if (names.includes("sandbox_exec")) {
+    card += `
+
+INTERACTIVE AUTOMATION: web_scrape is read-only and won't render JS-heavy or multi-step pages. When a task needs to actually fill/submit a web form or read a JS-rendered page, use sandbox_exec to run Playwright in the cloud VM (install chromium, navigate, fill, click, submit). To produce or fill official PDF forms (e.g. AcroForm fields), use sandbox_exec with reportlab/fpdf2/fillpdf/pypdf and return the output file path. Generate/prepare documents and demonstrate the flow \u2014 never submit a person's legal/financial filing on their behalf.`;
+  }
   if (agentId === ABBY_ID) {
     card += `
 
@@ -87130,7 +87138,7 @@ async function runTool(toolName, args, ctx) {
   if (!isToolAllowed(ctx.agentId, toolName)) {
     return `error: tool "${toolName}" is not permitted for this agent.`;
   }
-  return def.run(args, ctx);
+  return sanitizeForStorage(await def.run(args, ctx));
 }
 
 // src/routes/ai.ts
@@ -87731,7 +87739,7 @@ async function executeAgentCommand(opts) {
     if (url2 && isBrowserAgent(agent) && process.env["STEEL_API_KEY"]) {
       const [tc] = await db.insert(toolCallsTable).values({ agentId: agent.id, toolName: "web_scrape", args: JSON.stringify({ url: url2 }), status: "running" }).returning();
       try {
-        const scraped = (await steelScrape(url2)).slice(0, 6e3);
+        const scraped = sanitizeForStorage((await steelScrape(url2)).slice(0, 6e3));
         priming = scraped;
         await db.update(toolCallsTable).set({ status: "success", result: scraped.slice(0, 4e3), completedAt: /* @__PURE__ */ new Date() }).where(eq(toolCallsTable.id, tc.id));
         await postMessage({
