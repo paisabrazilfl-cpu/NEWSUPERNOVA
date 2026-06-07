@@ -16,12 +16,28 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import {
   Plus, Send, Paperclip, X, Menu, Download, Trash2, Pencil, Check,
-  MessageSquare, Bot, AlertTriangle, Loader2, Sparkles,
+  MessageSquare, Bot, AlertTriangle, Loader2, Sparkles, Copy, Volume2, Square, Mic,
 } from "lucide-react";
 
 // Uploaded to /api/uploads on pick; images are rendered inline and sent to ABBY
 // as vision input, text files have their text read by the agent.
 interface Attachment { id: number; name: string; size: number; kind: string; mime: string; url: string; }
+
+// Minimal typing for the browser Web Speech API (not in lib.dom for all targets).
+interface SpeechRecognitionEventLike {
+  resultIndex: number;
+  results: ArrayLike<ArrayLike<{ transcript: string }> & { isFinal: boolean }>;
+}
+interface SpeechRecognitionLike {
+  lang: string;
+  interimResults: boolean;
+  continuous: boolean;
+  onresult: (e: SpeechRecognitionEventLike) => void;
+  onerror: () => void;
+  onend: () => void;
+  start: () => void;
+  stop: () => void;
+}
 
 // Read a File as a base64 data URL for upload.
 function fileToDataUrl(file: File): Promise<string> {
@@ -80,9 +96,52 @@ export default function ChatPage() {
   const [text, setText] = useState("");
   const [attachment, setAttachment] = useState<Attachment | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [listening, setListening] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const recognitionRef = useRef<unknown>(null);
+
+  // Voice input (speech-to-text) via the browser Web Speech API. Dictated text is
+  // appended to the composer; no audio leaves the browser for this path.
+  const toggleVoice = () => {
+    const w = window as unknown as { SpeechRecognition?: new () => SpeechRecognitionLike; webkitSpeechRecognition?: new () => SpeechRecognitionLike };
+    const Rec = w.SpeechRecognition ?? w.webkitSpeechRecognition;
+    if (!Rec) {
+      toast.error("Voice input isn't supported in this browser. Try Chrome.");
+      return;
+    }
+    if (listening) {
+      (recognitionRef.current as SpeechRecognitionLike | null)?.stop();
+      return;
+    }
+    const rec = new Rec();
+    rec.lang = "en-US";
+    rec.interimResults = true;
+    rec.continuous = false;
+    let finalText = "";
+    rec.onresult = (e: SpeechRecognitionEventLike) => {
+      let interim = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const r = e.results[i];
+        if (r.isFinal) finalText += r[0].transcript;
+        else interim += r[0].transcript;
+      }
+      setText((prev) => {
+        const base = prev.replace(/\s*\[…\]$/, "");
+        return (finalText ? `${base}${base && !base.endsWith(" ") ? " " : ""}${finalText}` : `${base} […]`).trimStart();
+      });
+    };
+    rec.onerror = () => { setListening(false); };
+    rec.onend = () => {
+      setListening(false);
+      setText((prev) => prev.replace(/\s*\[…\]$/, ""));
+      requestAnimationFrame(() => taRef.current?.focus());
+    };
+    recognitionRef.current = rec;
+    rec.start();
+    setListening(true);
+  };
 
   const autoGrow = () => {
     const ta = taRef.current;
@@ -432,6 +491,18 @@ export default function ChatPage() {
               >
                 {uploading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Paperclip className="w-5 h-5" />}
               </button>
+              <button
+                onClick={toggleVoice}
+                disabled={activeId == null}
+                aria-label={listening ? "Stop voice input" : "Speak your message"}
+                title={listening ? "Listening… click to stop" : "Speak your message"}
+                className={cn(
+                  "p-2 transition-colors disabled:opacity-40",
+                  listening ? "text-[#ff2d78]" : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                <Mic className={cn("w-5 h-5", listening && "animate-pulse")} />
+              </button>
               <textarea
                 ref={taRef}
                 value={text}
@@ -505,9 +576,67 @@ function MessageRow({ message: m }: { message: { messageType: string; content: s
             {m.content}
           </div>
         ) : (
-          <MessageContent content={m.content} />
+          <>
+            <MessageContent content={m.content} />
+            <MessageActions content={m.content} />
+          </>
         )}
       </div>
+    </div>
+  );
+}
+
+// Per-message actions every frontier chat has: copy to clipboard + read aloud (TTS).
+function MessageActions({ content }: { content: string }) {
+  const [copied, setCopied] = useState(false);
+  const [speaking, setSpeaking] = useState(false);
+
+  const copy = () => {
+    navigator.clipboard?.writeText(content).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  };
+
+  const speak = () => {
+    const synth = typeof window !== "undefined" ? window.speechSynthesis : undefined;
+    if (!synth) {
+      toast.error("Text-to-speech isn't supported in this browser.");
+      return;
+    }
+    if (speaking) {
+      synth.cancel();
+      setSpeaking(false);
+      return;
+    }
+    // Strip markdown noise so it reads naturally.
+    const clean = content.replace(/[#*`>_~|]/g, " ").replace(/\[(.*?)\]\((.*?)\)/g, "$1").replace(/\s+/g, " ").trim();
+    const u = new SpeechSynthesisUtterance(clean);
+    u.onend = () => setSpeaking(false);
+    u.onerror = () => setSpeaking(false);
+    synth.cancel();
+    synth.speak(u);
+    setSpeaking(true);
+  };
+
+  return (
+    <div className="mt-1.5 flex items-center gap-1">
+      <button
+        onClick={copy}
+        title="Copy message"
+        className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors px-1.5 py-0.5 rounded"
+      >
+        {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+        {copied ? "Copied" : "Copy"}
+      </button>
+      <button
+        onClick={speak}
+        title={speaking ? "Stop" : "Read aloud"}
+        className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors px-1.5 py-0.5 rounded"
+      >
+        {speaking ? <Square className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
+        {speaking ? "Stop" : "Listen"}
+      </button>
     </div>
   );
 }

@@ -94,8 +94,14 @@ describe("EXECUTION_DOCTRINE — the 10/10 worker standard", () => {
   });
 });
 
-describe("RESEARCH_PLAYBOOKS — VPD + market research methods", () => {
-  it("includes a Value Proposition Design / canvas playbook", () => {
+describe("RESEARCH_PLAYBOOKS — VPD(both) + market research + decks", () => {
+  it("defines VPD as Vehicles Per Day (traffic/site research)", () => {
+    expect(RESEARCH_PLAYBOOKS).toContain("VEHICLES PER DAY");
+    expect(RESEARCH_PLAYBOOKS).toContain("VPD");
+    expect(RESEARCH_PLAYBOOKS.toLowerCase()).toContain("aadt");
+  });
+
+  it("also covers Value Proposition Design", () => {
     expect(RESEARCH_PLAYBOOKS).toContain("VALUE PROPOSITION DESIGN");
     expect(RESEARCH_PLAYBOOKS.toLowerCase()).toContain("pain reliever");
     expect(RESEARCH_PLAYBOOKS.toLowerCase()).toContain("gain creator");
@@ -104,6 +110,11 @@ describe("RESEARCH_PLAYBOOKS — VPD + market research methods", () => {
   it("includes a market-research playbook with TAM/SAM/SOM", () => {
     expect(RESEARCH_PLAYBOOKS).toContain("MARKET RESEARCH");
     expect(RESEARCH_PLAYBOOKS).toContain("TAM/SAM/SOM");
+  });
+
+  it("includes a deck/presentation building playbook", () => {
+    expect(RESEARCH_PLAYBOOKS).toContain("DECK / PRESENTATION BUILDING");
+    expect(RESEARCH_PLAYBOOKS.toLowerCase()).toContain("save_artifact");
   });
 });
 
