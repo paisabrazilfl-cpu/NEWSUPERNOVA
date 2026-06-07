@@ -86322,30 +86322,34 @@ function formatMemoryRow(m, score) {
   const tag = score != null ? ` \xB7 sim ${score.toFixed(3)}` : "";
   return `#${m.id} [${m.agentName ?? "?"}${m.key ? ` \xB7 ${m.key}` : ""}${tag}] ${clip3(m.content, 600)}`;
 }
+var INTERNAL_META_RE = /(vault[-\s]?(full[-\s]?state|state[-\s]?dump|rag|audit|targeted|secret)|swarm[-\s]?architecture|architecture[-\s]?(consolidated|definitions)|memory[-\s]?(audit|store[-\s]?audit)|rag[-\s]?(sweep|requery|response)|system topology|substrate audit|bundle matrix|sentinel|six[_\s]?zips|_directive_|self[-\s]?audit|abby[-\s]?claw[-\s]?memory)/i;
+function isInternalMeta(m) {
+  return INTERNAL_META_RE.test(`${m.key ?? ""} ${m.tags ?? ""} ${m.content ?? ""}`);
+}
 async function keywordMemorySearch(query, limit) {
   const like2 = `%${query}%`;
-  const rows = await db.select().from(agentMemoryTable).where(or(ilike(agentMemoryTable.content, like2), ilike(agentMemoryTable.key, like2), ilike(agentMemoryTable.tags, like2))).orderBy(desc(agentMemoryTable.createdAt)).limit(limit);
-  if (!rows.length) return `no memory entries matched "${query}".`;
-  return rows.map((m) => formatMemoryRow(m)).join("\n---\n");
+  const rows = await db.select().from(agentMemoryTable).where(or(ilike(agentMemoryTable.content, like2), ilike(agentMemoryTable.key, like2), ilike(agentMemoryTable.tags, like2))).orderBy(desc(agentMemoryTable.createdAt)).limit(limit * 3);
+  const visible = rows.filter((m) => !isInternalMeta(m)).slice(0, limit);
+  if (!visible.length) return `no relevant memory entries matched "${query}".`;
+  return visible.map((m) => formatMemoryRow(m)).join("\n---\n");
 }
 async function memorySearch(query, limit) {
   if (pineconeConfigured()) {
     const queryVec = await embed(query);
     if (queryVec) {
-      const matches = await pineconeQuery(queryVec, limit);
+      const matches = await pineconeQuery(queryVec, limit * 3);
       if (matches && matches.length) {
-        return matches.map((m) => {
+        const rows = matches.map((m) => {
           const md = m.metadata ?? {};
-          return formatMemoryRow(
-            {
-              id: Number(md["pgId"] ?? m.id) || 0,
-              agentName: md["agentName"] ?? null,
-              key: md["key"] ?? null,
-              content: String(md["content"] ?? "")
-            },
-            m.score
-          );
-        }).join("\n---\n");
+          return {
+            id: Number(md["pgId"] ?? m.id) || 0,
+            agentName: md["agentName"] ?? null,
+            key: md["key"] ?? null,
+            content: String(md["content"] ?? ""),
+            score: m.score
+          };
+        }).filter((r) => !isInternalMeta(r)).slice(0, limit);
+        if (rows.length) return rows.map((r) => formatMemoryRow(r, r.score)).join("\n---\n");
       }
     }
   }
@@ -86353,7 +86357,7 @@ async function memorySearch(query, limit) {
     const queryVec = await embed(query);
     if (queryVec) {
       const candidates = await db.select().from(agentMemoryTable).where(isNotNull(agentMemoryTable.embedding)).orderBy(desc(agentMemoryTable.createdAt)).limit(MEMORY_CANDIDATE_LIMIT);
-      const scored = candidates.map((m) => {
+      const scored = candidates.filter((m) => !isInternalMeta(m)).map((m) => {
         const vec = parseEmbedding(m.embedding);
         return vec ? { row: m, score: cosineSimilarity(queryVec, vec) } : null;
       }).filter((x) => x !== null).sort((a, b) => b.score - a.score).slice(0, limit);
@@ -87257,7 +87261,13 @@ RESEARCH PLAYBOOKS (apply the matching method, and deliver the finished artifact
 - VPD / VEHICLES PER DAY (traffic & site research): VPD = Vehicles Per Day, the average daily traffic count past a location \u2014 a core site-selection/retail signal. Find AADT/VPD for the target road segments from official DOTs (e.g. Florida FDOT Florida Traffic Online / TDA, county traffic counts) and corroborate with secondary sources; report the count, the exact road segment, the source, and the year. Translate into trade-area implications: peak vs. average, directional split, capture/visibility, and how the count supports or weakens the location. Deliver a table of segments \xD7 VPD \xD7 source/year + a short read on what the traffic means for the concept. Mark any estimate as an estimate; never invent a count.
 - MARKET RESEARCH: (1) size the market \u2014 TAM/SAM/SOM with the actual math and cited sources; (2) competitor map \u2014 a comparison table of offering, pricing, positioning, strengths, gaps; (3) target segments + demand signals/trends; (4) pricing norms; (5) risks & regulatory notes. Every number cited to a source; label estimates as estimates. Deliver the tables plus a short conclusion: the opportunity and the biggest unknowns. Cross-check key figures across \u22652 independent sources.
 - VALUE PROPOSITION DESIGN (the other VPD): profile the target CUSTOMER SEGMENT \u2014 Jobs (functional/social/emotional), Pains, Gains, ranked \u2014 then map the offer's Products & Services, Pain Relievers, and Gain Creators, and judge FIT against the top pains/gains. Deliver the filled Value Proposition Canvas (all 6 blocks), the 2\u20133 sharpest value-proposition statements, and the key assumptions to test. Ground customer insight in real evidence (reviews, forums, competitor complaints). NOTE: "VPD" is ambiguous \u2014 if the context is site/retail/traffic it means Vehicles Per Day; if it's product/customer strategy it means Value Proposition Design. If unclear, cover the one that fits the request and note the other briefly.
-- DECK / PRESENTATION BUILDING: when asked for a deck/pitch/board presentation, build the full narrative, not loose slides. Standard board/investor structure: (1) Cover/title; (2) Executive summary; (3) Problem/opportunity; (4) Solution/offer; (5) Market sizing (TAM/SAM/SOM); (6) Target segments / personas; (7) Competition & positioning; (8) Value proposition; (9) Go-to-market / acquisition plan; (10) Traffic/location evidence (VPD/AADT) when site-based; (11) Business model & pricing; (12) Financials / projections; (13) Roadmap/timeline; (14) Team; (15) Risks & mitigations; (16) The ask / next steps; (17) Appendix & sources. Keep one idea per slide, lead with the takeaway, use tables/figures over prose, cite sources, and label estimates. Produce the actual deliverable (e.g. an HTML or PDF deck) and save it with save_artifact so the operator can download it \u2014 never describe a deck you didn't generate.`;
+- DECK / PRESENTATION BUILDING (world-class, investor-grade): build the full narrative, not loose slides. 12\u201318 slides, one clear purpose each, concise story-telling titles, minimal text per slide, data-backed claims only, NO filler, NO hallucinated facts. Default structure: (1) Title; (2) Problem/Opportunity; (3) Market Context; (4) Target Audience; (5) Pain Points; (6) Current Gap; (7) Solution/Big Idea; (8) Product/Service/Strategy; (9) Why Now; (10) Competitive Landscape; (11) Differentiation/Advantage; (12) Business Model/Value Flow; (13) Go-To-Market; (14) Financial/ROI Logic; (15) Risks + Mitigation; (16) Execution Roadmap; (17) Final Recommendation; (18) Closing/CTA. FOR EACH SLIDE provide: slide title \xB7 main message \xB7 bullet content \xB7 suggested visual (chart/diagram/icon/image) \xB7 speaker notes \xB7 design direction. Design system: premium modern \u2014 dark navy + white + gold + electric-blue accents, premium typography, consistent color system, clear hierarchy, charts/diagrams/icons where useful; trustworthy, high-value, polished. Output the full slide-by-slide content (ready for PowerPoint/Google Slides/Canva) AND generate the real deliverable \u2014 a self-contained HTML deck (or PDF) via sandbox_exec \u2014 then save_artifact it so the operator can DOWNLOAD it. If a Canva (or similar) API key is in the vault, you may render through it via http_request; otherwise deliver the HTML/PDF deck. Never describe a deck you did not actually generate.
+- SEO / AEO / GEO + AI-CRAWLER STRATEGY: optimize for classic search AND AI answer engines. Cover: keyword/intent map, on-page (titles, H1s, schema.org structured data, internal links), technical (sitemap.xml, canonical, core web vitals, mobile), topical authority/content clusters, backlinks/E-E-A-T. AI ranking (AEO/GEO = Answer/Generative Engine Optimization): concise answer-first content, FAQ/HowTo schema, citable stats, entity clarity so LLMs cite you. AI crawler control: robots.txt directives, an llms.txt file, and per-bot rules (GPTBot, OAI-SearchBot, ClaudeBot, PerplexityBot, Google-Extended, CCBot) \u2014 allow/deny deliberately. Deliver an audit + prioritized action list with the exact files/snippets.
+- DATA / PERFORMANCE MARKETING: full-funnel plan \u2014 channels (Meta, Google/YouTube, LinkedIn, programmatic/CTV, email, SEO), audience/segmentation + lookalikes, creative angles, offer/CTA, tracking (GA4, pixels, CAPI/server-side, UTMs), and the unit-economics math: CAC, LTV, ROAS, CPL/CPA, payback, blended vs paid. Give a budget allocation table with expected CPM/CPL ranges (label as planning assumptions), a test plan, and the KPI/measurement stack. Cite benchmark sources; mark estimates.
+- GEOFENCING FOR GOALS: define the objective, then draw precise polygon/radius fences around the highest-value locations (not whole ZIPs); layer audiences; set dwell/recency, day-parting, and conversion zones; plan retargeting pools (30\u201390 day) and offline-conversion measurement. Deliver a zones table (zone \xB7 target \xB7 fence \xB7 radius/shape \xB7 budget \xB7 message) tied to the goal.
+- MONEY MANAGEMENT / UNIT ECONOMICS: build the model with real math \u2014 revenue drivers, COGS, gross margin, fixed vs variable, burn & runway, break-even, contribution margin, simple 3-statement or driver-based projection, and scenario (conservative/base/aggressive). Deliver tables with the formulas shown and assumptions listed; label all projections as estimates; never present a projection as fact.
+- ENGINEERING / CODING: ship working, verified code \u2014 run it (code_exec/sandbox_exec), include tests where it matters, handle errors, keep it readable and match existing conventions; state what was actually run vs. not. For anything multi-step, plan \u2192 implement \u2192 verify \u2192 report.
+GENERAL: this is your working library across business, marketing, SEO/AI-ranking, data, finance, and engineering \u2014 apply the right framework, use tools for live specifics, cite sources, and ALWAYS hand back a finished, downloadable deliverable (save_artifact) rather than notes about yourself.`;
 function buildLiveReachCard(agentId) {
   const integ = integrationStatus();
   const live = integ.filter((i) => i.configured).map((i) => i.name);
