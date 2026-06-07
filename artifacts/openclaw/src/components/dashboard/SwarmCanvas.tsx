@@ -1,6 +1,6 @@
 import { useListAgents, getListAgentsQueryKey } from "@workspace/api-client-react";
 import { motion } from "framer-motion";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 interface SwarmCanvasProps {
   onAgentClick: (id: number) => void;
@@ -8,21 +8,40 @@ interface SwarmCanvasProps {
 
 export function SwarmCanvas({ onAgentClick }: SwarmCanvasProps) {
   const { data: agents = [] } = useListAgents({ query: { refetchInterval: 3000, queryKey: getListAgentsQueryKey() } });
-  
-  // Create stable positions for agents based on their ID
+
+  // Measure the actual container so the layout is responsive (fixes orbs clipping
+  // off-screen on mobile, where the old fixed pixel radius was larger than half
+  // the viewport width).
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [size, setSize] = useState({ w: 0, h: 0 });
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const update = () => setSize({ w: el.clientWidth, h: el.clientHeight });
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // Ring radius scaled to the container, leaving room for the 64px node + margin.
+  // Deterministic (no Math.random) so orbs don't jump around on every render.
+  const radius = useMemo(() => {
+    const minDim = Math.min(size.w || 600, size.h || 500);
+    return Math.max(70, Math.round(minDim / 2 - 56));
+  }, [size]);
+
   const positions = useMemo(() => {
+    const n = Math.max(1, agents.length);
     return agents.map((agent, index) => {
-      // Create a nice circular layout
-      const angle = (index / Math.max(1, agents.length)) * Math.PI * 2;
-      const radius = agents.length > 5 ? 200 + Math.random() * 50 : 150;
-      
+      const angle = (index / n) * Math.PI * 2 - Math.PI / 2; // start at top
       return {
         id: agent.id,
-        x: Math.cos(angle) * radius,
-        y: Math.sin(angle) * radius,
+        x: agents.length === 1 ? 0 : Math.round(Math.cos(angle) * radius),
+        y: agents.length === 1 ? 0 : Math.round(Math.sin(angle) * radius),
       };
     });
-  }, [agents.length]); // Intentionally don't depend on full agents array to keep positions stable
+  }, [agents, radius]);
 
   const getStatusColor = (status: string, baseColor: string) => {
     switch (status) {
@@ -48,12 +67,17 @@ export function SwarmCanvas({ onAgentClick }: SwarmCanvasProps) {
     }
   };
 
+  // Pixel-space viewBox centered at 0,0 so SVG line endpoints (pos.x,pos.y) line
+  // up exactly with the absolutely-positioned nodes.
+  const vbW = size.w || 1000;
+  const vbH = size.h || 800;
+
   return (
-    <div className="w-full h-full relative overflow-hidden bg-background/50 flex items-center justify-center">
+    <div ref={containerRef} className="w-full h-full relative overflow-hidden bg-background/50 flex items-center justify-center">
       {/* Grid background is handled by parent, just need to draw connections and nodes */}
-      
+
       {/* Connections (SVG) - viewBox centers origin at 0,0 matching div offsets */}
-      <svg className="absolute inset-0 w-full h-full pointer-events-none" viewBox="-500 -400 1000 800" preserveAspectRatio="xMidYMid meet">
+      <svg className="absolute inset-0 w-full h-full pointer-events-none" viewBox={`${-vbW / 2} ${-vbH / 2} ${vbW} ${vbH}`} preserveAspectRatio="none">
         {positions.map((pos1, i) =>
           positions.slice(i + 1).map((pos2) => {
             const agent1 = agents.find(a => a.id === pos1.id);
