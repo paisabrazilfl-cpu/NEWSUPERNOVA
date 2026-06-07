@@ -14,8 +14,8 @@ export default function Agents() {
           <Terminal className="w-6 h-6 text-primary" />
         </div>
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">ABBY CLAW AGENTS</h1>
-          <p className="text-sm text-muted-foreground mt-1">Manage and monitor autonomous operational units.</p>
+          <h1 className="text-2xl font-bold tracking-tight text-foreground">Agents</h1>
+          <p className="text-sm text-muted-foreground mt-1">Your six AI agents and the tools each one can use.</p>
         </div>
       </div>
 

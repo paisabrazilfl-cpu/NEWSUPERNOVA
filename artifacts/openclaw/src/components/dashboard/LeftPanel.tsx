@@ -57,7 +57,7 @@ export function LeftPanel({ activeChannelId, setActiveChannelId, setViewMode, vi
             )}
             data-testid="toggle-view-canvas"
           >
-            SWARM
+            Swarm
           </button>
           <button
             onClick={() => { setViewMode("chat"); onClose?.(); }}
@@ -67,7 +67,7 @@ export function LeftPanel({ activeChannelId, setActiveChannelId, setViewMode, vi
             )}
             data-testid="toggle-view-chat"
           >
-            CHAT
+            Activity
           </button>
           <button
             onClick={() => { setViewMode("browser"); onClose?.(); }}
@@ -79,7 +79,7 @@ export function LeftPanel({ activeChannelId, setActiveChannelId, setViewMode, vi
             )}
             data-testid="toggle-view-browser"
           >
-            <Globe className="w-3 h-3" /> STEEL
+            <Globe className="w-3 h-3" /> Browser
           </button>
         </div>
       </div>
@@ -87,7 +87,7 @@ export function LeftPanel({ activeChannelId, setActiveChannelId, setViewMode, vi
       <div className="flex-1 overflow-y-auto overflow-x-hidden scrollbar-thin">
         {/* Channels */}
         <div className="p-4">
-          <h2 className="text-[10px] font-bold text-muted-foreground tracking-wider mb-3">CHANNELS</h2>
+          <h2 className="text-[11px] font-semibold text-muted-foreground tracking-wide mb-3">Conversations</h2>
           <div className="space-y-1">
             {channels.map(channel => (
               <button
@@ -119,7 +119,7 @@ export function LeftPanel({ activeChannelId, setActiveChannelId, setViewMode, vi
 
         {/* Agent Roster */}
         <div className="p-4">
-          <h2 className="text-[10px] font-bold text-muted-foreground tracking-wider mb-3">ACTIVE ABBY CLAW AGENTS</h2>
+          <h2 className="text-[11px] font-semibold text-muted-foreground tracking-wide mb-3">Agents</h2>
           <div className="space-y-1">
             {agents.map(agent => (
               <div

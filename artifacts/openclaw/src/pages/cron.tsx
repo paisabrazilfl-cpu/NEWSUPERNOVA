@@ -132,12 +132,8 @@ export default function CronPage() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">
-            <span className="text-primary">ABBY</span>
-            <span className="text-muted-foreground font-normal mx-2">→</span>
-            <span>Cron Scheduler</span>
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1 font-mono">Recurring jobs the swarm runs on a schedule</p>
+          <h1 className="text-2xl font-bold tracking-tight text-foreground">Scheduled jobs</h1>
+          <p className="text-sm text-muted-foreground mt-1">Tasks the swarm runs automatically, on a schedule.</p>
         </div>
         <button
           onClick={() => setShowForm((v) => !v)}

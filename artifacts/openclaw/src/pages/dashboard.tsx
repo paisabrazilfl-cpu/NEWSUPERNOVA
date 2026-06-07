@@ -5,7 +5,7 @@ import { LeftPanel } from "@/components/dashboard/LeftPanel";
 import { SwarmCanvas } from "@/components/dashboard/SwarmCanvas";
 import { ChatStream } from "@/components/dashboard/ChatStream";
 import { AgentInspector } from "@/components/dashboard/AgentInspector";
-import { CommandBar } from "@/components/dashboard/CommandBar";
+import { SwarmComposer } from "@/components/dashboard/SwarmComposer";
 import { SteelBrowser } from "@/components/dashboard/SteelBrowser";
 
 export default function Dashboard() {
@@ -16,8 +16,8 @@ export default function Dashboard() {
 
   const views: { id: typeof viewMode; label: string }[] = [
     { id: "canvas", label: "Swarm" },
-    { id: "chat", label: "Chat" },
-    { id: "browser", label: "Steel" },
+    { id: "chat", label: "Activity" },
+    { id: "browser", label: "Browser" },
   ];
 
   return (
@@ -65,7 +65,7 @@ export default function Dashboard() {
           {viewMode === "browser" && <SteelBrowser />}
         </div>
 
-        <CommandBar activeChannelId={activeChannelId} />
+        <SwarmComposer channelId={activeChannelId} />
       </div>
 
       <AgentInspector

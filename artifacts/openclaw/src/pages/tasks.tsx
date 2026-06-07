@@ -35,8 +35,8 @@ export default function Tasks() {
           <LayoutGrid className="w-6 h-6 text-accent" />
         </div>
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">GLOBAL TASK QUEUE</h1>
-          <p className="text-sm text-muted-foreground mt-1">Operational objectives and execution status.</p>
+          <h1 className="text-2xl font-bold tracking-tight text-foreground">Tasks</h1>
+          <p className="text-sm text-muted-foreground mt-1">What your agents are working on right now.</p>
         </div>
       </div>
 
