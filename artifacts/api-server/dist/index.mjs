@@ -28104,7 +28104,7 @@ var require_pino = __commonJS({
     function pinoBundlerAbsolutePath(p) {
       try {
         const path2 = __require("path");
-        const outputDir = "/home/runner/work/BOS-AURA/BOS-AURA/artifacts/api-server/dist";
+        const outputDir = "/home/user/BOS-AURA/artifacts/api-server/dist";
         return path2.resolve(outputDir, p.replace(/^\.\//, ""));
       } catch (e) {
         const f = new Function("p", "return new URL(p, import.meta.url).pathname");
@@ -58505,6 +58505,39 @@ router3.post("/", async (req, res) => {
   } catch (err) {
     req.log.error({ err }, "Failed to create channel");
     return res.status(500).json({ error: "Failed to create channel" });
+  }
+});
+router3.patch("/:channelId", async (req, res) => {
+  const channelId = parseInt(req.params.channelId);
+  if (isNaN(channelId)) return res.status(400).json({ error: "Invalid channel ID" });
+  const { name, description } = req.body;
+  const updates = {};
+  if (typeof name === "string" && name.trim()) updates.name = name.trim().slice(0, 120);
+  if (typeof description === "string") updates.description = description.slice(0, 500);
+  if (Object.keys(updates).length === 0) return res.status(400).json({ error: "Nothing to update" });
+  try {
+    const [channel] = await db.update(channelsTable).set(updates).where(eq(channelsTable.id, channelId)).returning();
+    if (!channel) return res.status(404).json({ error: "Channel not found" });
+    return res.json({
+      ...channel,
+      createdAt: channel.createdAt.toISOString(),
+      lastActivity: channel.lastActivity?.toISOString() ?? null
+    });
+  } catch (err) {
+    req.log.error({ err }, "Failed to update channel");
+    return res.status(500).json({ error: "Failed to update channel" });
+  }
+});
+router3.delete("/:channelId", async (req, res) => {
+  const channelId = parseInt(req.params.channelId);
+  if (isNaN(channelId)) return res.status(400).json({ error: "Invalid channel ID" });
+  try {
+    await db.delete(messagesTable).where(eq(messagesTable.channelId, channelId));
+    await db.delete(channelsTable).where(eq(channelsTable.id, channelId));
+    return res.status(204).send();
+  } catch (err) {
+    req.log.error({ err }, "Failed to delete channel");
+    return res.status(500).json({ error: "Failed to delete channel" });
   }
 });
 router3.get("/:channelId/messages", async (req, res) => {
