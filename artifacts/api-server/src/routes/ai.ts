@@ -3,6 +3,7 @@ import { db } from "@workspace/db";
 import { agentsTable, messagesTable } from "@workspace/db";
 import { eq, and, inArray, desc } from "drizzle-orm";
 import { llmBaseUrl, heliconeHeaders } from "../lib/integrations";
+import { buildCapabilityCard } from "../tools";
 
 const router = Router();
 
@@ -179,7 +180,7 @@ router.post("/ai/chat", async (req, res) => {
 
   const model = resolveModel(resolvedAgentId, agent.model, overrideModel);
   const persona = AGENT_PERSONAS[resolvedAgentId] ?? `You are ${agent.name}, an AI agent in the ABBY CLAW swarm.`;
-  const systemPrompt = persona + CHAT_MODE_DIRECTIVE + ANTI_HALLUCINATION_DIRECTIVE;
+  const systemPrompt = persona + CHAT_MODE_DIRECTIVE + buildCapabilityCard(resolvedAgentId) + ANTI_HALLUCINATION_DIRECTIVE;
 
   // Build conversation context from recent channel history so chat actually
   // remembers the thread instead of treating every message as turn one.
@@ -295,6 +296,7 @@ router.post("/ai/chat", async (req, res) => {
           content:
             persona +
             CHAT_MODE_DIRECTIVE +
+            buildCapabilityCard(ABBY_ID) +
             "\n\nDISPATCH: When the operator wants real action or live data, call dispatch_to_swarm with a clear self-contained goal and a short ack. For small talk or questions you can answer directly, just reply normally — do not call the tool." +
             ANTI_HALLUCINATION_DIRECTIVE,
         },
@@ -445,7 +447,7 @@ router.post("/ai/complete", async (req, res) => {
   }
 
   const model = resolveModel(resolvedAgentId, agent?.model, overrideModel);
-  const systemPrompt = (resolvedAgentId ? (AGENT_PERSONAS[resolvedAgentId] ?? "") : "") + ANTI_HALLUCINATION_DIRECTIVE;
+  const systemPrompt = (resolvedAgentId ? (AGENT_PERSONAS[resolvedAgentId] ?? "") : "") + buildCapabilityCard(resolvedAgentId) + ANTI_HALLUCINATION_DIRECTIVE;
 
   const messages = [
     ...(systemPrompt ? [{ role: "system", content: systemPrompt }] : []),

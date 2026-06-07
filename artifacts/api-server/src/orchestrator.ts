@@ -39,6 +39,7 @@ import {
   steelScrape,
   getOpenAiToolsForAgent,
   getToolNamesForAgent,
+  buildCapabilityCard,
   runTool,
   type ToolContext,
 } from "./tools";
@@ -340,7 +341,7 @@ export async function executeAgentCommand(opts: {
       AGENT_PERSONAS[agent.id] ??
       `You are ${agent.name}, an autonomous agent of the ABBY CLAW swarm. Execute directives precisely.`;
     const toolGuide = toolNames.length
-      ? `\n\nYou are an autonomous tool-using agent. You have these tools: ${toolNames.join(", ")}. Call tools to gather real data and perform real work instead of guessing — chain multiple calls when needed. When the directive is fully satisfied, stop calling tools and reply with your final concrete result (no preamble).`
+      ? `\n\nYou are an autonomous tool-using agent. Call tools to gather real data and perform real work instead of guessing — chain multiple calls when needed, and avoid repeating a call that already returned (it wastes time and budget). When the directive is fully satisfied, stop calling tools and reply with your final concrete result (no preamble).${buildCapabilityCard(agent.id)}`
       : "";
     const system = persona + toolGuide + ANTI_HALLUCINATION_DIRECTIVE;
 

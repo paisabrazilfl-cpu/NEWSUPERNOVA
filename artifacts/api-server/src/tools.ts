@@ -23,8 +23,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { logger } from "./lib/logger";
 import { db } from "@workspace/db";
-import { agentMemoryTable, vaultSecretsTable, messagesTable } from "@workspace/db";
-import { desc, ilike, or, isNotNull } from "drizzle-orm";
+import { agentMemoryTable, vaultSecretsTable, messagesTable, cronJobsTable } from "@workspace/db";
+import { desc, ilike, or, isNotNull, eq } from "drizzle-orm";
 import { substituteSecrets, redactSecrets } from "./lib/vault";
 import {
   PLATFORMS,
@@ -512,7 +512,8 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
   web_scrape: {
     name: "web_scrape",
     description:
-      "Fetch and extract the readable text/markdown content of a live web page by URL. Use to read articles, docs, competitor pages, or any public webpage.",
+      "Fetch and extract the readable text/markdown content of a live web page by URL. Use to read articles, docs, competitor pages, or any public webpage. " +
+      "Do NOT use it for github.com pages (search results, repos) — those are JavaScript-rendered and return no useful content; use http_request against the GitHub API (https://api.github.com/...) instead, which is auto-authenticated.",
     parameters: {
       type: "object",
       properties: {
@@ -523,6 +524,19 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
     run: async (args) => {
       const url = String(args["url"] ?? "").trim();
       if (!/^https?:\/\//i.test(url)) return "error: a valid absolute http(s) url is required.";
+      // Steer agents away from scraping JS-rendered GitHub web pages (which return
+      // only an empty HTML shell and waste a browser call). The REST API works and
+      // is auto-authenticated by http_request.
+      try {
+        const host = new URL(url).hostname.toLowerCase();
+        if (host === "github.com" || host === "www.github.com") {
+          const m = url.match(/github\.com\/search\?(.*)$/i);
+          const apiHint = m
+            ? `https://api.github.com/search/repositories?${m[1].replace(/type=repositories&?/i, "")}`
+            : "https://api.github.com/repos/<owner>/<repo>  (or /search/repositories?q=...)";
+          return `error: github.com web pages are JavaScript-rendered and not scrapable. Use http_request (GET) against the GitHub REST API instead — it is auto-authenticated. Try: ${apiHint}`;
+        }
+      } catch { /* ignore; validated above */ }
       const content = await steelScrape(url);
       return clip(content, 6000);
     },
@@ -609,6 +623,27 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
         args["body"] != null && method !== "GET" && method !== "DELETE"
           ? await substituteSecrets(String(args["body"]), usedSecrets)
           : undefined;
+
+      // Auto-authenticate GitHub calls. Agents repeatedly hit api.github.com
+      // unauthenticated and burn the 60-request/hour limit (a costly 403 loop).
+      // When a GitHub token is available (Render env or the in-app vault via the
+      // boot loader) and the agent didn't already set Authorization, attach it —
+      // lifting the limit to 5,000/hour. The token never enters the model context
+      // and is redacted from any echoed response.
+      try {
+        const host = new URL(url).hostname.toLowerCase();
+        if (host === "api.github.com" || host.endsWith(".githubusercontent.com")) {
+          const lc = Object.keys(headers).map((k) => k.toLowerCase());
+          const ghToken = process.env["GITHUB_API_KEY"] || process.env["GITHUB_TOKEN"] || process.env["SANDBOX_GITHUB_TOKEN"];
+          if (ghToken && !lc.includes("authorization")) {
+            headers["Authorization"] = `Bearer ${ghToken}`;
+            usedSecrets.add(ghToken);
+          }
+          if (!lc.includes("user-agent")) headers["User-Agent"] = "OpenClaw-Omega";
+          if (host === "api.github.com" && !lc.includes("accept")) headers["Accept"] = "application/vnd.github+json";
+        }
+      } catch { /* url already validated above; ignore */ }
+
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), 15000);
       try {
@@ -966,6 +1001,70 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
       }
     },
   },
+
+  schedule_task: {
+    name: "schedule_task",
+    description:
+      "Schedule a recurring task the swarm runs automatically on a cron schedule (e.g. '0 9 * * *' = daily 9am, '*/30 * * * *' = every 30 min). The task is a natural-language goal executed later through the same agent machinery. Use for monitoring, daily digests, periodic research, or anything the operator wants to happen on a repeat.",
+    parameters: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Short name for the scheduled job." },
+        schedule: { type: "string", description: "5-field cron expression, e.g. '0 9 * * *'." },
+        task: { type: "string", description: "The goal/instruction to run on each tick." },
+      },
+      required: ["name", "schedule", "task"],
+    },
+    run: async (args, ctx) => {
+      const name = String(args["name"] ?? "").trim();
+      const schedule = String(args["schedule"] ?? "").trim();
+      const task = String(args["task"] ?? "").trim();
+      if (!name || !schedule || !task) return "error: name, schedule, and task are all required.";
+      if (schedule.split(/\s+/).length !== 5) return "error: schedule must be a 5-field cron expression, e.g. '*/30 * * * *'.";
+      // Inline next-run (mirrors scheduler.computeNextRun) to avoid an import cycle.
+      const min = schedule.split(/\s+/)[0];
+      const ms = min === "*" ? 60_000 : min.startsWith("*/") ? Math.max(Number(min.slice(2)) * 60_000, 60_000) : 5 * 60_000;
+      const nextRunAt = new Date(Date.now() + ms);
+      try {
+        const [row] = await db
+          .insert(cronJobsTable)
+          .values({ agentId: ctx.agentId, name, schedule, task, enabled: true, nextRunAt })
+          .returning();
+        return `scheduled "${name}" (job #${row?.id ?? "?"}) on '${schedule}', next run ~${nextRunAt.toISOString()}.`;
+      } catch (e) {
+        return `error: could not schedule task: ${String(e instanceof Error ? e.message : e).slice(0, 200)}`;
+      }
+    },
+  },
+
+  list_scheduled_tasks: {
+    name: "list_scheduled_tasks",
+    description: "List the swarm's scheduled (cron) jobs — name, schedule, owner agent, enabled state, run count, last result. Use to see what is set to run automatically.",
+    parameters: { type: "object", properties: {} },
+    run: async () => {
+      const rows = await db.select().from(cronJobsTable).orderBy(desc(cronJobsTable.createdAt)).limit(50);
+      if (!rows.length) return "no scheduled tasks.";
+      return rows
+        .map((j) => `#${j.id} "${j.name}" [${j.schedule}] agent ${j.agentId} · ${j.enabled ? "enabled" : "disabled"} · runs ${j.runCount}${j.lastResult ? ` · last: ${clip(j.lastResult, 80)}` : ""}\n   task: ${clip(j.task, 160)}`)
+        .join("\n---\n");
+    },
+  },
+
+  cancel_scheduled_task: {
+    name: "cancel_scheduled_task",
+    description: "Cancel (delete) a scheduled cron job by its id. Use list_scheduled_tasks first to find the id.",
+    parameters: {
+      type: "object",
+      properties: { id: { type: "number", description: "The scheduled job id to cancel." } },
+      required: ["id"],
+    },
+    run: async (args) => {
+      const id = Number(args["id"]);
+      if (!Number.isFinite(id)) return "error: a numeric job id is required.";
+      const [row] = await db.delete(cronJobsTable).where(eq(cronJobsTable.id, id)).returning();
+      return row ? `cancelled scheduled job #${id} ("${row.name}").` : `no scheduled job #${id} found.`;
+    },
+  },
 };
 
 // ─── Per-agent tool permissions ──────────────────────────────────────────────
@@ -979,12 +1078,50 @@ export const AGENT_TOOLS: Record<number, string[]> = {
   2: ["code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "http_request", "web_scrape", "web_search", "memory_search", "memory_write", "vault_list", "send_message"], // FORGE — code
   3: ["web_scrape", "web_screenshot", "web_search", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "send_message"], // CRAWLER — browser
   4: ["memory_write", "memory_search", "web_search", "web_scrape", "http_request", "calculator", "vault_list", "send_message"], // VAULT — memory/RAG
-  5: ["http_request", "web_scrape", "web_search", "code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_action", "send_message"], // WIRE — APIs
+  5: ["http_request", "web_scrape", "web_search", "code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_action", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task", "send_message"], // WIRE — APIs + scheduling
   6: ["web_scrape", "web_search", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "send_message"], // MR.NICE — social
 };
 
 export function getToolNamesForAgent(agentId: number): string[] {
   return AGENT_TOOLS[agentId] ?? ["web_scrape", "memory_search"];
+}
+
+const ABBY_ID = 1;
+const SWARM_ROSTER: Array<[number, string, string]> = [
+  [2, "FORGE", "code execution & sandbox PRs"],
+  [3, "CRAWLER", "web browsing, scraping, screenshots, search"],
+  [4, "VAULT", "long-term memory & semantic RAG"],
+  [5, "WIRE", "external APIs, integrations, scheduling"],
+  [6, "MR.NICE", "social media & communications"],
+];
+
+/** First sentence of a tool's description, for a compact capability listing. */
+function toolSummary(name: string): string {
+  const d = TOOL_REGISTRY[name]?.description ?? "";
+  return clip(d.split(/\.\s/)[0], 100);
+}
+
+/**
+ * A self-knowledge block injected into every agent's system prompt so each agent
+ * always knows EXACTLY which tools it has (single source of truth = the registry)
+ * — including scheduling/cron — and, for ABBY, the whole swarm's roster so it can
+ * delegate accurately. Prevents the failure where an agent forgets or invents its
+ * capabilities. Tools only actually run during task execution; this is awareness,
+ * not a licence to claim a tool ran without a real result.
+ */
+export function buildCapabilityCard(agentId: number): string {
+  const names = getToolNamesForAgent(agentId);
+  const list = names.map((n) => `- ${n}: ${toolSummary(n)}`).join("\n");
+  let card = `\n\nYOUR TOOLS (${names.length}; call them to do real work, never guess or fabricate results):\n${list}`;
+  card += names.includes("schedule_task")
+    ? `\n\nSCHEDULING: use schedule_task to run work automatically on a cron schedule, list_scheduled_tasks to review jobs, cancel_scheduled_task to stop one.`
+    : `\n\nSCHEDULING: the swarm can run recurring cron jobs (managed by ABBY/WIRE) — ask ABBY to schedule recurring work.`;
+  card += `\n\nGITHUB: query the GitHub REST API with http_request (https://api.github.com/...); it is auto-authenticated. Never web_scrape github.com pages — they are JS-rendered and return nothing useful.`;
+  if (agentId === ABBY_ID) {
+    card += `\n\nYOUR SWARM (delegate each directive to the right CLAW):\n` +
+      SWARM_ROSTER.map(([id, name, role]) => `- ${name} (#${id}) — ${role}`).join("\n");
+  }
+  return card;
 }
 
 /** OpenAI/OpenRouter tool schema for the given agent's allowed tools. */

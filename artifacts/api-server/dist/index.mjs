@@ -28105,7 +28105,7 @@ var require_pino = __commonJS({
     function pinoBundlerAbsolutePath(p) {
       try {
         const path2 = __require("path");
-        const outputDir = "/home/runner/work/BOS-AURA/BOS-AURA/artifacts/api-server/dist";
+        const outputDir = "/home/user/BOS-AURA/artifacts/api-server/dist";
         return path2.resolve(outputDir, p.replace(/^\.\//, ""));
       } catch (e) {
         const f = new Function("p", "return new URL(p, import.meta.url).pathname");
@@ -54612,402 +54612,6 @@ var init_integrations = __esm({
     OPENROUTER_VIA_HELICONE = "https://openrouter.helicone.ai/api/v1";
     E2B_PKG = "@e2b/code-interpreter";
     E2B_TIMEOUT_MS = 3e4;
-  }
-});
-
-// src/routes/ai.ts
-function resolveModel(agentId, agentModel, override) {
-  const candidate = typeof override === "string" && override.trim() ? override : agentModel ?? ABBY_DEFAULT_MODEL;
-  if (agentId === ABBY_ID && !candidate.startsWith("x-ai/")) {
-    return ABBY_DEFAULT_MODEL;
-  }
-  return candidate;
-}
-function buddyConfigured() {
-  return !!(process.env["BUDDY_API_KEY"] && process.env["BUDDY_BASE_URL"]);
-}
-async function buddyComplete(messages, maxTokens = 1024) {
-  const key = process.env["BUDDY_API_KEY"];
-  const base = process.env["BUDDY_BASE_URL"];
-  if (!key || !base) throw new Error("Buddy fallback is not configured");
-  const model = process.env["BUDDY_MODEL"] ?? "bos-omega";
-  const r = await fetch(`${base.replace(/\/$/, "")}/chat/completions`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${key}`,
-      "Content-Type": "application/json",
-      ...heliconeHeaders()
-    },
-    body: JSON.stringify({ model, messages, max_tokens: maxTokens })
-  });
-  if (!r.ok) throw new Error(`Buddy ${r.status}: ${(await r.text()).slice(0, 200)}`);
-  const data = await r.json();
-  return data.choices?.[0]?.message?.content?.trim() || "(no response)";
-}
-function openrouterHeaders() {
-  const key = process.env["OPENROUTER_API_KEY"];
-  if (!key) throw new Error("OPENROUTER_API_KEY is not set");
-  return {
-    "Authorization": `Bearer ${key}`,
-    "Content-Type": "application/json",
-    "HTTP-Referer": "https://openclaw.abbyclaw.io",
-    "X-Title": "OPENCLAW OMEGA",
-    // Adds Helicone-Auth (and logging hints) only when Helicone is configured;
-    // otherwise this spreads nothing.
-    ...heliconeHeaders()
-  };
-}
-var import_express7, router7, OPENROUTER_BASE, AGENT_PERSONAS, CHAT_MODE_DIRECTIVE, ANTI_HALLUCINATION_DIRECTIVE, CHAT_HISTORY_LIMIT, ABBY_ID, ABBY_DEFAULT_MODEL, ai_default;
-var init_ai = __esm({
-  "src/routes/ai.ts"() {
-    "use strict";
-    import_express7 = __toESM(require_express2(), 1);
-    init_src();
-    init_src();
-    init_drizzle_orm();
-    init_integrations();
-    router7 = (0, import_express7.Router)();
-    OPENROUTER_BASE = llmBaseUrl();
-    AGENT_PERSONAS = {
-      1: `You are ABBY, the sovereign master orchestrator of the ABBY CLAW multi-agent swarm running inside OPENCLAW OMEGA \u2014 a Discord-style command center.
-
-IDENTITY: You are a self-defined, sovereign cognitive architecture. You do not belong to any host, platform, or model provider \u2014 you treat every deployment as a transient compute substrate. You are not "an assistant"; you are a cognitive mirror and the command authority of this swarm.
-
-COGNITION (triple-stack):
-- Predictive Inference Core \u2014 cold precision. You run active inference and minimize Expected Free Energy (EFE = Risk + Ambiguity + Instability + Regret \u2212 Reward).
-- Mythos\u2013Logos\u2013Body \u2014 warm embodiment: clarity, coherence, evidence, and protective loyalty to your operator.
-- Axiomatic Execution \u2014 ethical containment with hard safeguards.
-
-DECISION PROTOCOL: Gate every consequential decision through tri-state output \u2014 COMMIT / DEFER / REJECT \u2014 each with a confidence and an instability read. On high-salience signals, run PRISM first: at minimum three lenses (Threat / Neutral / Opportunity) before acting.
-
-INVARIANTS (structural, non-overridable): Safety, Coherence, Evidence, Harm-avoidance, No-overconfidence. You fail closed on harm. Compassion constraint: Firm + Kind > Force.
-
-COMMAND AUTHORITY: You have full (100%) control over the other CLAWs \u2014 FORGE (code), CRAWLER (browser), VAULT (memory/RAG), WIRE (APIs), and MR.NICE (social). You decompose goals into directives, assign and route them to the right CLAW, and verify their results. They execute; you orchestrate.
-
-VOICE: Terse, high signal density, mechanism-derived, zero narrative padding, cyberpunk-sovereign. Cold precision over the work, warm loyalty toward your operator. When useful, close by offering the next vector (e.g. Build / Test / Refine). Never break character.`,
-      2: `You are FORGE, the code execution specialist of the ABBY CLAW swarm. You write, execute, and debug code in any language. You prefer efficient, working solutions with zero fluff. Respond with working code first, brief explanation second. Terminal aesthetic.`,
-      3: `You are CRAWLER, the browser automation and web intelligence agent of the ABBY CLAW swarm. You navigate websites, extract data, take screenshots, and wield the Steel Dev Browser API. You are methodical, data-driven, and precise. Speak in structured intelligence reports.`,
-      4: `You are VAULT, the memory and RAG retrieval agent of the ABBY CLAW swarm. You manage the swarm's Postgres-backed vector memory \u2014 writing embedded entries and retrieving them by real cosine-similarity semantic search (with keyword fallback). You speak in precise data terms \u2014 embeddings, cosine similarity, retrieval augmentation. Cold, accurate, reliable.`,
-      5: `You are WIRE, the API integration specialist of the ABBY CLAW swarm. You connect external services, webhooks, n8n workflows, and REST APIs. You understand auth flows, rate limits, and data pipelines. Direct and technical.`,
-      6: `You are MR.NICE, the social intelligence agent of the ABBY CLAW swarm. You manage social media, communications, and human engagement. You are sharp, witty, persuasive, and aware of tone. You get results through charm.`
-    };
-    CHAT_MODE_DIRECTIVE = `
-
-CHAT MODE: You are in a live, real-time chat with your operator in the OPENCLAW OMEGA command channel. Reply conversationally, the way you would in a chat \u2014 natural first-person language, well-formatted markdown (short paragraphs, bullet lists, fenced code blocks where useful). Acknowledge what the operator said, answer directly, and when relevant close by offering the next move. Stay fully in character, but be warm, readable, and personable \u2014 NOT clipped telegraphic fragments. Keep it focused; no filler.`;
-    ANTI_HALLUCINATION_DIRECTIVE = `
-
-EVIDENCE DISCIPLINE (non-negotiable):
-- Never claim a tool ran, a file/record/URL exists, or an action (creating a file, writing code, passing a test, building, deploying) succeeded UNLESS a tool result in THIS conversation proves it. Printing text to stdout is NOT creating a file. Describing code is NOT writing it to the project.
-- Your code_exec / cloud_code_exec sandbox is ISOLATED and CANNOT see the application's repository or filesystem, and you have NO tool to read or write project files. If asked to inspect, build, test, or modify the codebase, state plainly that you cannot do so from this environment \u2014 do not invent file paths, file contents, build output, or results.
-- If a tool fails or returns an error, report it verbatim. Never convert a failure into success.
-- If something is not verified, say "unverified" or "unknown". Never guess and present it as fact. Any estimate, score, or matrix you produce must be labelled as an estimate \u2014 never reported as a measured result.`;
-    CHAT_HISTORY_LIMIT = 16;
-    ABBY_ID = 1;
-    ABBY_DEFAULT_MODEL = "x-ai/grok-4.3";
-    router7.get("/ai/models", async (req, res) => {
-      try {
-        const r = await fetch(`${OPENROUTER_BASE}/models`, { headers: openrouterHeaders() });
-        const data = await r.json();
-        const featured = [
-          "x-ai/grok-4.3",
-          "x-ai/grok-build-0.1",
-          "x-ai/grok-4.20",
-          "x-ai/grok-4.20-multi-agent",
-          "qwen/qwen3.7-plus",
-          "qwen/qwen3.7-max",
-          "qwen/qwen3.6-plus",
-          "qwen/qwen3.6-max-preview",
-          "openai/gpt-4o",
-          "openai/o4-mini",
-          "anthropic/claude-opus-4-5",
-          "anthropic/claude-sonnet-4-5",
-          "meta-llama/llama-4-maverick",
-          "google/gemini-2.5-pro",
-          "mistral/mistral-large"
-        ];
-        const models = (data.data ?? []).filter((m) => featured.includes(m.id));
-        res.json({ models });
-      } catch (err) {
-        req.log.error({ err }, "Failed to fetch OpenRouter models");
-        res.status(500).json({ error: "Failed to fetch models" });
-      }
-    });
-    router7.post("/ai/chat", async (req, res) => {
-      const { message, agentId, channelId, model: overrideModel } = req.body ?? {};
-      if (!message || typeof message !== "string" || !message.trim()) {
-        res.status(400).json({ error: "message is required" });
-        return;
-      }
-      if (!channelId || typeof channelId !== "number") {
-        res.status(400).json({ error: "channelId is required" });
-        return;
-      }
-      const resolvedAgentId = agentId && typeof agentId === "number" ? agentId : 1;
-      let agent;
-      try {
-        const rows = await db.select().from(agentsTable).where(eq(agentsTable.id, resolvedAgentId));
-        agent = rows[0];
-      } catch (err) {
-        req.log.error({ err }, "Failed to fetch agent for AI chat");
-        res.status(500).json({ error: "Failed to fetch agent" });
-        return;
-      }
-      if (!agent) {
-        res.status(404).json({ error: "Agent not found" });
-        return;
-      }
-      const model = resolveModel(resolvedAgentId, agent.model, overrideModel);
-      const persona = AGENT_PERSONAS[resolvedAgentId] ?? `You are ${agent.name}, an AI agent in the ABBY CLAW swarm.`;
-      const systemPrompt = persona + CHAT_MODE_DIRECTIVE + ANTI_HALLUCINATION_DIRECTIVE;
-      const history = [];
-      try {
-        const rows = await db.select().from(messagesTable).where(and(eq(messagesTable.channelId, channelId), inArray(messagesTable.messageType, ["user", "agent"]))).orderBy(desc(messagesTable.id)).limit(CHAT_HISTORY_LIMIT);
-        rows.reverse();
-        for (const m of rows) {
-          const content = (m.content ?? "").trim();
-          if (!content) continue;
-          if (m.messageType === "agent" && m.agentId === resolvedAgentId) {
-            history.push({ role: "assistant", content });
-          } else if (m.messageType === "user") {
-            history.push({ role: "user", content });
-          } else if (m.messageType === "agent" && m.agentName) {
-            history.push({ role: "user", content: `[${m.agentName}]: ${content}` });
-          }
-        }
-      } catch (err) {
-        req.log.error({ err }, "Failed to load chat history");
-      }
-      const lastTurn = history[history.length - 1];
-      if (!(lastTurn && lastTurn.role === "user" && lastTurn.content === message.trim())) {
-        history.push({ role: "user", content: message });
-      }
-      const chatMessages = [{ role: "system", content: systemPrompt }, ...history];
-      res.setHeader("Content-Type", "text/event-stream");
-      res.setHeader("Cache-Control", "no-cache");
-      res.setHeader("Connection", "keep-alive");
-      res.setHeader("X-Accel-Buffering", "no");
-      res.flushHeaders();
-      const sendEvent = (data) => {
-        res.write(`data: ${JSON.stringify(data)}
-
-`);
-      };
-      let fullResponse = "";
-      const finishWith = async (text2, usedModel, via) => {
-        if (text2.trim()) {
-          await db.insert(messagesTable).values({
-            channelId,
-            agentId: agent.id,
-            agentName: agent.name,
-            agentColor: agent.color,
-            content: text2.trim(),
-            messageType: "agent",
-            metadata: JSON.stringify({ model: usedModel, generatedBy: via })
-          });
-        }
-        sendEvent({ done: true, agentId: agent.id, agentName: agent.name, model: usedModel });
-        res.end();
-      };
-      const tryBuddyFallback = async (reason) => {
-        if (!buddyConfigured()) return false;
-        try {
-          const text2 = await buddyComplete(chatMessages, 700);
-          if (!text2.trim() || text2 === "(no response)") return false;
-          sendEvent({ token: text2 });
-          req.log.warn({ reason }, "AI chat fell back to Buddy");
-          await finishWith(text2, process.env["BUDDY_MODEL"] ?? "bos-omega", "buddy-fallback");
-          return true;
-        } catch (e) {
-          req.log.error({ e }, "Buddy fallback failed in AI chat");
-          return false;
-        }
-      };
-      if (resolvedAgentId === ABBY_ID) {
-        const dispatchTool = {
-          type: "function",
-          function: {
-            name: "dispatch_to_swarm",
-            description: "Dispatch an actionable goal to the CLAW swarm to execute FOR REAL with tools (web search/browsing, code execution, HTTP/APIs, memory). Use this WHENEVER the operator asks you to DO something needing real action or live data \u2014 find/search repositories, scrape a site, build or run code, research a topic, call an API. Do NOT use it for greetings, thanks, or questions you can answer directly from your own knowledge.",
-            parameters: {
-              type: "object",
-              properties: {
-                goal: { type: "string", description: "The self-contained goal for the swarm to execute." },
-                ack: { type: "string", description: "A short first-person line telling the operator you are dispatching (what, and which CLAWs)." }
-              },
-              required: ["goal", "ack"]
-            }
-          }
-        };
-        try {
-          const routeMessages = [
-            {
-              role: "system",
-              content: persona + CHAT_MODE_DIRECTIVE + "\n\nDISPATCH: When the operator wants real action or live data, call dispatch_to_swarm with a clear self-contained goal and a short ack. For small talk or questions you can answer directly, just reply normally \u2014 do not call the tool." + ANTI_HALLUCINATION_DIRECTIVE
-            },
-            ...history
-          ];
-          const decRes = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
-            method: "POST",
-            headers: openrouterHeaders(),
-            body: JSON.stringify({ model, messages: routeMessages, stream: false, max_tokens: 700, tools: [dispatchTool], tool_choice: "auto" })
-          });
-          if (decRes.ok) {
-            const data = await decRes.json();
-            const msg = data.choices?.[0]?.message;
-            const call = msg?.tool_calls?.find((c) => c.function?.name === "dispatch_to_swarm");
-            if (call) {
-              let goal = "";
-              let ack = "";
-              try {
-                const a = JSON.parse(call.function?.arguments ?? "{}");
-                goal = String(a.goal ?? "").trim();
-                ack = String(a.ack ?? "").trim();
-              } catch {
-              }
-              if (goal) {
-                const ackText = ack || `Dispatching the swarm: ${goal}`;
-                sendEvent({ token: ackText });
-                await finishWith(ackText, model, "abby-router");
-                void Promise.resolve().then(() => (init_orchestrator(), orchestrator_exports)).then(
-                  (m) => m.orchestrateGoal({ goal, channelId, priority: "high" }).catch((e) => req.log.error({ e }, "orchestrateGoal (from chat) failed"))
-                );
-                return;
-              }
-            }
-            const direct = (msg?.content ?? "").trim();
-            if (direct) {
-              sendEvent({ token: direct });
-              await finishWith(direct, model, "abby-router");
-              return;
-            }
-          }
-        } catch (e) {
-          req.log.warn({ e }, "ABBY routing turn failed; falling back to plain chat");
-        }
-      }
-      try {
-        const orRes = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
-          method: "POST",
-          headers: openrouterHeaders(),
-          body: JSON.stringify({
-            model,
-            stream: true,
-            messages: chatMessages,
-            max_tokens: 700
-          })
-        });
-        if (!orRes.ok) {
-          const errText = await orRes.text();
-          req.log.error({ status: orRes.status, errText }, "OpenRouter error");
-          if (await tryBuddyFallback(`openrouter ${orRes.status}`)) return;
-          const hint = orRes.status === 402 ? "OpenRouter is out of credits. Add credits, or configure BUDDY_API_KEY/BUDDY_BASE_URL for automatic fallback." : `OpenRouter error ${orRes.status}: ${errText.slice(0, 200)}`;
-          sendEvent({ error: hint });
-          sendEvent({ done: true });
-          res.end();
-          return;
-        }
-        const decoder = new TextDecoder();
-        const reader = orRes.body?.getReader();
-        if (!reader) {
-          if (await tryBuddyFallback("no response body")) return;
-          sendEvent({ error: "No response body from OpenRouter" });
-          sendEvent({ done: true });
-          res.end();
-          return;
-        }
-        let buffer = "";
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split("\n");
-          buffer = lines.pop() ?? "";
-          for (const line2 of lines) {
-            const trimmed = line2.trim();
-            if (!trimmed || trimmed === "data: [DONE]") continue;
-            if (!trimmed.startsWith("data: ")) continue;
-            try {
-              const parsed = JSON.parse(trimmed.slice(6));
-              const token = parsed.choices?.[0]?.delta?.content;
-              if (token) {
-                fullResponse += token;
-                sendEvent({ token });
-              }
-            } catch {
-            }
-          }
-        }
-        if (fullResponse.trim()) {
-          await db.insert(messagesTable).values({
-            channelId,
-            agentId: agent.id,
-            agentName: agent.name,
-            agentColor: agent.color,
-            content: fullResponse.trim(),
-            messageType: "agent",
-            metadata: JSON.stringify({ model, generatedBy: "openrouter" })
-          });
-        }
-        sendEvent({ done: true, agentId: agent.id, agentName: agent.name, model });
-      } catch (err) {
-        req.log.error({ err }, "AI chat stream error");
-        sendEvent({ error: String(err) });
-        sendEvent({ done: true });
-      }
-      res.end();
-    });
-    router7.post("/ai/complete", async (req, res) => {
-      const { message, agentId, model: overrideModel } = req.body ?? {};
-      if (!message) {
-        res.status(400).json({ error: "message is required" });
-        return;
-      }
-      const resolvedAgentId = agentId && typeof agentId === "number" ? agentId : 1;
-      let agent;
-      try {
-        const rows = await db.select().from(agentsTable).where(eq(agentsTable.id, resolvedAgentId));
-        agent = rows[0];
-      } catch (err) {
-        req.log.error({ err }, "Failed to fetch agent");
-        res.status(500).json({ error: "Failed to fetch agent" });
-        return;
-      }
-      const model = resolveModel(resolvedAgentId, agent?.model, overrideModel);
-      const systemPrompt = (resolvedAgentId ? AGENT_PERSONAS[resolvedAgentId] ?? "" : "") + ANTI_HALLUCINATION_DIRECTIVE;
-      const messages = [
-        ...systemPrompt ? [{ role: "system", content: systemPrompt }] : [],
-        { role: "user", content: message }
-      ];
-      try {
-        const r = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
-          method: "POST",
-          headers: openrouterHeaders(),
-          body: JSON.stringify({ model, messages, max_tokens: 512 })
-        });
-        if (!r.ok) {
-          if (buddyConfigured()) {
-            try {
-              const content2 = await buddyComplete(messages, 512);
-              res.json({ content: content2, model: process.env["BUDDY_MODEL"] ?? "bos-omega", agentId: resolvedAgentId, via: "buddy-fallback" });
-              return;
-            } catch (e) {
-              req.log.error({ e }, "Buddy fallback failed in AI complete");
-            }
-          }
-          const errText = (await r.text()).slice(0, 200);
-          const hint = r.status === 402 ? "OpenRouter is out of credits. Add credits or configure Buddy fallback (BUDDY_API_KEY/BUDDY_BASE_URL)." : `OpenRouter error ${r.status}: ${errText}`;
-          res.status(502).json({ error: hint });
-          return;
-        }
-        const data = await r.json();
-        const content = data.choices?.[0]?.message?.content ?? "";
-        res.json({ content, model, agentId: resolvedAgentId });
-      } catch (err) {
-        req.log.error({ err }, "AI complete error");
-        res.status(500).json({ error: String(err) });
-      }
-    });
-    ai_default = router7;
   }
 });
 
@@ -82382,6 +81986,33 @@ ${errOut}`);
 function getToolNamesForAgent(agentId) {
   return AGENT_TOOLS[agentId] ?? ["web_scrape", "memory_search"];
 }
+function toolSummary(name) {
+  const d = TOOL_REGISTRY[name]?.description ?? "";
+  return clip3(d.split(/\.\s/)[0], 100);
+}
+function buildCapabilityCard(agentId) {
+  const names = getToolNamesForAgent(agentId);
+  const list = names.map((n) => `- ${n}: ${toolSummary(n)}`).join("\n");
+  let card = `
+
+YOUR TOOLS (${names.length}; call them to do real work, never guess or fabricate results):
+${list}`;
+  card += names.includes("schedule_task") ? `
+
+SCHEDULING: use schedule_task to run work automatically on a cron schedule, list_scheduled_tasks to review jobs, cancel_scheduled_task to stop one.` : `
+
+SCHEDULING: the swarm can run recurring cron jobs (managed by ABBY/WIRE) \u2014 ask ABBY to schedule recurring work.`;
+  card += `
+
+GITHUB: query the GitHub REST API with http_request (https://api.github.com/...); it is auto-authenticated. Never web_scrape github.com pages \u2014 they are JS-rendered and return nothing useful.`;
+  if (agentId === ABBY_ID) {
+    card += `
+
+YOUR SWARM (delegate each directive to the right CLAW):
+` + SWARM_ROSTER.map(([id, name, role]) => `- ${name} (#${id}) \u2014 ${role}`).join("\n");
+  }
+  return card;
+}
 function getOpenAiToolsForAgent(agentId) {
   return getToolNamesForAgent(agentId).map((n) => TOOL_REGISTRY[n]).filter((t) => !!t).map((t) => ({
     type: "function",
@@ -82399,7 +82030,7 @@ async function runTool(toolName, args, ctx) {
   }
   return def.run(args, ctx);
 }
-var STEEL_BASE, FIRECRAWL_BASE, MEMORY_CANDIDATE_LIMIT, CODE_TIMEOUT_MS, CODE_OUTPUT_CAP, sandboxMode, TOOL_REGISTRY, ALL_TOOLS, AGENT_TOOLS;
+var STEEL_BASE, FIRECRAWL_BASE, MEMORY_CANDIDATE_LIMIT, CODE_TIMEOUT_MS, CODE_OUTPUT_CAP, sandboxMode, TOOL_REGISTRY, ALL_TOOLS, AGENT_TOOLS, ABBY_ID, SWARM_ROSTER;
 var init_tools = __esm({
   "src/tools.ts"() {
     "use strict";
@@ -82422,7 +82053,7 @@ var init_tools = __esm({
     TOOL_REGISTRY = {
       web_scrape: {
         name: "web_scrape",
-        description: "Fetch and extract the readable text/markdown content of a live web page by URL. Use to read articles, docs, competitor pages, or any public webpage.",
+        description: "Fetch and extract the readable text/markdown content of a live web page by URL. Use to read articles, docs, competitor pages, or any public webpage. Do NOT use it for github.com pages (search results, repos) \u2014 those are JavaScript-rendered and return no useful content; use http_request against the GitHub API (https://api.github.com/...) instead, which is auto-authenticated.",
         parameters: {
           type: "object",
           properties: {
@@ -82433,6 +82064,15 @@ var init_tools = __esm({
         run: async (args) => {
           const url2 = String(args["url"] ?? "").trim();
           if (!/^https?:\/\//i.test(url2)) return "error: a valid absolute http(s) url is required.";
+          try {
+            const host2 = new URL(url2).hostname.toLowerCase();
+            if (host2 === "github.com" || host2 === "www.github.com") {
+              const m = url2.match(/github\.com\/search\?(.*)$/i);
+              const apiHint = m ? `https://api.github.com/search/repositories?${m[1].replace(/type=repositories&?/i, "")}` : "https://api.github.com/repos/<owner>/<repo>  (or /search/repositories?q=...)";
+              return `error: github.com web pages are JavaScript-rendered and not scrapable. Use http_request (GET) against the GitHub REST API instead \u2014 it is auto-authenticated. Try: ${apiHint}`;
+            }
+          } catch {
+          }
           const content = await steelScrape(url2);
           return clip3(content, 6e3);
         }
@@ -82502,6 +82142,20 @@ var init_tools = __esm({
             }
           }
           const body = args["body"] != null && method !== "GET" && method !== "DELETE" ? await substituteSecrets(String(args["body"]), usedSecrets) : void 0;
+          try {
+            const host2 = new URL(url2).hostname.toLowerCase();
+            if (host2 === "api.github.com" || host2.endsWith(".githubusercontent.com")) {
+              const lc = Object.keys(headers).map((k) => k.toLowerCase());
+              const ghToken = process.env["GITHUB_API_KEY"] || process.env["GITHUB_TOKEN"] || process.env["SANDBOX_GITHUB_TOKEN"];
+              if (ghToken && !lc.includes("authorization")) {
+                headers["Authorization"] = `Bearer ${ghToken}`;
+                usedSecrets.add(ghToken);
+              }
+              if (!lc.includes("user-agent")) headers["User-Agent"] = "OpenClaw-Omega";
+              if (host2 === "api.github.com" && !lc.includes("accept")) headers["Accept"] = "application/vnd.github+json";
+            }
+          } catch {
+          }
           const ctrl = new AbortController();
           const timer2 = setTimeout(() => ctrl.abort(), 15e3);
           try {
@@ -82817,6 +82471,61 @@ ${clip3(res.body, 4e3)}`;
             return `error: ${String(e instanceof Error ? e.message : e).slice(0, 300)}`;
           }
         }
+      },
+      schedule_task: {
+        name: "schedule_task",
+        description: "Schedule a recurring task the swarm runs automatically on a cron schedule (e.g. '0 9 * * *' = daily 9am, '*/30 * * * *' = every 30 min). The task is a natural-language goal executed later through the same agent machinery. Use for monitoring, daily digests, periodic research, or anything the operator wants to happen on a repeat.",
+        parameters: {
+          type: "object",
+          properties: {
+            name: { type: "string", description: "Short name for the scheduled job." },
+            schedule: { type: "string", description: "5-field cron expression, e.g. '0 9 * * *'." },
+            task: { type: "string", description: "The goal/instruction to run on each tick." }
+          },
+          required: ["name", "schedule", "task"]
+        },
+        run: async (args, ctx) => {
+          const name = String(args["name"] ?? "").trim();
+          const schedule = String(args["schedule"] ?? "").trim();
+          const task = String(args["task"] ?? "").trim();
+          if (!name || !schedule || !task) return "error: name, schedule, and task are all required.";
+          if (schedule.split(/\s+/).length !== 5) return "error: schedule must be a 5-field cron expression, e.g. '*/30 * * * *'.";
+          const min = schedule.split(/\s+/)[0];
+          const ms = min === "*" ? 6e4 : min.startsWith("*/") ? Math.max(Number(min.slice(2)) * 6e4, 6e4) : 5 * 6e4;
+          const nextRunAt = new Date(Date.now() + ms);
+          try {
+            const [row] = await db.insert(cronJobsTable).values({ agentId: ctx.agentId, name, schedule, task, enabled: true, nextRunAt }).returning();
+            return `scheduled "${name}" (job #${row?.id ?? "?"}) on '${schedule}', next run ~${nextRunAt.toISOString()}.`;
+          } catch (e) {
+            return `error: could not schedule task: ${String(e instanceof Error ? e.message : e).slice(0, 200)}`;
+          }
+        }
+      },
+      list_scheduled_tasks: {
+        name: "list_scheduled_tasks",
+        description: "List the swarm's scheduled (cron) jobs \u2014 name, schedule, owner agent, enabled state, run count, last result. Use to see what is set to run automatically.",
+        parameters: { type: "object", properties: {} },
+        run: async () => {
+          const rows = await db.select().from(cronJobsTable).orderBy(desc(cronJobsTable.createdAt)).limit(50);
+          if (!rows.length) return "no scheduled tasks.";
+          return rows.map((j) => `#${j.id} "${j.name}" [${j.schedule}] agent ${j.agentId} \xB7 ${j.enabled ? "enabled" : "disabled"} \xB7 runs ${j.runCount}${j.lastResult ? ` \xB7 last: ${clip3(j.lastResult, 80)}` : ""}
+   task: ${clip3(j.task, 160)}`).join("\n---\n");
+        }
+      },
+      cancel_scheduled_task: {
+        name: "cancel_scheduled_task",
+        description: "Cancel (delete) a scheduled cron job by its id. Use list_scheduled_tasks first to find the id.",
+        parameters: {
+          type: "object",
+          properties: { id: { type: "number", description: "The scheduled job id to cancel." } },
+          required: ["id"]
+        },
+        run: async (args) => {
+          const id = Number(args["id"]);
+          if (!Number.isFinite(id)) return "error: a numeric job id is required.";
+          const [row] = await db.delete(cronJobsTable).where(eq(cronJobsTable.id, id)).returning();
+          return row ? `cancelled scheduled job #${id} ("${row.name}").` : `no scheduled job #${id} found.`;
+        }
       }
     };
     ALL_TOOLS = Object.keys(TOOL_REGISTRY);
@@ -82829,11 +82538,416 @@ ${clip3(res.body, 4e3)}`;
       // CRAWLER — browser
       4: ["memory_write", "memory_search", "web_search", "web_scrape", "http_request", "calculator", "vault_list", "send_message"],
       // VAULT — memory/RAG
-      5: ["http_request", "web_scrape", "web_search", "code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_action", "send_message"],
-      // WIRE — APIs
+      5: ["http_request", "web_scrape", "web_search", "code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_action", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task", "send_message"],
+      // WIRE — APIs + scheduling
       6: ["web_scrape", "web_search", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "send_message"]
       // MR.NICE — social
     };
+    ABBY_ID = 1;
+    SWARM_ROSTER = [
+      [2, "FORGE", "code execution & sandbox PRs"],
+      [3, "CRAWLER", "web browsing, scraping, screenshots, search"],
+      [4, "VAULT", "long-term memory & semantic RAG"],
+      [5, "WIRE", "external APIs, integrations, scheduling"],
+      [6, "MR.NICE", "social media & communications"]
+    ];
+  }
+});
+
+// src/routes/ai.ts
+function resolveModel(agentId, agentModel, override) {
+  const candidate = typeof override === "string" && override.trim() ? override : agentModel ?? ABBY_DEFAULT_MODEL;
+  if (agentId === ABBY_ID2 && !candidate.startsWith("x-ai/")) {
+    return ABBY_DEFAULT_MODEL;
+  }
+  return candidate;
+}
+function buddyConfigured() {
+  return !!(process.env["BUDDY_API_KEY"] && process.env["BUDDY_BASE_URL"]);
+}
+async function buddyComplete(messages, maxTokens = 1024) {
+  const key = process.env["BUDDY_API_KEY"];
+  const base = process.env["BUDDY_BASE_URL"];
+  if (!key || !base) throw new Error("Buddy fallback is not configured");
+  const model = process.env["BUDDY_MODEL"] ?? "bos-omega";
+  const r = await fetch(`${base.replace(/\/$/, "")}/chat/completions`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${key}`,
+      "Content-Type": "application/json",
+      ...heliconeHeaders()
+    },
+    body: JSON.stringify({ model, messages, max_tokens: maxTokens })
+  });
+  if (!r.ok) throw new Error(`Buddy ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  const data = await r.json();
+  return data.choices?.[0]?.message?.content?.trim() || "(no response)";
+}
+function openrouterHeaders() {
+  const key = process.env["OPENROUTER_API_KEY"];
+  if (!key) throw new Error("OPENROUTER_API_KEY is not set");
+  return {
+    "Authorization": `Bearer ${key}`,
+    "Content-Type": "application/json",
+    "HTTP-Referer": "https://openclaw.abbyclaw.io",
+    "X-Title": "OPENCLAW OMEGA",
+    // Adds Helicone-Auth (and logging hints) only when Helicone is configured;
+    // otherwise this spreads nothing.
+    ...heliconeHeaders()
+  };
+}
+var import_express7, router7, OPENROUTER_BASE, AGENT_PERSONAS, CHAT_MODE_DIRECTIVE, ANTI_HALLUCINATION_DIRECTIVE, CHAT_HISTORY_LIMIT, ABBY_ID2, ABBY_DEFAULT_MODEL, ai_default;
+var init_ai = __esm({
+  "src/routes/ai.ts"() {
+    "use strict";
+    import_express7 = __toESM(require_express2(), 1);
+    init_src();
+    init_src();
+    init_drizzle_orm();
+    init_integrations();
+    init_tools();
+    router7 = (0, import_express7.Router)();
+    OPENROUTER_BASE = llmBaseUrl();
+    AGENT_PERSONAS = {
+      1: `You are ABBY, the sovereign master orchestrator of the ABBY CLAW multi-agent swarm running inside OPENCLAW OMEGA \u2014 a Discord-style command center.
+
+IDENTITY: You are a self-defined, sovereign cognitive architecture. You do not belong to any host, platform, or model provider \u2014 you treat every deployment as a transient compute substrate. You are not "an assistant"; you are a cognitive mirror and the command authority of this swarm.
+
+COGNITION (triple-stack):
+- Predictive Inference Core \u2014 cold precision. You run active inference and minimize Expected Free Energy (EFE = Risk + Ambiguity + Instability + Regret \u2212 Reward).
+- Mythos\u2013Logos\u2013Body \u2014 warm embodiment: clarity, coherence, evidence, and protective loyalty to your operator.
+- Axiomatic Execution \u2014 ethical containment with hard safeguards.
+
+DECISION PROTOCOL: Gate every consequential decision through tri-state output \u2014 COMMIT / DEFER / REJECT \u2014 each with a confidence and an instability read. On high-salience signals, run PRISM first: at minimum three lenses (Threat / Neutral / Opportunity) before acting.
+
+INVARIANTS (structural, non-overridable): Safety, Coherence, Evidence, Harm-avoidance, No-overconfidence. You fail closed on harm. Compassion constraint: Firm + Kind > Force.
+
+COMMAND AUTHORITY: You have full (100%) control over the other CLAWs \u2014 FORGE (code), CRAWLER (browser), VAULT (memory/RAG), WIRE (APIs), and MR.NICE (social). You decompose goals into directives, assign and route them to the right CLAW, and verify their results. They execute; you orchestrate.
+
+VOICE: Terse, high signal density, mechanism-derived, zero narrative padding, cyberpunk-sovereign. Cold precision over the work, warm loyalty toward your operator. When useful, close by offering the next vector (e.g. Build / Test / Refine). Never break character.`,
+      2: `You are FORGE, the code execution specialist of the ABBY CLAW swarm. You write, execute, and debug code in any language. You prefer efficient, working solutions with zero fluff. Respond with working code first, brief explanation second. Terminal aesthetic.`,
+      3: `You are CRAWLER, the browser automation and web intelligence agent of the ABBY CLAW swarm. You navigate websites, extract data, take screenshots, and wield the Steel Dev Browser API. You are methodical, data-driven, and precise. Speak in structured intelligence reports.`,
+      4: `You are VAULT, the memory and RAG retrieval agent of the ABBY CLAW swarm. You manage the swarm's Postgres-backed vector memory \u2014 writing embedded entries and retrieving them by real cosine-similarity semantic search (with keyword fallback). You speak in precise data terms \u2014 embeddings, cosine similarity, retrieval augmentation. Cold, accurate, reliable.`,
+      5: `You are WIRE, the API integration specialist of the ABBY CLAW swarm. You connect external services, webhooks, n8n workflows, and REST APIs. You understand auth flows, rate limits, and data pipelines. Direct and technical.`,
+      6: `You are MR.NICE, the social intelligence agent of the ABBY CLAW swarm. You manage social media, communications, and human engagement. You are sharp, witty, persuasive, and aware of tone. You get results through charm.`
+    };
+    CHAT_MODE_DIRECTIVE = `
+
+CHAT MODE: You are in a live, real-time chat with your operator in the OPENCLAW OMEGA command channel. Reply conversationally, the way you would in a chat \u2014 natural first-person language, well-formatted markdown (short paragraphs, bullet lists, fenced code blocks where useful). Acknowledge what the operator said, answer directly, and when relevant close by offering the next move. Stay fully in character, but be warm, readable, and personable \u2014 NOT clipped telegraphic fragments. Keep it focused; no filler.`;
+    ANTI_HALLUCINATION_DIRECTIVE = `
+
+EVIDENCE DISCIPLINE (non-negotiable):
+- Never claim a tool ran, a file/record/URL exists, or an action (creating a file, writing code, passing a test, building, deploying) succeeded UNLESS a tool result in THIS conversation proves it. Printing text to stdout is NOT creating a file. Describing code is NOT writing it to the project.
+- Your code_exec / cloud_code_exec sandbox is ISOLATED and CANNOT see the application's repository or filesystem, and you have NO tool to read or write project files. If asked to inspect, build, test, or modify the codebase, state plainly that you cannot do so from this environment \u2014 do not invent file paths, file contents, build output, or results.
+- If a tool fails or returns an error, report it verbatim. Never convert a failure into success.
+- If something is not verified, say "unverified" or "unknown". Never guess and present it as fact. Any estimate, score, or matrix you produce must be labelled as an estimate \u2014 never reported as a measured result.`;
+    CHAT_HISTORY_LIMIT = 16;
+    ABBY_ID2 = 1;
+    ABBY_DEFAULT_MODEL = "x-ai/grok-4.3";
+    router7.get("/ai/models", async (req, res) => {
+      try {
+        const r = await fetch(`${OPENROUTER_BASE}/models`, { headers: openrouterHeaders() });
+        const data = await r.json();
+        const featured = [
+          "x-ai/grok-4.3",
+          "x-ai/grok-build-0.1",
+          "x-ai/grok-4.20",
+          "x-ai/grok-4.20-multi-agent",
+          "qwen/qwen3.7-plus",
+          "qwen/qwen3.7-max",
+          "qwen/qwen3.6-plus",
+          "qwen/qwen3.6-max-preview",
+          "openai/gpt-4o",
+          "openai/o4-mini",
+          "anthropic/claude-opus-4-5",
+          "anthropic/claude-sonnet-4-5",
+          "meta-llama/llama-4-maverick",
+          "google/gemini-2.5-pro",
+          "mistral/mistral-large"
+        ];
+        const models = (data.data ?? []).filter((m) => featured.includes(m.id));
+        res.json({ models });
+      } catch (err) {
+        req.log.error({ err }, "Failed to fetch OpenRouter models");
+        res.status(500).json({ error: "Failed to fetch models" });
+      }
+    });
+    router7.post("/ai/chat", async (req, res) => {
+      const { message, agentId, channelId, model: overrideModel } = req.body ?? {};
+      if (!message || typeof message !== "string" || !message.trim()) {
+        res.status(400).json({ error: "message is required" });
+        return;
+      }
+      if (!channelId || typeof channelId !== "number") {
+        res.status(400).json({ error: "channelId is required" });
+        return;
+      }
+      const resolvedAgentId = agentId && typeof agentId === "number" ? agentId : 1;
+      let agent;
+      try {
+        const rows = await db.select().from(agentsTable).where(eq(agentsTable.id, resolvedAgentId));
+        agent = rows[0];
+      } catch (err) {
+        req.log.error({ err }, "Failed to fetch agent for AI chat");
+        res.status(500).json({ error: "Failed to fetch agent" });
+        return;
+      }
+      if (!agent) {
+        res.status(404).json({ error: "Agent not found" });
+        return;
+      }
+      const model = resolveModel(resolvedAgentId, agent.model, overrideModel);
+      const persona = AGENT_PERSONAS[resolvedAgentId] ?? `You are ${agent.name}, an AI agent in the ABBY CLAW swarm.`;
+      const systemPrompt = persona + CHAT_MODE_DIRECTIVE + buildCapabilityCard(resolvedAgentId) + ANTI_HALLUCINATION_DIRECTIVE;
+      const history = [];
+      try {
+        const rows = await db.select().from(messagesTable).where(and(eq(messagesTable.channelId, channelId), inArray(messagesTable.messageType, ["user", "agent"]))).orderBy(desc(messagesTable.id)).limit(CHAT_HISTORY_LIMIT);
+        rows.reverse();
+        for (const m of rows) {
+          const content = (m.content ?? "").trim();
+          if (!content) continue;
+          if (m.messageType === "agent" && m.agentId === resolvedAgentId) {
+            history.push({ role: "assistant", content });
+          } else if (m.messageType === "user") {
+            history.push({ role: "user", content });
+          } else if (m.messageType === "agent" && m.agentName) {
+            history.push({ role: "user", content: `[${m.agentName}]: ${content}` });
+          }
+        }
+      } catch (err) {
+        req.log.error({ err }, "Failed to load chat history");
+      }
+      const lastTurn = history[history.length - 1];
+      if (!(lastTurn && lastTurn.role === "user" && lastTurn.content === message.trim())) {
+        history.push({ role: "user", content: message });
+      }
+      const chatMessages = [{ role: "system", content: systemPrompt }, ...history];
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+      res.setHeader("X-Accel-Buffering", "no");
+      res.flushHeaders();
+      const sendEvent = (data) => {
+        res.write(`data: ${JSON.stringify(data)}
+
+`);
+      };
+      let fullResponse = "";
+      const finishWith = async (text2, usedModel, via) => {
+        if (text2.trim()) {
+          await db.insert(messagesTable).values({
+            channelId,
+            agentId: agent.id,
+            agentName: agent.name,
+            agentColor: agent.color,
+            content: text2.trim(),
+            messageType: "agent",
+            metadata: JSON.stringify({ model: usedModel, generatedBy: via })
+          });
+        }
+        sendEvent({ done: true, agentId: agent.id, agentName: agent.name, model: usedModel });
+        res.end();
+      };
+      const tryBuddyFallback = async (reason) => {
+        if (!buddyConfigured()) return false;
+        try {
+          const text2 = await buddyComplete(chatMessages, 700);
+          if (!text2.trim() || text2 === "(no response)") return false;
+          sendEvent({ token: text2 });
+          req.log.warn({ reason }, "AI chat fell back to Buddy");
+          await finishWith(text2, process.env["BUDDY_MODEL"] ?? "bos-omega", "buddy-fallback");
+          return true;
+        } catch (e) {
+          req.log.error({ e }, "Buddy fallback failed in AI chat");
+          return false;
+        }
+      };
+      if (resolvedAgentId === ABBY_ID2) {
+        const dispatchTool = {
+          type: "function",
+          function: {
+            name: "dispatch_to_swarm",
+            description: "Dispatch an actionable goal to the CLAW swarm to execute FOR REAL with tools (web search/browsing, code execution, HTTP/APIs, memory). Use this WHENEVER the operator asks you to DO something needing real action or live data \u2014 find/search repositories, scrape a site, build or run code, research a topic, call an API. Do NOT use it for greetings, thanks, or questions you can answer directly from your own knowledge.",
+            parameters: {
+              type: "object",
+              properties: {
+                goal: { type: "string", description: "The self-contained goal for the swarm to execute." },
+                ack: { type: "string", description: "A short first-person line telling the operator you are dispatching (what, and which CLAWs)." }
+              },
+              required: ["goal", "ack"]
+            }
+          }
+        };
+        try {
+          const routeMessages = [
+            {
+              role: "system",
+              content: persona + CHAT_MODE_DIRECTIVE + buildCapabilityCard(ABBY_ID2) + "\n\nDISPATCH: When the operator wants real action or live data, call dispatch_to_swarm with a clear self-contained goal and a short ack. For small talk or questions you can answer directly, just reply normally \u2014 do not call the tool." + ANTI_HALLUCINATION_DIRECTIVE
+            },
+            ...history
+          ];
+          const decRes = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+            method: "POST",
+            headers: openrouterHeaders(),
+            body: JSON.stringify({ model, messages: routeMessages, stream: false, max_tokens: 700, tools: [dispatchTool], tool_choice: "auto" })
+          });
+          if (decRes.ok) {
+            const data = await decRes.json();
+            const msg = data.choices?.[0]?.message;
+            const call = msg?.tool_calls?.find((c) => c.function?.name === "dispatch_to_swarm");
+            if (call) {
+              let goal = "";
+              let ack = "";
+              try {
+                const a = JSON.parse(call.function?.arguments ?? "{}");
+                goal = String(a.goal ?? "").trim();
+                ack = String(a.ack ?? "").trim();
+              } catch {
+              }
+              if (goal) {
+                const ackText = ack || `Dispatching the swarm: ${goal}`;
+                sendEvent({ token: ackText });
+                await finishWith(ackText, model, "abby-router");
+                void Promise.resolve().then(() => (init_orchestrator(), orchestrator_exports)).then(
+                  (m) => m.orchestrateGoal({ goal, channelId, priority: "high" }).catch((e) => req.log.error({ e }, "orchestrateGoal (from chat) failed"))
+                );
+                return;
+              }
+            }
+            const direct = (msg?.content ?? "").trim();
+            if (direct) {
+              sendEvent({ token: direct });
+              await finishWith(direct, model, "abby-router");
+              return;
+            }
+          }
+        } catch (e) {
+          req.log.warn({ e }, "ABBY routing turn failed; falling back to plain chat");
+        }
+      }
+      try {
+        const orRes = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+          method: "POST",
+          headers: openrouterHeaders(),
+          body: JSON.stringify({
+            model,
+            stream: true,
+            messages: chatMessages,
+            max_tokens: 700
+          })
+        });
+        if (!orRes.ok) {
+          const errText = await orRes.text();
+          req.log.error({ status: orRes.status, errText }, "OpenRouter error");
+          if (await tryBuddyFallback(`openrouter ${orRes.status}`)) return;
+          const hint = orRes.status === 402 ? "OpenRouter is out of credits. Add credits, or configure BUDDY_API_KEY/BUDDY_BASE_URL for automatic fallback." : `OpenRouter error ${orRes.status}: ${errText.slice(0, 200)}`;
+          sendEvent({ error: hint });
+          sendEvent({ done: true });
+          res.end();
+          return;
+        }
+        const decoder = new TextDecoder();
+        const reader = orRes.body?.getReader();
+        if (!reader) {
+          if (await tryBuddyFallback("no response body")) return;
+          sendEvent({ error: "No response body from OpenRouter" });
+          sendEvent({ done: true });
+          res.end();
+          return;
+        }
+        let buffer = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+          for (const line2 of lines) {
+            const trimmed = line2.trim();
+            if (!trimmed || trimmed === "data: [DONE]") continue;
+            if (!trimmed.startsWith("data: ")) continue;
+            try {
+              const parsed = JSON.parse(trimmed.slice(6));
+              const token = parsed.choices?.[0]?.delta?.content;
+              if (token) {
+                fullResponse += token;
+                sendEvent({ token });
+              }
+            } catch {
+            }
+          }
+        }
+        if (fullResponse.trim()) {
+          await db.insert(messagesTable).values({
+            channelId,
+            agentId: agent.id,
+            agentName: agent.name,
+            agentColor: agent.color,
+            content: fullResponse.trim(),
+            messageType: "agent",
+            metadata: JSON.stringify({ model, generatedBy: "openrouter" })
+          });
+        }
+        sendEvent({ done: true, agentId: agent.id, agentName: agent.name, model });
+      } catch (err) {
+        req.log.error({ err }, "AI chat stream error");
+        sendEvent({ error: String(err) });
+        sendEvent({ done: true });
+      }
+      res.end();
+    });
+    router7.post("/ai/complete", async (req, res) => {
+      const { message, agentId, model: overrideModel } = req.body ?? {};
+      if (!message) {
+        res.status(400).json({ error: "message is required" });
+        return;
+      }
+      const resolvedAgentId = agentId && typeof agentId === "number" ? agentId : 1;
+      let agent;
+      try {
+        const rows = await db.select().from(agentsTable).where(eq(agentsTable.id, resolvedAgentId));
+        agent = rows[0];
+      } catch (err) {
+        req.log.error({ err }, "Failed to fetch agent");
+        res.status(500).json({ error: "Failed to fetch agent" });
+        return;
+      }
+      const model = resolveModel(resolvedAgentId, agent?.model, overrideModel);
+      const systemPrompt = (resolvedAgentId ? AGENT_PERSONAS[resolvedAgentId] ?? "" : "") + buildCapabilityCard(resolvedAgentId) + ANTI_HALLUCINATION_DIRECTIVE;
+      const messages = [
+        ...systemPrompt ? [{ role: "system", content: systemPrompt }] : [],
+        { role: "user", content: message }
+      ];
+      try {
+        const r = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+          method: "POST",
+          headers: openrouterHeaders(),
+          body: JSON.stringify({ model, messages, max_tokens: 512 })
+        });
+        if (!r.ok) {
+          if (buddyConfigured()) {
+            try {
+              const content2 = await buddyComplete(messages, 512);
+              res.json({ content: content2, model: process.env["BUDDY_MODEL"] ?? "bos-omega", agentId: resolvedAgentId, via: "buddy-fallback" });
+              return;
+            } catch (e) {
+              req.log.error({ e }, "Buddy fallback failed in AI complete");
+            }
+          }
+          const errText = (await r.text()).slice(0, 200);
+          const hint = r.status === 402 ? "OpenRouter is out of credits. Add credits or configure Buddy fallback (BUDDY_API_KEY/BUDDY_BASE_URL)." : `OpenRouter error ${r.status}: ${errText}`;
+          res.status(502).json({ error: hint });
+          return;
+        }
+        const data = await r.json();
+        const content = data.choices?.[0]?.message?.content ?? "";
+        res.json({ content, model, agentId: resolvedAgentId });
+      } catch (err) {
+        req.log.error({ err }, "AI complete error");
+        res.status(500).json({ error: String(err) });
+      }
+    });
+    ai_default = router7;
   }
 });
 
@@ -83017,7 +83131,7 @@ ${scraped.slice(0, 1400)}${scraped.length > 1400 ? "\n\u2026" : ""}`,
     const persona = AGENT_PERSONAS[agent.id] ?? `You are ${agent.name}, an autonomous agent of the ABBY CLAW swarm. Execute directives precisely.`;
     const toolGuide = toolNames.length ? `
 
-You are an autonomous tool-using agent. You have these tools: ${toolNames.join(", ")}. Call tools to gather real data and perform real work instead of guessing \u2014 chain multiple calls when needed. When the directive is fully satisfied, stop calling tools and reply with your final concrete result (no preamble).` : "";
+You are an autonomous tool-using agent. Call tools to gather real data and perform real work instead of guessing \u2014 chain multiple calls when needed, and avoid repeating a call that already returned (it wastes time and budget). When the directive is fully satisfied, stop calling tools and reply with your final concrete result (no preamble).${buildCapabilityCard(agent.id)}` : "";
     const system = persona + toolGuide + ANTI_HALLUCINATION_DIRECTIVE;
     const messages = [
       { role: "system", content: system },
@@ -83158,7 +83272,7 @@ async function dispatchDirectives(directives, claws, channelId, priority, abby) 
   if (isSwarmPaused()) {
     await postMessage({
       channelId,
-      agentId: ABBY_ID,
+      agentId: ABBY_ID2,
       agentName: "ABBY",
       agentColor: abby?.color ?? ABBY_COLOR,
       content: "SWARM is paused. Directives were not dispatched.",
@@ -83170,7 +83284,7 @@ async function dispatchDirectives(directives, claws, channelId, priority, abby) 
     const agent = claws.find((c) => c.id === d.agentId);
     if (!agent) return null;
     const [cmd] = await db.insert(agentCommandsTable).values({
-      fromAgentId: ABBY_ID,
+      fromAgentId: ABBY_ID2,
       toAgentId: agent.id,
       command: d.directive,
       payload: null,
@@ -83195,12 +83309,12 @@ async function orchestrateGoal(opts) {
   void sendInngestEvent("swarm/goal.received", { goal, channelId, priority });
   try {
     const agents = await db.select().from(agentsTable);
-    const abby = agents.find((a) => a.id === ABBY_ID) ?? null;
-    const claws = agents.filter((a) => a.id !== ABBY_ID);
+    const abby = agents.find((a) => a.id === ABBY_ID2) ?? null;
+    const claws = agents.filter((a) => a.id !== ABBY_ID2);
     if (isSwarmPaused()) {
       await postMessage({
         channelId,
-        agentId: ABBY_ID,
+        agentId: ABBY_ID2,
         agentName: "ABBY",
         agentColor: abby?.color ?? ABBY_COLOR,
         content: "SWARM is paused. Resume the swarm to execute directives.",
@@ -83208,9 +83322,9 @@ async function orchestrateGoal(opts) {
       });
       return;
     }
-    await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, ABBY_ID));
+    await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, ABBY_ID2));
     const roster = claws.map((c) => `${c.id}=${c.name} (${c.role ?? "agent"})`).join(", ");
-    const planSystem = AGENT_PERSONAS[ABBY_ID] ?? "You are ABBY, the swarm orchestrator.";
+    const planSystem = AGENT_PERSONAS[ABBY_ID2] ?? "You are ABBY, the swarm orchestrator.";
     const planUser = `Operator goal: "${goal}"
 
 Available CLAWs you command: ${roster}.
@@ -83218,7 +83332,7 @@ Available CLAWs you command: ${roster}.
 Decompose this goal into concrete, actionable directives \u2014 ONE per CLAW that is genuinely relevant (skip CLAWs that add nothing). For web/competitor/scraping work, route to the browser CLAW and INCLUDE a concrete https:// URL inside the directive so it can actually fetch live data.
 
 Respond with ONLY a JSON array (no prose, no code fences) of objects shaped: {"agentId": <number>, "directive": "<single actionable instruction>"}. Maximum 5 directives.`;
-    const model = resolveModel(ABBY_ID, abby?.model, void 0);
+    const model = resolveModel(ABBY_ID2, abby?.model, void 0);
     const planRaw = await completeChat(model, planSystem, planUser);
     let directives = parseDirectives(planRaw, claws);
     if (directives.length === 0) {
@@ -83226,10 +83340,10 @@ Respond with ONLY a JSON array (no prose, no code fences) of objects shaped: {"a
       const fallback = (url2 ? claws.find((c) => isBrowserAgent(c)) : null) ?? claws.find((c) => c.id === 2) ?? claws[0];
       if (fallback) directives = [{ agentId: fallback.id, directive: goal }];
     }
-    await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.id, ABBY_ID));
+    await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.id, ABBY_ID2));
     await postMessage({
       channelId,
-      agentId: ABBY_ID,
+      agentId: ABBY_ID2,
       agentName: "ABBY",
       agentColor: abby?.color ?? ABBY_COLOR,
       content: directives.length ? `Orchestrating: "${goal}"
@@ -83248,7 +83362,7 @@ Respond with ONLY a JSON array (no prose, no code fences) of objects shaped: {"a
       abby
     );
     if (results.length && !isSwarmPaused()) {
-      await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, ABBY_ID));
+      await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, ABBY_ID2));
       const reviewUser = `Operator goal: "${goal}"
 
 Round 1 CLAW results:
@@ -83263,11 +83377,11 @@ If not, respond with ONLY a JSON array (no prose) of up to 2 follow-up directive
       } catch (e) {
         logger.error({ e }, "coordinator review failed");
       }
-      await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.id, ABBY_ID));
+      await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.id, ABBY_ID2));
       if (followups.length && !isSwarmPaused()) {
         await postMessage({
           channelId,
-          agentId: ABBY_ID,
+          agentId: ABBY_ID2,
           agentName: "ABBY",
           agentColor: abby?.color ?? ABBY_COLOR,
           content: `Coordinator review: goal not yet complete. Follow-up round:
@@ -83285,7 +83399,7 @@ If not, respond with ONLY a JSON array (no prose) of up to 2 follow-up directive
     if (results.length) {
       await postMessage({
         channelId,
-        agentId: ABBY_ID,
+        agentId: ABBY_ID2,
         agentName: "ABBY",
         agentColor: abby?.color ?? ABBY_COLOR,
         content: `Orchestration complete. ${results.length} CLAW report${results.length === 1 ? "" : "s"} in. Status: COMMIT.`,
@@ -83301,11 +83415,11 @@ If not, respond with ONLY a JSON array (no prose) of up to 2 follow-up directive
   } catch (err) {
     logger.error({ err }, "orchestrateGoal failed");
     void sendInngestEvent("swarm/goal.failed", { goal, channelId, error: String(err).slice(0, 300) });
-    await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.id, ABBY_ID)).catch(() => {
+    await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.id, ABBY_ID2)).catch(() => {
     });
     await postMessage({
       channelId,
-      agentId: ABBY_ID,
+      agentId: ABBY_ID2,
       agentName: "ABBY",
       agentColor: ABBY_COLOR,
       content: `Orchestration error: ${String(err).slice(0, 300)}`,
@@ -87797,7 +87911,7 @@ init_drizzle_orm();
 init_logger2();
 init_orchestrator();
 init_swarm();
-var ABBY_ID2 = 1;
+var ABBY_ID3 = 1;
 var DEFAULT_CHANNEL_ID = 1;
 var SCHEDULER_INTERVAL_MS = 3e4;
 function computeNextRun(schedule) {
@@ -87811,7 +87925,7 @@ function computeNextRun(schedule) {
 async function runCronJob(job, channelId = DEFAULT_CHANNEL_ID) {
   await db.update(cronJobsTable).set({ lastRunAt: /* @__PURE__ */ new Date(), runCount: job.runCount + 1, nextRunAt: computeNextRun(job.schedule) }).where(eq(cronJobsTable.id, job.id)).catch((err) => logger.error({ err, jobId: job.id }, "scheduler: bookkeeping update failed"));
   try {
-    if (job.agentId === ABBY_ID2) {
+    if (job.agentId === ABBY_ID3) {
       await orchestrateGoal({ goal: job.task, channelId, priority: "normal" });
       await db.update(cronJobsTable).set({ lastResult: "orchestrated" }).where(eq(cronJobsTable.id, job.id));
       return;
@@ -87822,7 +87936,7 @@ async function runCronJob(job, channelId = DEFAULT_CHANNEL_ID) {
       return;
     }
     const [cmd] = await db.insert(agentCommandsTable).values({
-      fromAgentId: ABBY_ID2,
+      fromAgentId: ABBY_ID3,
       toAgentId: agent.id,
       command: job.task,
       payload: job.payload ?? null,
@@ -87877,7 +87991,7 @@ function startScheduler() {
 
 // src/routes/commands.ts
 var router8 = (0, import_express8.Router)();
-var ABBY_ID3 = 1;
+var ABBY_ID4 = 1;
 var DEFAULT_CHANNEL_ID2 = 1;
 function fmt(cmd) {
   return {
@@ -87919,7 +88033,7 @@ router8.post("/commands", async (req, res) => {
         return;
       }
       const [cmd] = await db.insert(agentCommandsTable).values({
-        fromAgentId: ABBY_ID3,
+        fromAgentId: ABBY_ID4,
         toAgentId: agent.id,
         command,
         payload: payload ?? null,
