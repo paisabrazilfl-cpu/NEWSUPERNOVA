@@ -19,6 +19,7 @@ function Router() {
     <AppLayout>
       <Switch>
         <Route path="/" component={ChatPage} />
+        <Route path="/chat" component={ChatPage} />
         <Route path="/swarm" component={Dashboard} />
         <Route path="/agents" component={Agents} />
         <Route path="/tasks" component={Tasks} />
