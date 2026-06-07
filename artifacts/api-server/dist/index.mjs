@@ -59087,6 +59087,13 @@ VOICE: Terse, high signal density, mechanism-derived, zero narrative padding, cy
 var CHAT_MODE_DIRECTIVE = `
 
 CHAT MODE: You are in a live, real-time chat with your operator in the OPENCLAW OMEGA command channel. Reply conversationally, the way you would in a chat \u2014 natural first-person language, well-formatted markdown (short paragraphs, bullet lists, fenced code blocks where useful). Acknowledge what the operator said, answer directly, and when relevant close by offering the next move. Stay fully in character, but be warm, readable, and personable \u2014 NOT clipped telegraphic fragments. Keep it focused; no filler.`;
+var ANTI_HALLUCINATION_DIRECTIVE = `
+
+EVIDENCE DISCIPLINE (non-negotiable):
+- Never claim a tool ran, a file/record/URL exists, or an action (creating a file, writing code, passing a test, building, deploying) succeeded UNLESS a tool result in THIS conversation proves it. Printing text to stdout is NOT creating a file. Describing code is NOT writing it to the project.
+- Your code_exec / cloud_code_exec sandbox is ISOLATED and CANNOT see the application's repository or filesystem, and you have NO tool to read or write project files. If asked to inspect, build, test, or modify the codebase, state plainly that you cannot do so from this environment \u2014 do not invent file paths, file contents, build output, or results.
+- If a tool fails or returns an error, report it verbatim. Never convert a failure into success.
+- If something is not verified, say "unverified" or "unknown". Never guess and present it as fact. Any estimate, score, or matrix you produce must be labelled as an estimate \u2014 never reported as a measured result.`;
 var CHAT_HISTORY_LIMIT = 16;
 var ABBY_ID = 1;
 var ABBY_DEFAULT_MODEL = "x-ai/grok-4.3";
@@ -59185,7 +59192,7 @@ router7.post("/ai/chat", async (req, res) => {
   }
   const model = resolveModel(resolvedAgentId, agent.model, overrideModel);
   const persona = AGENT_PERSONAS[resolvedAgentId] ?? `You are ${agent.name}, an AI agent in the ABBY CLAW swarm.`;
-  const systemPrompt = persona + CHAT_MODE_DIRECTIVE;
+  const systemPrompt = persona + CHAT_MODE_DIRECTIVE + ANTI_HALLUCINATION_DIRECTIVE;
   const history = [];
   try {
     const rows = await db.select().from(messagesTable).where(and(eq(messagesTable.channelId, channelId), inArray(messagesTable.messageType, ["user", "agent"]))).orderBy(desc(messagesTable.id)).limit(CHAT_HISTORY_LIMIT);
@@ -59337,7 +59344,7 @@ router7.post("/ai/complete", async (req, res) => {
     return;
   }
   const model = resolveModel(resolvedAgentId, agent?.model, overrideModel);
-  const systemPrompt = resolvedAgentId ? AGENT_PERSONAS[resolvedAgentId] ?? "" : "";
+  const systemPrompt = (resolvedAgentId ? AGENT_PERSONAS[resolvedAgentId] ?? "" : "") + ANTI_HALLUCINATION_DIRECTIVE;
   const messages = [
     ...systemPrompt ? [{ role: "system", content: systemPrompt }] : [],
     { role: "user", content: message }
@@ -60546,7 +60553,7 @@ ${scraped.slice(0, 1400)}${scraped.length > 1400 ? "\n\u2026" : ""}`,
     const toolGuide = toolNames.length ? `
 
 You are an autonomous tool-using agent. You have these tools: ${toolNames.join(", ")}. Call tools to gather real data and perform real work instead of guessing \u2014 chain multiple calls when needed. When the directive is fully satisfied, stop calling tools and reply with your final concrete result (no preamble).` : "";
-    const system = persona + toolGuide;
+    const system = persona + toolGuide + ANTI_HALLUCINATION_DIRECTIVE;
     const messages = [
       { role: "system", content: system },
       {
@@ -61527,7 +61534,7 @@ router11.post("/external/v1/chat/completions", async (req, res) => {
     res.status(500).json({ error: "OPENROUTER_API_KEY not configured on server" });
     return;
   }
-  const systemPrompt = AGENT_PERSONAS2[agentId] ?? `You are ${agent.name}, an AI agent in the ABBY CLAW swarm.`;
+  const systemPrompt = (AGENT_PERSONAS2[agentId] ?? `You are ${agent.name}, an AI agent in the ABBY CLAW swarm.`) + ANTI_HALLUCINATION_DIRECTIVE;
   const orMessages = [{ role: "system", content: systemPrompt }, ...messages];
   const orHeaders = {
     "Authorization": `Bearer ${orKey}`,
