@@ -106,10 +106,12 @@ router.get("/uploads/:id", async (req, res) => {
       return;
     }
     const buf = Buffer.from(row.data, "base64");
+    // ?download=1 forces a save-as download; otherwise render inline (images/PDF).
+    const disposition = req.query["download"] != null ? "attachment" : "inline";
     res.setHeader("Content-Type", row.mimeType);
     res.setHeader("Content-Length", String(buf.length));
     res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
-    res.setHeader("Content-Disposition", `inline; filename="${row.filename.replace(/"/g, "")}"`);
+    res.setHeader("Content-Disposition", `${disposition}; filename="${row.filename.replace(/"/g, "")}"`);
     res.end(buf);
   } catch (err) {
     req.log.error({ err }, "upload: failed to serve attachment");

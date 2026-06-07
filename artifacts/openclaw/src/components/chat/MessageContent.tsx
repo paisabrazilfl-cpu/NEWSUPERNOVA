@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { Copy, Check } from "lucide-react";
+import { resolveApiUrl } from "@workspace/api-client-react";
 
 /**
  * Dependency-free message renderer. We intentionally avoid pulling in a markdown
@@ -74,24 +75,54 @@ function inlineCode(text: string, keyBase: string) {
  * elements (used to show uploaded pictures inline) and leaving the rest to the
  * inline-code renderer.
  */
+function resolveHref(href: string): string {
+  // Same-origin in prod; in dev the API lives elsewhere, so route /api links through resolveApiUrl.
+  return href.startsWith("/api/") ? resolveApiUrl(href) : href;
+}
+
 function renderRun(text: string, keyBase: string) {
-  const img = /!\[([^\]]*)\]\(([^)\s]+)\)/g;
+  // Matches markdown images ![alt](url) and links [text](url) in one pass.
+  const re = /(!?)\[([^\]]*)\]\(([^)\s]+)\)/g;
   const out: ReactNode[] = [];
   let last = 0;
   let m: RegExpExecArray | null;
   let n = 0;
-  while ((m = img.exec(text)) !== null) {
+  while ((m = re.exec(text)) !== null) {
     if (m.index > last) out.push(...inlineCode(text.slice(last, m.index), `${keyBase}-t${n}`));
-    out.push(
-      <img
-        key={`${keyBase}-img${n}`}
-        src={m[2]}
-        alt={m[1] || "attachment"}
-        className="my-2 max-h-80 max-w-full rounded-lg border border-card-border object-contain"
-        loading="lazy"
-      />,
-    );
-    last = img.lastIndex;
+    const isImg = m[1] === "!";
+    const label = m[2];
+    const rawHref = m[3];
+    const href = resolveHref(rawHref);
+    if (isImg) {
+      out.push(
+        <img
+          key={`${keyBase}-img${n}`}
+          src={href}
+          alt={label || "attachment"}
+          className="my-2 max-h-80 max-w-full rounded-lg border border-card-border object-contain"
+          loading="lazy"
+        />,
+      );
+    } else {
+      const isDownload = /[?&]download=1/.test(rawHref) || /\/api\/uploads\//.test(rawHref);
+      out.push(
+        <a
+          key={`${keyBase}-a${n}`}
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          {...(isDownload ? { download: "" } : {})}
+          className={
+            isDownload
+              ? "inline-flex items-center gap-1.5 my-1 rounded-md border border-[#00e5ff]/50 bg-[#00e5ff]/10 px-2.5 py-1 text-sm font-medium text-[#00e5ff] hover:bg-[#00e5ff]/20 transition-colors no-underline"
+              : "text-[#00e5ff] underline underline-offset-2 hover:text-[#00e5ff]/80 break-words"
+          }
+        >
+          {isDownload ? `⬇ ${label || "Download"}` : label || href}
+        </a>,
+      );
+    }
+    last = re.lastIndex;
     n++;
   }
   if (last < text.length) out.push(...inlineCode(text.slice(last), `${keyBase}-t${n}`));
