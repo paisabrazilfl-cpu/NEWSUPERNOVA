@@ -1,9 +1,23 @@
-import { useListTasks } from "@workspace/api-client-react";
+import { useListTasks, getListTasksQueryKey } from "@workspace/api-client-react";
 import { LayoutGrid, Clock, PlayCircle, CheckCircle2, XCircle, PauseCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export default function Tasks() {
-  const { data: tasks = [], isLoading, isError, refetch } = useListTasks();
+  // Poll so this reflects what agents are doing RIGHT NOW, live.
+  const { data: tasks = [], isLoading, isError, refetch } = useListTasks({
+    query: { refetchInterval: 3000, queryKey: getListTasksQueryKey() },
+  });
+
+  // Surface active work first: running → queued → paused → newest of the rest.
+  const rank: Record<string, number> = { running: 0, queued: 1, paused: 2, failed: 3, completed: 4 };
+  const sorted = [...tasks].sort(
+    (a, b) => (rank[a.status] ?? 9) - (rank[b.status] ?? 9) || b.id - a.id,
+  );
+  const counts = tasks.reduce<Record<string, number>>((acc, t) => {
+    acc[t.status] = (acc[t.status] ?? 0) + 1;
+    return acc;
+  }, {});
+  const live = (counts["running"] ?? 0) + (counts["queued"] ?? 0);
 
   const getStatusIcon = (status: string) => {
     switch(status) {
@@ -34,10 +48,21 @@ export default function Tasks() {
         <div className="w-12 h-12 bg-accent/10 rounded-lg flex items-center justify-center border border-accent/20">
           <LayoutGrid className="w-6 h-6 text-accent" />
         </div>
-        <div>
+        <div className="min-w-0">
           <h1 className="text-2xl font-bold tracking-tight text-foreground">Tasks</h1>
           <p className="text-sm text-muted-foreground mt-1">What your agents are working on right now.</p>
         </div>
+        {!isLoading && !isError && tasks.length > 0 && (
+          <div className="ml-auto flex items-center gap-3 text-xs shrink-0">
+            <span className="flex items-center gap-1.5 text-foreground">
+              <span className={cn("w-2 h-2 rounded-full", live > 0 ? "bg-primary animate-pulse" : "bg-muted-foreground")} />
+              {live > 0 ? `${live} active` : "idle"}
+            </span>
+            <span className="text-muted-foreground hidden sm:inline">
+              {counts["running"] ?? 0} running · {counts["queued"] ?? 0} queued · {counts["completed"] ?? 0} done · {counts["failed"] ?? 0} failed
+            </span>
+          </div>
+        )}
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 sm:p-8 relative z-10">
@@ -49,7 +74,11 @@ export default function Tasks() {
             <button onClick={() => refetch()} className="text-xs underline text-foreground hover:text-primary">Retry</button>
           </div>
         ) : tasks.length === 0 ? (
-          <div className="flex items-center justify-center py-16 text-muted-foreground">No active tasks. Swarm is idle.</div>
+          <div className="flex flex-col items-center justify-center py-16 text-center gap-2 text-muted-foreground">
+            <LayoutGrid className="w-8 h-8 opacity-40" />
+            <span>No tasks yet — the swarm is idle.</span>
+            <span className="text-xs">Give the swarm a goal in <span className="text-foreground font-medium">Chat</span> and tasks will appear here live as agents work.</span>
+          </div>
         ) : (
           <>
             {/* Desktop: table */}
@@ -65,7 +94,7 @@ export default function Tasks() {
                   </tr>
                 </thead>
                 <tbody>
-                  {tasks.map(task => (
+                  {sorted.map(task => (
                     <tr key={task.id} className="border-b border-card-border hover:bg-card/60 transition-colors group">
                       <td className="p-4">
                         <div className="flex items-center gap-2">
@@ -99,7 +128,7 @@ export default function Tasks() {
 
             {/* Mobile: cards */}
             <div className="md:hidden space-y-3">
-              {tasks.map(task => (
+              {sorted.map(task => (
                 <div key={task.id} className="bg-card/40 backdrop-blur-sm border border-card-border rounded-xl p-4">
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
