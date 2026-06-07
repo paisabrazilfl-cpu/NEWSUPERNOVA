@@ -21,6 +21,8 @@ services:
         value: /
       - key: SESSION_SECRET
         generateValue: true
+      - key: OPERATOR_PASSWORD
+        sync: false
       - key: DATABASE_URL
         fromDatabase:
           name: bos-aura-db
@@ -53,6 +55,9 @@ services:
         sync: false
       - key: LANGSMITH_API_KEY
         sync: false
+      # Alias accepted by the tracing layer (LANGSMITH_API_KEY takes precedence)
+      - key: LANGCHAIN_API_KEY
+        sync: false
       - key: LANGSMITH_PROJECT
         value: openclaw-omega
       # Web search providers
@@ -71,6 +76,8 @@ services:
       - key: INNGEST_EVENT_KEY
         sync: false
       - key: INNGEST_SIGNING_KEY
+        sync: false
+      - key: INNGEST_EVENT_URL
         sync: false
       - key: E2B_API_KEY
         sync: false
