@@ -48,6 +48,19 @@ branch is created, it gets its own dated section here.
 - **0c.** Removed the dead HITL "Authorize/Deny" buttons (no backend; they did nothing).
 - **0d.** Surfaced `/api/integrations` as a real status panel in Settings.
 
+### UI/UX Phase 1 — robustness
+- Real error + empty states on Agents and Tasks (were blank on failure/empty).
+- Toast feedback on vault store/delete; mounted the Sonner `<Toaster/>` (was never
+  rendered, so sonner toasts now actually appear).
+
+### UI/UX Phase 2 — responsive
+- `AgentInspector` no longer fixed at 440px — full-width with a tap-to-dismiss
+  backdrop on phones, side panel on larger screens.
+- Tasks table scrolls horizontally on narrow screens instead of crushing.
+
+### UI/UX Phase 3 — polish
+- Rewrote the `404` page to match the dark theme (was a stray light-mode page).
+
 ### Notes
 - The GO/HOLD/ABORT policy/approval gate was prototyped and then **removed at the
   operator's request** — no risk-tiered governance ships.

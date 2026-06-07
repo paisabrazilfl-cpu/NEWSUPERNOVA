@@ -106,8 +106,15 @@ export function AgentInspector({ agentId, onClose }: AgentInspectorProps) {
     : 0;
 
   return (
-    <div className="w-[440px] border-l border-card-border bg-card/95 backdrop-blur-xl flex flex-col shadow-[-10px_0_30px_rgba(0,0,0,0.5)] z-30 absolute right-0 top-0 bottom-0 animate-in slide-in-from-right-8 duration-300">
-      
+    <>
+      {/* Backdrop — tap to dismiss on small screens (panel is full-width there) */}
+      <div
+        className="sm:hidden fixed inset-0 bg-black/50 z-20"
+        onClick={onClose}
+        aria-hidden="true"
+      />
+    <div className="w-full sm:w-[440px] max-w-full border-l border-card-border bg-card/95 backdrop-blur-xl flex flex-col shadow-[-10px_0_30px_rgba(0,0,0,0.5)] z-30 absolute right-0 top-0 bottom-0 animate-in slide-in-from-right-8 duration-300">
+
       {/* Header */}
       <div className="p-4 border-b border-card-border flex items-start justify-between relative overflow-hidden shrink-0">
         <div className="absolute top-0 left-0 right-0 h-0.5" style={{ backgroundColor: agent.color, boxShadow: `0 0 12px ${agent.color}` }} />
@@ -323,5 +330,6 @@ export function AgentInspector({ agentId, onClose }: AgentInspectorProps) {
 
       </div>
     </div>
+    </>
   );
 }

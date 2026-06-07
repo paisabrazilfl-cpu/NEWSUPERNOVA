@@ -41,8 +41,8 @@ export default function Tasks() {
       </div>
 
       <div className="flex-1 overflow-y-auto p-8 relative z-10">
-        <div className="bg-card/40 backdrop-blur-sm border border-card-border rounded-xl overflow-hidden">
-          <table className="w-full text-left border-collapse">
+        <div className="bg-card/40 backdrop-blur-sm border border-card-border rounded-xl overflow-x-auto">
+          <table className="w-full min-w-[640px] text-left border-collapse">
             <thead>
               <tr className="border-b border-card-border bg-card/50 text-[10px] uppercase tracking-widest text-muted-foreground font-bold">
                 <th className="p-4">Status</th>
