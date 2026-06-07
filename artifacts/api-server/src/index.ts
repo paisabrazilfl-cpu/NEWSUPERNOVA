@@ -1,6 +1,7 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 import { runMigrations } from "./migrate";
+import { loadVaultIntoEnv } from "./lib/vaultEnv";
 import { startKeepAlive } from "./lib/keepAlive";
 import { reconcileStaleWork } from "./orchestrator";
 import { integrationStatus } from "./lib/integrations";
@@ -24,15 +25,18 @@ if (missingKeys.length > 0) {
 }
 
 // Surface which optional third-party integrations are wired (booleans only —
-// no secret values are ever logged).
-const integrations = integrationStatus();
-logger.info(
-  {
-    configured: integrations.filter((i) => i.configured).map((i) => i.key),
-    notConfigured: integrations.filter((i) => !i.configured).map((i) => i.key),
-  },
-  "Third-party integrations status",
-);
+// no secret values are ever logged). Logged after the vault→env load below so it
+// reflects keys saved in the in-app Settings/Vault, not just Render env vars.
+function logIntegrations(): void {
+  const integrations = integrationStatus();
+  logger.info(
+    {
+      configured: integrations.filter((i) => i.configured).map((i) => i.key),
+      notConfigured: integrations.filter((i) => !i.configured).map((i) => i.key),
+    },
+    "Third-party integrations status",
+  );
+}
 
 const port = Number(rawPort);
 
@@ -41,6 +45,9 @@ if (Number.isNaN(port) || port <= 0) {
 }
 
 runMigrations()
+  // Activate integrations from keys saved in the in-app vault (env vars still win).
+  .then(() => loadVaultIntoEnv())
+  .then(() => logIntegrations())
   .then(() => reconcileStaleWork())
   .then(() => {
     app.listen(port, (err) => {

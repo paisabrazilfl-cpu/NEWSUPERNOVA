@@ -43,6 +43,7 @@ import {
   composioExecute,
 } from "./lib/integrations";
 import { embed, embeddingsConfigured, cosineSimilarity, parseEmbedding } from "./lib/embeddings";
+import { pineconeConfigured, pineconeUpsert, pineconeQuery } from "./lib/pinecone";
 import { runInSandbox, repoPr, sandboxConfigured, gitWriteConfigured } from "./lib/sandbox";
 
 const STEEL_BASE = "https://api.steel.dev/v1";
@@ -210,6 +211,31 @@ async function keywordMemorySearch(query: string, limit: number): Promise<string
 }
 
 async function memorySearch(query: string, limit: number): Promise<string> {
+  // Primary: Pinecone (managed vector DB) when configured. Falls through to the
+  // Postgres cosine / keyword search below if it's unset, errors, or has no hits.
+  if (pineconeConfigured()) {
+    const queryVec = await embed(query);
+    if (queryVec) {
+      const matches = await pineconeQuery(queryVec, limit);
+      if (matches && matches.length) {
+        return matches
+          .map((m) => {
+            const md = m.metadata ?? {};
+            return formatMemoryRow(
+              {
+                id: Number(md["pgId"] ?? m.id) || 0,
+                agentName: (md["agentName"] as string) ?? null,
+                key: (md["key"] as string) ?? null,
+                content: String(md["content"] ?? ""),
+              },
+              m.score,
+            );
+          })
+          .join("\n---\n");
+      }
+    }
+  }
+
   if (embeddingsConfigured()) {
     const queryVec = await embed(query);
     if (queryVec) {
@@ -733,6 +759,7 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
       // if embeddings aren't configured or fail, we store null and search falls
       // back to keyword matching.
       const vector = await embed(key ? `${key}\n${stored}` : stored);
+      const tags = args["tags"] != null ? String(args["tags"]).slice(0, 300) : null;
       const [row] = await db
         .insert(agentMemoryTable)
         .values({
@@ -740,11 +767,24 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
           agentName: ctx.agentName,
           key,
           content: stored,
-          tags: args["tags"] != null ? String(args["tags"]).slice(0, 300) : null,
+          tags,
           embedding: vector ? JSON.stringify(vector) : null,
         })
         .returning();
-      return `stored memory #${row?.id ?? "?"}${vector ? " (semantic)" : ""}.`;
+
+      // Postgres is the durable record + fallback. When Pinecone is configured,
+      // also upsert the vector there as the primary semantic index (best-effort).
+      let pineconed = false;
+      if (vector && row?.id != null && pineconeConfigured()) {
+        pineconed = await pineconeUpsert(String(row.id), vector, {
+          pgId: row.id,
+          agentName: ctx.agentName ?? null,
+          key,
+          tags,
+          content: stored.slice(0, 1500),
+        });
+      }
+      return `stored memory #${row?.id ?? "?"}${vector ? (pineconed ? " (semantic · pinecone)" : " (semantic)") : ""}.`;
     },
   },
 

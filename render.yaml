@@ -71,13 +71,22 @@ services:
         sync: false
       - key: EXA_API_KEY
         sync: false
-      # Semantic memory (real vector RAG)
+      # Semantic memory (real vector RAG). EMBEDDINGS_API_KEY makes the vectors;
+      # required for BOTH the Postgres store and Pinecone.
       - key: EMBEDDINGS_API_KEY
         sync: false
       - key: EMBEDDINGS_BASE_URL
         value: https://api.openai.com/v1
       - key: EMBEDDINGS_MODEL
         value: text-embedding-3-small
+      # Pinecone = primary vector store (falls back to Postgres if unset/unreachable).
+      # The index dimension MUST match the embedding model (1536 for the default).
+      - key: PINECONE_API_KEY
+        sync: false
+      - key: PINECONE_INDEX_HOST
+        sync: false
+      - key: PINECONE_NAMESPACE
+        value: openclaw
       # Event bus + cloud sandbox
       - key: INNGEST_EVENT_KEY
         sync: false

@@ -180,16 +180,16 @@ var require_common = __commonJS({
       createDebug.names = [];
       createDebug.skips = [];
       createDebug.formatters = {};
-      function selectColor(namespace) {
+      function selectColor(namespace2) {
         let hash = 0;
-        for (let i = 0; i < namespace.length; i++) {
-          hash = (hash << 5) - hash + namespace.charCodeAt(i);
+        for (let i = 0; i < namespace2.length; i++) {
+          hash = (hash << 5) - hash + namespace2.charCodeAt(i);
           hash |= 0;
         }
         return createDebug.colors[Math.abs(hash) % createDebug.colors.length];
       }
       createDebug.selectColor = selectColor;
-      function createDebug(namespace) {
+      function createDebug(namespace2) {
         let prevTime;
         let enableOverride = null;
         let namespacesCache;
@@ -228,9 +228,9 @@ var require_common = __commonJS({
           const logFn = self2.log || createDebug.log;
           logFn.apply(self2, args);
         }
-        debug.namespace = namespace;
+        debug.namespace = namespace2;
         debug.useColors = createDebug.useColors();
-        debug.color = createDebug.selectColor(namespace);
+        debug.color = createDebug.selectColor(namespace2);
         debug.extend = extend2;
         debug.destroy = createDebug.destroy;
         Object.defineProperty(debug, "enabled", {
@@ -242,7 +242,7 @@ var require_common = __commonJS({
             }
             if (namespacesCache !== createDebug.namespaces) {
               namespacesCache = createDebug.namespaces;
-              enabledCache = createDebug.enabled(namespace);
+              enabledCache = createDebug.enabled(namespace2);
             }
             return enabledCache;
           },
@@ -255,8 +255,8 @@ var require_common = __commonJS({
         }
         return debug;
       }
-      function extend2(namespace, delimiter) {
-        const newDebug = createDebug(this.namespace + (typeof delimiter === "undefined" ? ":" : delimiter) + namespace);
+      function extend2(namespace2, delimiter) {
+        const newDebug = createDebug(this.namespace + (typeof delimiter === "undefined" ? ":" : delimiter) + namespace2);
         newDebug.log = this.log;
         return newDebug;
       }
@@ -305,7 +305,7 @@ var require_common = __commonJS({
       function disable() {
         const namespaces = [
           ...createDebug.names,
-          ...createDebug.skips.map((namespace) => "-" + namespace)
+          ...createDebug.skips.map((namespace2) => "-" + namespace2)
         ].join(",");
         createDebug.enable("");
         return namespaces;
@@ -700,9 +700,9 @@ var require_depd = __commonJS({
     var relative = __require("path").relative;
     module.exports = depd;
     var basePath = process.cwd();
-    function containsNamespace(str, namespace) {
+    function containsNamespace(str, namespace2) {
       var vals = str.split(/[ ,]+/);
-      var ns = String(namespace).toLowerCase();
+      var ns = String(namespace2).toLowerCase();
       for (var i = 0; i < vals.length; i++) {
         var val = vals[i];
         if (val && (val === "*" || val.toLowerCase() === ns)) {
@@ -744,8 +744,8 @@ var require_depd = __commonJS({
       }
       return str;
     }
-    function depd(namespace) {
-      if (!namespace) {
+    function depd(namespace2) {
+      if (!namespace2) {
         throw new TypeError("argument namespace is required");
       }
       var stack = getStack();
@@ -755,9 +755,9 @@ var require_depd = __commonJS({
         log.call(deprecate, message);
       }
       deprecate._file = file2;
-      deprecate._ignored = isignored(namespace);
-      deprecate._namespace = namespace;
-      deprecate._traced = istraced(namespace);
+      deprecate._ignored = isignored(namespace2);
+      deprecate._namespace = namespace2;
+      deprecate._traced = istraced(namespace2);
       deprecate._warned = /* @__PURE__ */ Object.create(null);
       deprecate.function = wrapfunction;
       deprecate.property = wrapproperty;
@@ -767,19 +767,19 @@ var require_depd = __commonJS({
       var count = typeof emitter.listenerCount !== "function" ? emitter.listeners(type).length : emitter.listenerCount(type);
       return count > 0;
     }
-    function isignored(namespace) {
+    function isignored(namespace2) {
       if (process.noDeprecation) {
         return true;
       }
       var str = process.env.NO_DEPRECATION || "";
-      return containsNamespace(str, namespace);
+      return containsNamespace(str, namespace2);
     }
-    function istraced(namespace) {
+    function istraced(namespace2) {
       if (process.traceDeprecation) {
         return true;
       }
       var str = process.env.TRACE_DEPRECATION || "";
-      return containsNamespace(str, namespace);
+      return containsNamespace(str, namespace2);
     }
     function log(message, site) {
       var haslisteners = eehaslisteners(process, "deprecation");
@@ -958,7 +958,7 @@ var require_depd = __commonJS({
       }
       Object.defineProperty(obj, prop, descriptor);
     }
-    function DeprecationError(namespace, message, stack) {
+    function DeprecationError(namespace2, message, stack) {
       var error40 = new Error();
       var stackString;
       Object.defineProperty(error40, "constructor", {
@@ -979,7 +979,7 @@ var require_depd = __commonJS({
       Object.defineProperty(error40, "namespace", {
         configurable: true,
         enumerable: false,
-        value: namespace,
+        value: namespace2,
         writable: true
       });
       Object.defineProperty(error40, "stack", {
@@ -21995,7 +21995,7 @@ var require_request = __commonJS({
     defineGetter(req, "path", function path2() {
       return parse3(this).pathname;
     });
-    defineGetter(req, "host", function host() {
+    defineGetter(req, "host", function host2() {
       var trust = this.app.get("trust proxy fn");
       var val = this.get("X-Forwarded-Host");
       if (!val || !trust(this.socket.remoteAddress, 0)) {
@@ -22006,11 +22006,11 @@ var require_request = __commonJS({
       return val || void 0;
     });
     defineGetter(req, "hostname", function hostname2() {
-      var host = this.host;
-      if (!host) return;
-      var offset = host[0] === "[" ? host.indexOf("]") + 1 : 0;
-      var index = host.indexOf(":", offset);
-      return index !== -1 ? host.substring(0, index) : host;
+      var host2 = this.host;
+      if (!host2) return;
+      var offset = host2[0] === "[" ? host2.indexOf("]") + 1 : 0;
+      var index = host2.indexOf(":", offset);
+      return index !== -1 ? host2.substring(0, index) : host2;
     });
     defineGetter(req, "fresh", function() {
       var method = this.method;
@@ -28105,7 +28105,7 @@ var require_pino = __commonJS({
     function pinoBundlerAbsolutePath(p) {
       try {
         const path2 = __require("path");
-        const outputDir = "/home/runner/work/BOS-AURA/BOS-AURA/artifacts/api-server/dist";
+        const outputDir = "/home/user/BOS-AURA/artifacts/api-server/dist";
         return path2.resolve(outputDir, p.replace(/^\.\//, ""));
       } catch (e) {
         const f = new Function("p", "return new URL(p, import.meta.url).pathname");
@@ -31714,11 +31714,11 @@ var require_connection = __commonJS({
           }
         });
       }
-      connect(port2, host) {
+      connect(port2, host2) {
         const self2 = this;
         this._connecting = true;
         this.stream.setNoDelay(true);
-        this.stream.connect(port2, host);
+        this.stream.connect(port2, host2);
         this.stream.once("connect", function() {
           if (self2._keepAlive) {
             self2.stream.setKeepAlive(true, self2._keepAliveInitialDelayMillis);
@@ -31760,8 +31760,8 @@ var require_connection = __commonJS({
             }
           }
           const net = __require("net");
-          if (net.isIP && net.isIP(host) === 0) {
-            options.servername = host;
+          if (net.isIP && net.isIP(host2) === 0) {
+            options.servername = host2;
           }
           try {
             self2.stream = getSecureStream(options);
@@ -76768,13 +76768,13 @@ ${err.stdout}`.toLowerCase();
        * @returns Command result from the command runner.
        */
       async dangerouslyAuthenticate(opts) {
-        const _a3 = opts, { username, password, host, protocol } = _a3, rest = __objRest(_a3, ["username", "password", "host", "protocol"]);
+        const _a3 = opts, { username, password, host: host2, protocol } = _a3, rest = __objRest(_a3, ["username", "password", "host", "protocol"]);
         if (!username || !password) {
           throw new InvalidArgumentError(
             "Both username and password are required to authenticate git."
           );
         }
-        const targetHost = (host != null ? host : "github.com").trim();
+        const targetHost = (host2 != null ? host2 : "github.com").trim();
         const targetProtocol = (protocol != null ? protocol : "https").trim();
         const credentialInput = [
           `protocol=${targetProtocol}`,
@@ -77966,8 +77966,8 @@ ${err.stdout}`.toLowerCase();
     }
     function resolveRulesForBody(rules) {
       const out = {};
-      for (const [host, hostRules] of rules) {
-        out[host] = hostRules.map(
+      for (const [host2, hostRules] of rules) {
+        out[host2] = hostRules.map(
           (rule) => rule.transform === void 0 ? {} : { transform: rule.transform }
         );
       }
@@ -85578,6 +85578,7 @@ function integrationStatus() {
     { key: "helicone", name: "Helicone", category: "observability", envVar: "HELICONE_API_KEY", configured: has("HELICONE_API_KEY") },
     { key: "langsmith", name: "LangSmith (LangChain)", category: "observability", envVar: "LANGSMITH_API_KEY", configured: langsmithEnabled() },
     { key: "embeddings", name: "Embeddings (semantic memory)", category: "memory", envVar: "EMBEDDINGS_API_KEY", configured: has("EMBEDDINGS_API_KEY") },
+    { key: "pinecone", name: "Pinecone (vector memory)", category: "memory", envVar: "PINECONE_API_KEY", configured: has("PINECONE_API_KEY") && (has("PINECONE_INDEX_HOST") || has("PINECONE_INDEX_URL")) },
     { key: "tavily", name: "Tavily", category: "search", envVar: "TAVILY_API_KEY", configured: has("TAVILY_API_KEY") },
     { key: "exa", name: "Exa", category: "search", envVar: "EXA_API_KEY", configured: has("EXA_API_KEY") },
     { key: "firecrawl", name: "Firecrawl", category: "search", envVar: "FIRECRAWL_API_KEY", configured: has("FIRECRAWL_API_KEY") },
@@ -86205,6 +86206,72 @@ function parseEmbedding(stored) {
   }
 }
 
+// src/lib/pinecone.ts
+function host() {
+  const h = process.env["PINECONE_INDEX_HOST"] || process.env["PINECONE_INDEX_URL"];
+  if (!h) return null;
+  const trimmed = h.trim().replace(/\/$/, "");
+  if (!trimmed) return null;
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+}
+function namespace() {
+  return process.env["PINECONE_NAMESPACE"] ?? "";
+}
+function pineconeConfigured() {
+  return !!process.env["PINECONE_API_KEY"] && !!host();
+}
+async function pineconeUpsert(id, values, metadata) {
+  const key = process.env["PINECONE_API_KEY"];
+  const base = host();
+  if (!key || !base) return false;
+  const ctrl = new AbortController();
+  const timer2 = setTimeout(() => ctrl.abort(), 15e3);
+  try {
+    const r = await fetch(`${base}/vectors/upsert`, {
+      method: "POST",
+      headers: { "Api-Key": key, "Content-Type": "application/json" },
+      body: JSON.stringify({ vectors: [{ id, values, metadata }], namespace: namespace() }),
+      signal: ctrl.signal
+    });
+    if (!r.ok) {
+      logger.debug({ status: r.status }, "pinecone: upsert failed");
+      return false;
+    }
+    return true;
+  } catch (err) {
+    logger.debug({ err }, "pinecone: upsert errored");
+    return false;
+  } finally {
+    clearTimeout(timer2);
+  }
+}
+async function pineconeQuery(values, topK) {
+  const key = process.env["PINECONE_API_KEY"];
+  const base = host();
+  if (!key || !base) return null;
+  const ctrl = new AbortController();
+  const timer2 = setTimeout(() => ctrl.abort(), 15e3);
+  try {
+    const r = await fetch(`${base}/query`, {
+      method: "POST",
+      headers: { "Api-Key": key, "Content-Type": "application/json" },
+      body: JSON.stringify({ vector: values, topK, includeMetadata: true, namespace: namespace() }),
+      signal: ctrl.signal
+    });
+    if (!r.ok) {
+      logger.debug({ status: r.status }, "pinecone: query failed");
+      return null;
+    }
+    const data = await r.json();
+    return Array.isArray(data.matches) ? data.matches : [];
+  } catch (err) {
+    logger.debug({ err }, "pinecone: query errored");
+    return null;
+  } finally {
+    clearTimeout(timer2);
+  }
+}
+
 // src/lib/sandbox.ts
 var import_e2b = __toESM(require_dist4(), 1);
 var GITHUB_REPO = "paisabrazilfl-cpu/bos-aura";
@@ -86357,15 +86424,15 @@ async function ssrfGuard(url2) {
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     return "error: only http(s) urls are allowed.";
   }
-  const host = parsed.hostname.toLowerCase();
-  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".internal") || host.endsWith(".local")) {
+  const host2 = parsed.hostname.toLowerCase();
+  if (host2 === "localhost" || host2.endsWith(".localhost") || host2.endsWith(".internal") || host2.endsWith(".local")) {
     return "error: requests to internal hostnames are blocked.";
   }
-  if (isIP(host)) {
-    return ipIsPrivate(host) ? "error: requests to private/internal addresses are blocked." : null;
+  if (isIP(host2)) {
+    return ipIsPrivate(host2) ? "error: requests to private/internal addresses are blocked." : null;
   }
   try {
-    const records = await lookup(host, { all: true });
+    const records = await lookup(host2, { all: true });
     if (!records.length) return "error: could not resolve host.";
     for (const rec of records) {
       if (ipIsPrivate(rec.address)) {
@@ -86429,6 +86496,26 @@ async function keywordMemorySearch(query, limit) {
   return rows.map((m) => formatMemoryRow(m)).join("\n---\n");
 }
 async function memorySearch(query, limit) {
+  if (pineconeConfigured()) {
+    const queryVec = await embed(query);
+    if (queryVec) {
+      const matches = await pineconeQuery(queryVec, limit);
+      if (matches && matches.length) {
+        return matches.map((m) => {
+          const md = m.metadata ?? {};
+          return formatMemoryRow(
+            {
+              id: Number(md["pgId"] ?? m.id) || 0,
+              agentName: md["agentName"] ?? null,
+              key: md["key"] ?? null,
+              content: String(md["content"] ?? "")
+            },
+            m.score
+          );
+        }).join("\n---\n");
+      }
+    }
+  }
   if (embeddingsConfigured()) {
     const queryVec = await embed(query);
     if (queryVec) {
@@ -86860,15 +86947,26 @@ ${clip3(safe, 4e3)}`;
       const stored = content.slice(0, 8e3);
       const vector2 = await embed(key ? `${key}
 ${stored}` : stored);
+      const tags = args["tags"] != null ? String(args["tags"]).slice(0, 300) : null;
       const [row] = await db.insert(agentMemoryTable).values({
         agentId: ctx.agentId,
         agentName: ctx.agentName,
         key,
         content: stored,
-        tags: args["tags"] != null ? String(args["tags"]).slice(0, 300) : null,
+        tags,
         embedding: vector2 ? JSON.stringify(vector2) : null
       }).returning();
-      return `stored memory #${row?.id ?? "?"}${vector2 ? " (semantic)" : ""}.`;
+      let pineconed = false;
+      if (vector2 && row?.id != null && pineconeConfigured()) {
+        pineconed = await pineconeUpsert(String(row.id), vector2, {
+          pgId: row.id,
+          agentName: ctx.agentName ?? null,
+          key,
+          tags,
+          content: stored.slice(0, 1500)
+        });
+      }
+      return `stored memory #${row?.id ?? "?"}${vector2 ? pineconed ? " (semantic \xB7 pinecone)" : " (semantic)" : ""}.`;
     }
   },
   memory_search: {
@@ -88911,6 +89009,43 @@ async function runMigrations() {
   }
 }
 
+// src/lib/vaultEnv.ts
+init_src();
+async function loadVaultIntoEnv() {
+  if (!process.env["SESSION_SECRET"]) {
+    logger.warn("Vault\u2192env skipped: SESSION_SECRET is not set");
+    return;
+  }
+  try {
+    const rows = await db.select().from(vaultSecretsTable);
+    const applied = [];
+    const skippedEnvSet = [];
+    const undecryptable = [];
+    for (const row of rows) {
+      const existing = process.env[row.name];
+      if (existing != null && existing !== "") {
+        skippedEnvSet.push(row.name);
+        continue;
+      }
+      try {
+        const value = decryptSecret(row);
+        if (value) {
+          process.env[row.name] = value;
+          applied.push(row.name);
+        }
+      } catch {
+        undecryptable.push(row.name);
+      }
+    }
+    if (undecryptable.length) {
+      logger.warn({ undecryptable }, "Vault\u2192env: some secrets could not be decrypted (did SESSION_SECRET change?)");
+    }
+    logger.info({ applied, skippedEnvSet }, "Loaded vault secrets into environment");
+  } catch (err) {
+    logger.error({ err }, "Vault\u2192env load failed \u2014 continuing without it");
+  }
+}
+
 // src/lib/keepAlive.ts
 var DEFAULT_INTERVAL_MS = 10 * 60 * 1e3;
 function resolveBaseUrl() {
@@ -88999,19 +89134,21 @@ if (missingKeys.length > 0) {
     "Missing API key env vars \u2014 AI chat and browser tool routes will fail at runtime"
   );
 }
-var integrations = integrationStatus();
-logger.info(
-  {
-    configured: integrations.filter((i) => i.configured).map((i) => i.key),
-    notConfigured: integrations.filter((i) => !i.configured).map((i) => i.key)
-  },
-  "Third-party integrations status"
-);
+function logIntegrations() {
+  const integrations = integrationStatus();
+  logger.info(
+    {
+      configured: integrations.filter((i) => i.configured).map((i) => i.key),
+      notConfigured: integrations.filter((i) => !i.configured).map((i) => i.key)
+    },
+    "Third-party integrations status"
+  );
+}
 var port = Number(rawPort);
 if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
-runMigrations().then(() => reconcileStaleWork()).then(() => {
+runMigrations().then(() => loadVaultIntoEnv()).then(() => logIntegrations()).then(() => reconcileStaleWork()).then(() => {
   app_default.listen(port, (err) => {
     if (err) {
       logger.error({ err }, "Error listening on port");
