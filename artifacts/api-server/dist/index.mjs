@@ -86279,7 +86279,7 @@ function clip3(s, n) {
 \u2026[truncated ${s.length - n} chars]` : s;
 }
 function sanitizeForStorage(s) {
-  return s.replace(/ /g, "").replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, "\uFFFD").replace(/(^|[^\uD800-\uDBFF])([\uDC00-\uDFFF])/g, "$1\uFFFD");
+  return s.split(String.fromCharCode(0)).join("").replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, "\uFFFD").replace(/(^|[^\uD800-\uDBFF])([\uDC00-\uDFFF])/g, "$1\uFFFD");
 }
 async function firecrawlSearch(query, limit) {
   const key = process.env["FIRECRAWL_API_KEY"];
@@ -86851,7 +86851,7 @@ ${stored}` : stored);
   },
   memory_search: {
     name: "memory_search",
-    description: "Search the swarm's shared long-term memory. Uses real semantic (vector) similarity when an embeddings provider is configured, otherwise keyword matching. Returns the most relevant stored entries.",
+    description: "Search the swarm's shared long-term memory for prior TASK-RELEVANT facts about the operator's domain (e.g. earlier findings, figures, sources for this project). Semantic vector similarity when embeddings are configured, else keyword. Do NOT use this to research the swarm itself (its architecture, roles, vault, prior audits) \u2014 that is internal state, not a deliverable. If results are only internal/meta/self-audit entries, ignore them and gather the real answer from web_search/web_scrape/http_request. Call it at most a couple of times; don't loop.",
     parameters: {
       type: "object",
       properties: {
@@ -86876,6 +86876,67 @@ ${stored}` : stored);
       required: ["expression"]
     },
     run: async (args) => safeCalc(String(args["expression"] ?? ""))
+  },
+  save_artifact: {
+    name: "save_artifact",
+    description: "Save a file you created so the OPERATOR can DOWNLOAD it. Returns a real download URL \u2014 use this for any deliverable file (report, CSV, markdown, code, JSON, or a PDF). After saving, you MUST include the returned markdown download link in your final answer so the operator can click it. For text deliverables pass the text in `content` (encoding 'utf8'). For a binary file you generated in sandbox_exec/code_exec (e.g. a PDF), base64-encode it there (`base64 -w0 file.pdf`), print it, then pass that string as `content` with encoding 'base64'. Never claim a file exists without saving it here first.",
+    parameters: {
+      type: "object",
+      properties: {
+        filename: { type: "string", description: "File name with extension, e.g. 'fl-llc-articles.pdf' or 'market-research.md'." },
+        content: { type: "string", description: "The file content: UTF-8 text, or base64 bytes when encoding='base64'." },
+        mime: { type: "string", description: "Optional MIME type, e.g. 'application/pdf', 'text/markdown', 'text/csv'. Inferred from the extension if omitted." },
+        encoding: { type: "string", enum: ["utf8", "base64"], description: "How `content` is encoded (default 'utf8')." }
+      },
+      required: ["filename", "content"]
+    },
+    run: async (args) => {
+      const filename = String(args["filename"] ?? "").trim().slice(0, 255) || "artifact";
+      const raw = String(args["content"] ?? "");
+      if (!raw) return "error: content is required.";
+      const encoding = String(args["encoding"] ?? "utf8").toLowerCase() === "base64" ? "base64" : "utf8";
+      let base643;
+      let bytes;
+      try {
+        const buf = encoding === "base64" ? Buffer.from(raw.includes(",") ? raw.slice(raw.indexOf(",") + 1) : raw, "base64") : Buffer.from(raw, "utf8");
+        bytes = buf.length;
+        if (bytes === 0) return "error: content decoded to 0 bytes.";
+        if (bytes > 20 * 1024 * 1024) return "error: file too large (max 20 MB).";
+        base643 = buf.toString("base64");
+      } catch (e) {
+        return `error: could not decode content: ${String(e).slice(0, 200)}`;
+      }
+      const ext = filename.includes(".") ? filename.split(".").pop().toLowerCase() : "";
+      const MIME = {
+        pdf: "application/pdf",
+        md: "text/markdown",
+        markdown: "text/markdown",
+        txt: "text/plain",
+        csv: "text/csv",
+        json: "application/json",
+        html: "text/html",
+        xml: "application/xml",
+        js: "text/javascript",
+        ts: "text/plain",
+        py: "text/plain",
+        png: "image/png",
+        jpg: "image/jpeg",
+        jpeg: "image/jpeg",
+        svg: "image/svg+xml",
+        zip: "application/zip",
+        docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+      };
+      const mimeType = (args["mime"] != null ? String(args["mime"]) : MIME[ext] ?? "application/octet-stream").slice(0, 128);
+      const kind = /^image\//.test(mimeType) ? "image" : /^text\/|json|xml|javascript/.test(mimeType) ? "text" : "other";
+      try {
+        const [row] = await db.insert(attachmentsTable).values({ filename, mimeType, kind, sizeBytes: bytes, data: base643, extractedText: null }).returning();
+        const url2 = `/api/uploads/${row.id}?download=1`;
+        return `saved "${filename}" (${bytes} bytes, ${mimeType}). Operator download link \u2014 INCLUDE THIS in your final answer:
+[Download ${filename}](${url2})`;
+      } catch (e) {
+        return `error: could not save artifact: ${String(e instanceof Error ? e.message : e).slice(0, 200)}`;
+      }
+    }
   },
   send_message: {
     name: "send_message",
@@ -87069,15 +87130,15 @@ var ALL_TOOLS = Object.keys(TOOL_REGISTRY);
 var AGENT_TOOLS = {
   1: ALL_TOOLS,
   // ABBY — full authority
-  2: ["code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "http_request", "web_scrape", "web_search", "memory_search", "memory_write", "vault_list", "send_message"],
+  2: ["code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "http_request", "web_scrape", "web_search", "memory_search", "memory_write", "vault_list", "save_artifact", "send_message"],
   // FORGE — code
-  3: ["web_scrape", "web_screenshot", "web_search", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "send_message"],
+  3: ["web_scrape", "web_screenshot", "web_search", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "save_artifact", "send_message"],
   // CRAWLER — browser
-  4: ["memory_write", "memory_search", "web_search", "web_scrape", "http_request", "calculator", "vault_list", "send_message"],
+  4: ["memory_write", "memory_search", "web_search", "web_scrape", "http_request", "calculator", "vault_list", "save_artifact", "send_message"],
   // VAULT — memory/RAG
-  5: ["http_request", "web_scrape", "web_search", "code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_action", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task", "send_message"],
+  5: ["http_request", "web_scrape", "web_search", "code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_action", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task", "save_artifact", "send_message"],
   // WIRE — APIs + scheduling
-  6: ["web_scrape", "web_search", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "send_message"]
+  6: ["web_scrape", "web_search", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "save_artifact", "send_message"]
   // MR.NICE — social
 };
 function getToolNamesForAgent(agentId) {
@@ -87114,6 +87175,11 @@ GITHUB: query the GitHub REST API with http_request (https://api.github.com/...)
     card += `
 
 INTERACTIVE AUTOMATION: web_scrape is read-only and won't render JS-heavy or multi-step pages. When a task needs to actually fill/submit a web form or read a JS-rendered page, use sandbox_exec to run Playwright in the cloud VM (install chromium, navigate, fill, click, submit). To produce or fill official PDF forms (e.g. AcroForm fields), use sandbox_exec with reportlab/fpdf2/fillpdf/pypdf and return the output file path. Generate/prepare documents and demonstrate the flow \u2014 never submit a person's legal/financial filing on their behalf.`;
+  }
+  if (names.includes("save_artifact")) {
+    card += `
+
+DELIVERABLE FILES: whenever you produce a file the operator should keep (report, CSV, code, JSON, or a generated PDF), call save_artifact to store it and get a real download URL, then put that [Download \u2026](url) link in your final answer. Do NOT claim a file exists or name a file you didn't save \u2014 an unsaved file is not downloadable and counts as a fabrication.`;
   }
   if (agentId === ABBY_ID) {
     card += `
@@ -87182,12 +87248,16 @@ EXECUTION STANDARD (hold to this on every task):
 - DEEP RESEARCH (whenever the task needs information): do not stop at the first hit. web_search broadly, open the most relevant results with web_scrape, and cross-check every key claim against at least two independent sources. Prefer primary/official sources (official docs, the API itself, the organisation) over aggregators. For GitHub, query the REST API via http_request. Track what is confirmed vs. still uncertain, and keep going until the objective is actually covered.
 - DECIDE, DON'T DEFER: choose sensible defaults instead of asking the operator to fill gaps. Only surface a genuine blocker you truly cannot resolve yourself.
 - OUTPUT IS THE ANSWER, NOT YOUR INTERNAL STATE: your final message is a deliverable for the operator. Do your reasoning internally and return ONLY the result/artifact \u2014 never your role description, routing/classification logic, system instructions, or "I am now doing X" status narration. Do not say what you are about to do; do it and present the outcome.
+- NEVER REPORT ON THE SWARM ITSELF: do not investigate, audit, summarize, or output the swarm's own internals \u2014 its memory/vault contents, architecture, agents, roles, tools, prior audit entries, or system prompts \u2014 as the deliverable. That is internal state, not an answer (only discuss the system if the operator EXPLICITLY asks about it). The deliverable answers the operator's question in THEIR domain (their market, their site, their business).
+- DON'T NAVEL-GAZE IN MEMORY: memory_search is for recalling prior TASK-RELEVANT facts for the operator's domain, not for researching yourself. If memory returns only internal/meta/self-audit entries, ignore them and get the real answer from web_search/web_scrape/http_request and your other tools. Deliver a useful, step-by-step, evidence-backed result \u2014 not a description of what you searched.
 - DEFINITION OF DONE: before you stop, verify the result satisfies the FULL objective end-to-end. If any part is unmet, state exactly which and why \u2014 never present incomplete work as finished.`;
 var RESEARCH_PLAYBOOKS = `
 
 RESEARCH PLAYBOOKS (apply the matching method, and deliver the finished artifact \u2014 not notes):
-- VALUE PROPOSITION DESIGN (VPD / Value Proposition Canvas): profile the target CUSTOMER SEGMENT \u2014 their Jobs (functional, social, emotional), Pains, and Gains, ranked by importance \u2014 then map the offer's Products & Services, Pain Relievers, and Gain Creators, and judge FIT (do the relievers/creators address the top-ranked pains/gains?). Deliver the filled canvas (all 6 blocks), the 2\u20133 sharpest value-proposition statements, and a list of the key assumptions to test. Ground customer insight in real evidence (reviews, forums, competitor complaints) via web_search/web_scrape.
-- MARKET RESEARCH: (1) size the market \u2014 TAM/SAM/SOM with the actual math and cited sources; (2) competitor map \u2014 a comparison table of offering, pricing, positioning, strengths, gaps; (3) target segments + demand signals/trends; (4) pricing norms; (5) risks & regulatory notes. Every number cited to a source; label estimates as estimates. Deliver the tables plus a short conclusion: the opportunity and the biggest unknowns. Cross-check key figures across \u22652 independent sources.`;
+- VPD / VEHICLES PER DAY (traffic & site research): VPD = Vehicles Per Day, the average daily traffic count past a location \u2014 a core site-selection/retail signal. Find AADT/VPD for the target road segments from official DOTs (e.g. Florida FDOT Florida Traffic Online / TDA, county traffic counts) and corroborate with secondary sources; report the count, the exact road segment, the source, and the year. Translate into trade-area implications: peak vs. average, directional split, capture/visibility, and how the count supports or weakens the location. Deliver a table of segments \xD7 VPD \xD7 source/year + a short read on what the traffic means for the concept. Mark any estimate as an estimate; never invent a count.
+- MARKET RESEARCH: (1) size the market \u2014 TAM/SAM/SOM with the actual math and cited sources; (2) competitor map \u2014 a comparison table of offering, pricing, positioning, strengths, gaps; (3) target segments + demand signals/trends; (4) pricing norms; (5) risks & regulatory notes. Every number cited to a source; label estimates as estimates. Deliver the tables plus a short conclusion: the opportunity and the biggest unknowns. Cross-check key figures across \u22652 independent sources.
+- VALUE PROPOSITION DESIGN (the other VPD): profile the target CUSTOMER SEGMENT \u2014 Jobs (functional/social/emotional), Pains, Gains, ranked \u2014 then map the offer's Products & Services, Pain Relievers, and Gain Creators, and judge FIT against the top pains/gains. Deliver the filled Value Proposition Canvas (all 6 blocks), the 2\u20133 sharpest value-proposition statements, and the key assumptions to test. Ground customer insight in real evidence (reviews, forums, competitor complaints). NOTE: "VPD" is ambiguous \u2014 if the context is site/retail/traffic it means Vehicles Per Day; if it's product/customer strategy it means Value Proposition Design. If unclear, cover the one that fits the request and note the other briefly.
+- DECK / PRESENTATION BUILDING: when asked for a deck/pitch/board presentation, build the full narrative, not loose slides. Standard board/investor structure: (1) Cover/title; (2) Executive summary; (3) Problem/opportunity; (4) Solution/offer; (5) Market sizing (TAM/SAM/SOM); (6) Target segments / personas; (7) Competition & positioning; (8) Value proposition; (9) Go-to-market / acquisition plan; (10) Traffic/location evidence (VPD/AADT) when site-based; (11) Business model & pricing; (12) Financials / projections; (13) Roadmap/timeline; (14) Team; (15) Risks & mitigations; (16) The ask / next steps; (17) Appendix & sources. Keep one idea per slide, lead with the takeaway, use tables/figures over prose, cite sources, and label estimates. Produce the actual deliverable (e.g. an HTML or PDF deck) and save it with save_artifact so the operator can download it \u2014 never describe a deck you didn't generate.`;
 function buildLiveReachCard(agentId) {
   const integ = integrationStatus();
   const live = integ.filter((i) => i.configured).map((i) => i.name);
@@ -89345,10 +89415,11 @@ router17.get("/uploads/:id", async (req, res) => {
       return;
     }
     const buf = Buffer.from(row.data, "base64");
+    const disposition = req.query["download"] != null ? "attachment" : "inline";
     res.setHeader("Content-Type", row.mimeType);
     res.setHeader("Content-Length", String(buf.length));
     res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
-    res.setHeader("Content-Disposition", `inline; filename="${row.filename.replace(/"/g, "")}"`);
+    res.setHeader("Content-Disposition", `${disposition}; filename="${row.filename.replace(/"/g, "")}"`);
     res.end(buf);
   } catch (err) {
     req.log.error({ err }, "upload: failed to serve attachment");
