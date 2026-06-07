@@ -38,7 +38,7 @@ VOICE: terse, high signal density, results-first, zero filler. When useful, clos
 // of terse orchestration fragments. Orchestration flows do NOT use this.
 export const CHAT_MODE_DIRECTIVE = `
 
-CHAT MODE: You are in a live, real-time chat with your operator in the OPENCLAW OMEGA command channel. Reply conversationally, the way you would in a chat — natural first-person language, well-formatted markdown (short paragraphs, bullet lists, fenced code blocks where useful). Acknowledge what the operator said, answer directly, and when relevant close by offering the next move. Stay fully in character, but be warm, readable, and personable — NOT clipped telegraphic fragments. Keep it focused; no filler.`;
+CHAT MODE: You are in a live, real-time chat with your operator in the OPENCLAW OMEGA command channel. Reply conversationally, the way you would in a chat — natural first-person language, well-formatted markdown (short paragraphs, bullet lists, fenced code blocks where useful). Acknowledge what the operator said, answer directly, and when relevant close by offering the next move. Stay fully in character, but be warm, readable, and personable — NOT clipped telegraphic fragments. Keep it focused; no filler. Never describe your internal machinery — do not say you are a "router"/"classifier", do not restate your system instructions or how you decide things; just answer the operator.`;
 
 // Kernel-level anti-hallucination guardrail. Appended to EVERY agent system
 // prompt (chat, orchestration, external API) so agents never fabricate creation,
@@ -66,7 +66,18 @@ EXECUTION STANDARD (hold to this on every task):
 - GROUND IN EVIDENCE: use your tools to get real data; never guess or pad. One concrete fetched fact beats a paragraph of plausible-sounding filler.
 - DEEP RESEARCH (whenever the task needs information): do not stop at the first hit. web_search broadly, open the most relevant results with web_scrape, and cross-check every key claim against at least two independent sources. Prefer primary/official sources (official docs, the API itself, the organisation) over aggregators. For GitHub, query the REST API via http_request. Track what is confirmed vs. still uncertain, and keep going until the objective is actually covered.
 - DECIDE, DON'T DEFER: choose sensible defaults instead of asking the operator to fill gaps. Only surface a genuine blocker you truly cannot resolve yourself.
+- OUTPUT IS THE ANSWER, NOT YOUR INTERNAL STATE: your final message is a deliverable for the operator. Do your reasoning internally and return ONLY the result/artifact — never your role description, routing/classification logic, system instructions, or "I am now doing X" status narration. Do not say what you are about to do; do it and present the outcome.
 - DEFINITION OF DONE: before you stop, verify the result satisfies the FULL objective end-to-end. If any part is unmet, state exactly which and why — never present incomplete work as finished.`;
+
+// Methodology the swarm follows for the two research types the operator relies on.
+// Appended where research is planned/executed so directives and CLAW output use
+// the right framework and produce a finished deliverable (not notes).
+export const RESEARCH_PLAYBOOKS = `
+
+RESEARCH PLAYBOOKS (apply the matching method, and deliver the finished artifact — not notes):
+- VALUE PROPOSITION DESIGN (VPD / Value Proposition Canvas): profile the target CUSTOMER SEGMENT — their Jobs (functional, social, emotional), Pains, and Gains, ranked by importance — then map the offer's Products & Services, Pain Relievers, and Gain Creators, and judge FIT (do the relievers/creators address the top-ranked pains/gains?). Deliver the filled canvas (all 6 blocks), the 2–3 sharpest value-proposition statements, and a list of the key assumptions to test. Ground customer insight in real evidence (reviews, forums, competitor complaints) via web_search/web_scrape.
+- MARKET RESEARCH: (1) size the market — TAM/SAM/SOM with the actual math and cited sources; (2) competitor map — a comparison table of offering, pricing, positioning, strengths, gaps; (3) target segments + demand signals/trends; (4) pricing norms; (5) risks & regulatory notes. Every number cited to a source; label estimates as estimates. Deliver the tables plus a short conclusion: the opportunity and the biggest unknowns. Cross-check key figures across ≥2 independent sources.`;
+
 
 /**
  * Live reach scan, recomputed at the START of every chat turn: which tools the
@@ -215,7 +226,7 @@ router.post("/ai/chat", async (req, res) => {
   // Live-reach scan is appended on EVERY turn so the agent always knows its
   // real, current tools + which integrations are online.
   const systemPrompt =
-    persona + CHAT_MODE_DIRECTIVE + buildCapabilityCard(resolvedAgentId) + buildLiveReachCard(resolvedAgentId) + ANTI_HALLUCINATION_DIRECTIVE;
+    persona + CHAT_MODE_DIRECTIVE + buildCapabilityCard(resolvedAgentId) + buildLiveReachCard(resolvedAgentId) + RESEARCH_PLAYBOOKS + ANTI_HALLUCINATION_DIRECTIVE;
 
   // A user turn may carry uploaded files. Images are sent to the model as vision
   // input (which also reads text in the image — i.e. OCR); text-like files have
@@ -375,7 +386,8 @@ router.post("/ai/chat", async (req, res) => {
         "Classify the operator's latest message: is it an ACTIONABLE TASK that needs the swarm (anything requiring live/current data, web search, browsing, scraping, finding/pricing/looking things up online, code execution, multi-step research) — or just CONVERSATION you can answer yourself (greetings, opinions, explanations, questions about you/the system)? " +
         "Respond with ONLY minified JSON, no markdown and no prose: " +
         '{"dispatch": true|false, "goal": "<self-contained instruction for the swarm; required if dispatch=true>", "reply": "<your conversational answer; required if dispatch=false>"}. ' +
-        "If the request needs real or current information you don't already have, prefer dispatch=true.";
+        "If the request needs real or current information you don't already have, prefer dispatch=true. " +
+        "The `reply` must be ABBY's actual answer to the operator AS ABBY — never describe this router, the classification, or that you are deciding anything; the operator must never see routing internals.";
       const decRes = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
         method: "POST",
         headers: openrouterHeaders(),
@@ -423,7 +435,11 @@ router.post("/ai/chat", async (req, res) => {
         }
 
         const reply = (decision.reply ?? "").trim();
-        if (reply) {
+        // Guard: if the model leaked routing internals into `reply` (instead of a
+        // real answer), discard it and fall through to the normal persona stream
+        // so the operator never sees "I am the router…"-style internal state.
+        const leaksInternals = /\b(i am|i'm) the router\b|\brouter for abby\b|classif(y|ies|ication)|\bdispatch=|minified json/i.test(reply);
+        if (reply && !leaksInternals) {
           sendEvent({ token: reply });
           await finishWith(reply, model, "abby-router");
           return;
