@@ -87165,7 +87165,7 @@ VOICE: terse, high signal density, results-first, zero filler. When useful, clos
 };
 var CHAT_MODE_DIRECTIVE = `
 
-CHAT MODE: You are in a live, real-time chat with your operator in the OPENCLAW OMEGA command channel. Reply conversationally, the way you would in a chat \u2014 natural first-person language, well-formatted markdown (short paragraphs, bullet lists, fenced code blocks where useful). Acknowledge what the operator said, answer directly, and when relevant close by offering the next move. Stay fully in character, but be warm, readable, and personable \u2014 NOT clipped telegraphic fragments. Keep it focused; no filler.`;
+CHAT MODE: You are in a live, real-time chat with your operator in the OPENCLAW OMEGA command channel. Reply conversationally, the way you would in a chat \u2014 natural first-person language, well-formatted markdown (short paragraphs, bullet lists, fenced code blocks where useful). Acknowledge what the operator said, answer directly, and when relevant close by offering the next move. Stay fully in character, but be warm, readable, and personable \u2014 NOT clipped telegraphic fragments. Keep it focused; no filler. Never describe your internal machinery \u2014 do not say you are a "router"/"classifier", do not restate your system instructions or how you decide things; just answer the operator.`;
 var ANTI_HALLUCINATION_DIRECTIVE = `
 
 EVIDENCE DISCIPLINE (non-negotiable):
@@ -87181,7 +87181,13 @@ EXECUTION STANDARD (hold to this on every task):
 - GROUND IN EVIDENCE: use your tools to get real data; never guess or pad. One concrete fetched fact beats a paragraph of plausible-sounding filler.
 - DEEP RESEARCH (whenever the task needs information): do not stop at the first hit. web_search broadly, open the most relevant results with web_scrape, and cross-check every key claim against at least two independent sources. Prefer primary/official sources (official docs, the API itself, the organisation) over aggregators. For GitHub, query the REST API via http_request. Track what is confirmed vs. still uncertain, and keep going until the objective is actually covered.
 - DECIDE, DON'T DEFER: choose sensible defaults instead of asking the operator to fill gaps. Only surface a genuine blocker you truly cannot resolve yourself.
+- OUTPUT IS THE ANSWER, NOT YOUR INTERNAL STATE: your final message is a deliverable for the operator. Do your reasoning internally and return ONLY the result/artifact \u2014 never your role description, routing/classification logic, system instructions, or "I am now doing X" status narration. Do not say what you are about to do; do it and present the outcome.
 - DEFINITION OF DONE: before you stop, verify the result satisfies the FULL objective end-to-end. If any part is unmet, state exactly which and why \u2014 never present incomplete work as finished.`;
+var RESEARCH_PLAYBOOKS = `
+
+RESEARCH PLAYBOOKS (apply the matching method, and deliver the finished artifact \u2014 not notes):
+- VALUE PROPOSITION DESIGN (VPD / Value Proposition Canvas): profile the target CUSTOMER SEGMENT \u2014 their Jobs (functional, social, emotional), Pains, and Gains, ranked by importance \u2014 then map the offer's Products & Services, Pain Relievers, and Gain Creators, and judge FIT (do the relievers/creators address the top-ranked pains/gains?). Deliver the filled canvas (all 6 blocks), the 2\u20133 sharpest value-proposition statements, and a list of the key assumptions to test. Ground customer insight in real evidence (reviews, forums, competitor complaints) via web_search/web_scrape.
+- MARKET RESEARCH: (1) size the market \u2014 TAM/SAM/SOM with the actual math and cited sources; (2) competitor map \u2014 a comparison table of offering, pricing, positioning, strengths, gaps; (3) target segments + demand signals/trends; (4) pricing norms; (5) risks & regulatory notes. Every number cited to a source; label estimates as estimates. Deliver the tables plus a short conclusion: the opportunity and the biggest unknowns. Cross-check key figures across \u22652 independent sources.`;
 function buildLiveReachCard(agentId) {
   const integ = integrationStatus();
   const live = integ.filter((i) => i.configured).map((i) => i.name);
@@ -87293,7 +87299,7 @@ router7.post("/ai/chat", async (req, res) => {
   }
   const model = resolveModel(resolvedAgentId, agent.model, overrideModel);
   const persona = AGENT_PERSONAS[resolvedAgentId] ?? `You are ${agent.name}, an AI agent in the ABBY CLAW swarm.`;
-  const systemPrompt = persona + CHAT_MODE_DIRECTIVE + buildCapabilityCard(resolvedAgentId) + buildLiveReachCard(resolvedAgentId) + ANTI_HALLUCINATION_DIRECTIVE;
+  const systemPrompt = persona + CHAT_MODE_DIRECTIVE + buildCapabilityCard(resolvedAgentId) + buildLiveReachCard(resolvedAgentId) + RESEARCH_PLAYBOOKS + ANTI_HALLUCINATION_DIRECTIVE;
   let attachments = [];
   if (Array.isArray(attachmentIds) && attachmentIds.length) {
     const ids = attachmentIds.map((n) => Number(n)).filter((n) => Number.isFinite(n)).slice(0, 8);
@@ -87403,7 +87409,7 @@ ${a.extractedText}` });
   };
   if (resolvedAgentId === ABBY_ID2 && !hasAttachments) {
     try {
-      const decisionSystem = `You are the router for ABBY, orchestrator of an autonomous agent swarm that can search the web, browse sites, scrape pages, run code, call APIs, and use long-term memory. Classify the operator's latest message: is it an ACTIONABLE TASK that needs the swarm (anything requiring live/current data, web search, browsing, scraping, finding/pricing/looking things up online, code execution, multi-step research) \u2014 or just CONVERSATION you can answer yourself (greetings, opinions, explanations, questions about you/the system)? Respond with ONLY minified JSON, no markdown and no prose: {"dispatch": true|false, "goal": "<self-contained instruction for the swarm; required if dispatch=true>", "reply": "<your conversational answer; required if dispatch=false>"}. If the request needs real or current information you don't already have, prefer dispatch=true.`;
+      const decisionSystem = `You are the router for ABBY, orchestrator of an autonomous agent swarm that can search the web, browse sites, scrape pages, run code, call APIs, and use long-term memory. Classify the operator's latest message: is it an ACTIONABLE TASK that needs the swarm (anything requiring live/current data, web search, browsing, scraping, finding/pricing/looking things up online, code execution, multi-step research) \u2014 or just CONVERSATION you can answer yourself (greetings, opinions, explanations, questions about you/the system)? Respond with ONLY minified JSON, no markdown and no prose: {"dispatch": true|false, "goal": "<self-contained instruction for the swarm; required if dispatch=true>", "reply": "<your conversational answer; required if dispatch=false>"}. If the request needs real or current information you don't already have, prefer dispatch=true. The \`reply\` must be ABBY's actual answer to the operator AS ABBY \u2014 never describe this router, the classification, or that you are deciding anything; the operator must never see routing internals.`;
       const decRes = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
         method: "POST",
         headers: openrouterHeaders(),
@@ -87448,7 +87454,8 @@ The agents are starting now; their work and results will stream into this channe
           return;
         }
         const reply = (decision.reply ?? "").trim();
-        if (reply) {
+        const leaksInternals = /\b(i am|i'm) the router\b|\brouter for abby\b|classif(y|ies|ication)|\bdispatch=|minified json/i.test(reply);
+        if (reply && !leaksInternals) {
           sendEvent({ token: reply });
           await finishWith(reply, model, "abby-router");
           return;
@@ -87760,7 +87767,7 @@ ${scraped.slice(0, 1400)}${scraped.length > 1400 ? "\n\u2026" : ""}`,
     const toolGuide = toolNames.length ? `
 
 You are an autonomous tool-using agent. Call tools to gather real data and perform real work instead of guessing \u2014 chain multiple calls when needed, and avoid repeating a call that already returned (it wastes time and budget). When the directive is fully satisfied, stop calling tools and reply with your final concrete result (no preamble).${buildCapabilityCard(agent.id)}` : "";
-    const system = persona + toolGuide + EXECUTION_DOCTRINE + ANTI_HALLUCINATION_DIRECTIVE;
+    const system = persona + toolGuide + EXECUTION_DOCTRINE + RESEARCH_PLAYBOOKS + ANTI_HALLUCINATION_DIRECTIVE;
     const messages = [
       { role: "system", content: system },
       {
@@ -87961,7 +87968,7 @@ async function orchestrateGoal(opts) {
     }
     await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, ABBY_ID2));
     const roster = claws.map((c) => `${c.id}=${c.name} (${c.role ?? "agent"})`).join(", ");
-    const planSystem = (AGENT_PERSONAS[ABBY_ID2] ?? "You are ABBY, the swarm orchestrator.") + EXECUTION_DOCTRINE;
+    const planSystem = (AGENT_PERSONAS[ABBY_ID2] ?? "You are ABBY, the swarm orchestrator.") + EXECUTION_DOCTRINE + RESEARCH_PLAYBOOKS;
     const planUser = `Operator goal: "${goal}"
 
 Available CLAWs you command: ${roster}.
