@@ -81811,7 +81811,10 @@ async function steelScrape(url2) {
   const r = await fetch(`${STEEL_BASE}/scrape`, {
     method: "POST",
     headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ url: url2, useProxy: false })
+    // Ask for cleaned markdown, not raw HTML — far more signal per character, so a
+    // single scrape fits the readable content (titles, scores) inside the response
+    // budget instead of being truncated mid-page and forcing extra calls.
+    body: JSON.stringify({ url: url2, format: ["markdown"], useProxy: false })
   });
   if (!r.ok) throw new Error(`Steel ${r.status}: ${(await r.text()).slice(0, 200)}`);
   const data = await r.json();
@@ -82074,7 +82077,7 @@ var init_tools = __esm({
           } catch {
           }
           const content = await steelScrape(url2);
-          return clip3(content, 6e3);
+          return clip3(content, 8e3);
         }
       },
       web_screenshot: {
@@ -83150,6 +83153,7 @@ Execute the directive now. Use your tools for anything requiring real data or co
     ];
     let finalText = "";
     let steps = 0;
+    const callCache = /* @__PURE__ */ new Map();
     while (steps < MAX_AGENT_STEPS) {
       steps++;
       const assistant = await completeChatTurn(model, messages, tools);
@@ -83176,12 +83180,20 @@ Execute the directive now. Use your tools for anything requiring real data or co
         });
         let toolResult;
         let ok = true;
-        try {
-          toolResult = await runTool(name, parsedArgs, ctx);
-          if (toolResult.startsWith("error:")) ok = false;
-        } catch (e) {
-          ok = false;
-          toolResult = `error: ${String(e).slice(0, 300)}`;
+        const callKey = `${name}:${JSON.stringify(parsedArgs)}`;
+        if (callCache.has(callKey)) {
+          toolResult = `(deduplicated: you already called ${name} with these exact arguments earlier in this run. Reusing that result \u2014 do not repeat it. Use it, or call a different tool / different arguments.)
+
+${callCache.get(callKey)}`;
+        } else {
+          try {
+            toolResult = await runTool(name, parsedArgs, ctx);
+            if (toolResult.startsWith("error:")) ok = false;
+          } catch (e) {
+            ok = false;
+            toolResult = `error: ${String(e).slice(0, 300)}`;
+          }
+          if (ok) callCache.set(callKey, toolResult);
         }
         await db.update(toolCallsTable).set({ status: ok ? "success" : "error", result: toolResult.slice(0, 4e3), completedAt: /* @__PURE__ */ new Date() }).where(eq(toolCallsTable.id, tc.id));
         await db.insert(monologueLinesTable).values({

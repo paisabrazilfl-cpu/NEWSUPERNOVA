@@ -358,6 +358,10 @@ export async function executeAgentCommand(opts: {
 
     let finalText = "";
     let steps = 0;
+    // Cache of identical tool calls made during THIS run, so a repeated
+    // (tool + exact args) call reuses its result instead of re-billing the
+    // external API and re-spending tokens — a frequent, costly agent loop.
+    const callCache = new Map<string, string>();
     while (steps < MAX_AGENT_STEPS) {
       steps++;
       const assistant = await completeChatTurn(model, messages, tools);
@@ -393,12 +397,19 @@ export async function executeAgentCommand(opts: {
 
         let toolResult: string;
         let ok = true;
-        try {
-          toolResult = await runTool(name, parsedArgs, ctx);
-          if (toolResult.startsWith("error:")) ok = false;
-        } catch (e) {
-          ok = false;
-          toolResult = `error: ${String(e).slice(0, 300)}`;
+        const callKey = `${name}:${JSON.stringify(parsedArgs)}`;
+        if (callCache.has(callKey)) {
+          // Identical call already executed this run — reuse it, don't pay again.
+          toolResult = `(deduplicated: you already called ${name} with these exact arguments earlier in this run. Reusing that result — do not repeat it. Use it, or call a different tool / different arguments.)\n\n${callCache.get(callKey)}`;
+        } else {
+          try {
+            toolResult = await runTool(name, parsedArgs, ctx);
+            if (toolResult.startsWith("error:")) ok = false;
+          } catch (e) {
+            ok = false;
+            toolResult = `error: ${String(e).slice(0, 300)}`;
+          }
+          if (ok) callCache.set(callKey, toolResult);
         }
 
         await db

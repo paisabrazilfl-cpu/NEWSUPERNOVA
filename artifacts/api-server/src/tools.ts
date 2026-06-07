@@ -301,7 +301,10 @@ export async function steelScrape(url: string): Promise<string> {
   const r = await fetch(`${STEEL_BASE}/scrape`, {
     method: "POST",
     headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ url, useProxy: false }),
+    // Ask for cleaned markdown, not raw HTML — far more signal per character, so a
+    // single scrape fits the readable content (titles, scores) inside the response
+    // budget instead of being truncated mid-page and forcing extra calls.
+    body: JSON.stringify({ url, format: ["markdown"], useProxy: false }),
   });
   if (!r.ok) throw new Error(`Steel ${r.status}: ${(await r.text()).slice(0, 200)}`);
   const data = (await r.json()) as Record<string, unknown>;
@@ -538,7 +541,7 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
         }
       } catch { /* ignore; validated above */ }
       const content = await steelScrape(url);
-      return clip(content, 6000);
+      return clip(content, 8000);
     },
   },
 
