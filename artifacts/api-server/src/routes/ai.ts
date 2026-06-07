@@ -266,6 +266,85 @@ router.post("/ai/chat", async (req, res) => {
     }
   };
 
+  // ── ABBY auto-routing ──────────────────────────────────────────────────────
+  // ABBY decides per message: answer conversationally, OR dispatch the real CLAW
+  // swarm (orchestrateGoal) to execute with tools. Only ABBY routes; other
+  // personas stay conversational. Best-effort — any failure falls through to the
+  // normal streaming completion below, so chat never hard-breaks.
+  if (resolvedAgentId === ABBY_ID) {
+    const dispatchTool = {
+      type: "function",
+      function: {
+        name: "dispatch_to_swarm",
+        description:
+          "Dispatch an actionable goal to the CLAW swarm to execute FOR REAL with tools (web search/browsing, code execution, HTTP/APIs, memory). Use this WHENEVER the operator asks you to DO something needing real action or live data — find/search repositories, scrape a site, build or run code, research a topic, call an API. Do NOT use it for greetings, thanks, or questions you can answer directly from your own knowledge.",
+        parameters: {
+          type: "object",
+          properties: {
+            goal: { type: "string", description: "The self-contained goal for the swarm to execute." },
+            ack: { type: "string", description: "A short first-person line telling the operator you are dispatching (what, and which CLAWs)." },
+          },
+          required: ["goal", "ack"],
+        },
+      },
+    };
+    try {
+      const routeMessages: ORMessage[] = [
+        {
+          role: "system",
+          content:
+            persona +
+            CHAT_MODE_DIRECTIVE +
+            "\n\nDISPATCH: When the operator wants real action or live data, call dispatch_to_swarm with a clear self-contained goal and a short ack. For small talk or questions you can answer directly, just reply normally — do not call the tool." +
+            ANTI_HALLUCINATION_DIRECTIVE,
+        },
+        ...history,
+      ];
+      const decRes = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+        method: "POST",
+        headers: openrouterHeaders(),
+        body: JSON.stringify({ model, messages: routeMessages, stream: false, max_tokens: 700, tools: [dispatchTool], tool_choice: "auto" }),
+      });
+      if (decRes.ok) {
+        const data = (await decRes.json()) as {
+          choices?: Array<{ message?: { content?: string | null; tool_calls?: Array<{ function?: { name?: string; arguments?: string } }> } }>;
+        };
+        const msg = data.choices?.[0]?.message;
+        const call = msg?.tool_calls?.find((c) => c.function?.name === "dispatch_to_swarm");
+        if (call) {
+          let goal = "";
+          let ack = "";
+          try {
+            const a = JSON.parse(call.function?.arguments ?? "{}");
+            goal = String(a.goal ?? "").trim();
+            ack = String(a.ack ?? "").trim();
+          } catch { /* malformed args → handled below */ }
+          if (goal) {
+            const ackText = ack || `Dispatching the swarm: ${goal}`;
+            sendEvent({ token: ackText });
+            await finishWith(ackText, model, "abby-router");
+            // Fire the real orchestrator. Dynamic import avoids a static import
+            // cycle (orchestrator.ts imports from this module).
+            void import("../orchestrator").then((m) =>
+              m.orchestrateGoal({ goal, channelId, priority: "high" }).catch((e) => req.log.error({ e }, "orchestrateGoal (from chat) failed")),
+            );
+            return;
+          }
+        }
+        // ABBY chose to answer directly — return that reply (no second LLM call).
+        const direct = (msg?.content ?? "").trim();
+        if (direct) {
+          sendEvent({ token: direct });
+          await finishWith(direct, model, "abby-router");
+          return;
+        }
+      }
+      // Not ok / empty → fall through to the normal streaming path below.
+    } catch (e) {
+      req.log.warn({ e }, "ABBY routing turn failed; falling back to plain chat");
+    }
+  }
+
   try {
     const orRes = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
       method: "POST",

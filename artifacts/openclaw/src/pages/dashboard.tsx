@@ -7,6 +7,7 @@ import { ChatStream } from "@/components/dashboard/ChatStream";
 import { AgentInspector } from "@/components/dashboard/AgentInspector";
 import { SwarmStatusStrip } from "@/components/dashboard/SwarmStatusStrip";
 import { SwarmIdleHint } from "@/components/dashboard/SwarmIdleHint";
+import { SwarmDispatch } from "@/components/dashboard/SwarmDispatch";
 import { SteelBrowser } from "@/components/dashboard/SteelBrowser";
 
 export default function Dashboard() {
@@ -14,6 +15,7 @@ export default function Dashboard() {
   const [viewMode, setViewMode] = useState<"canvas" | "chat" | "browser">("canvas");
   const [selectedAgentId, setSelectedAgentId] = useState<number | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
+  const [dispatchDraft, setDispatchDraft] = useState("");
 
   const views: { id: typeof viewMode; label: string }[] = [
     { id: "canvas", label: "Swarm" },
@@ -71,8 +73,14 @@ export default function Dashboard() {
         </div>
 
         {/* Onboarding cue sits in normal flow (below the canvas) so it never
-            overlaps the orbs; it removes itself once any agent is working. */}
-        {viewMode === "canvas" && <SwarmIdleHint />}
+            overlaps the orbs; it removes itself once any agent is working.
+            Picking a starter prefills the dispatch input below. */}
+        {viewMode === "canvas" && <SwarmIdleHint onPick={setDispatchDraft} />}
+
+        {/* Direct dispatch into the real engine, for firing while you watch. */}
+        {viewMode === "canvas" && (
+          <SwarmDispatch channelId={activeChannelId} value={dispatchDraft} onChange={setDispatchDraft} />
+        )}
       </div>
 
       <AgentInspector
