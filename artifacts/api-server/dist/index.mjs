@@ -28105,7 +28105,7 @@ var require_pino = __commonJS({
     function pinoBundlerAbsolutePath(p) {
       try {
         const path2 = __require("path");
-        const outputDir = "/home/runner/work/BOS-AURA/BOS-AURA/artifacts/api-server/dist";
+        const outputDir = "/home/user/BOS-AURA/artifacts/api-server/dist";
         return path2.resolve(outputDir, p.replace(/^\.\//, ""));
       } catch (e) {
         const f = new Function("p", "return new URL(p, import.meta.url).pathname");
@@ -83409,12 +83409,32 @@ If not, respond with ONLY a JSON array (no prose) of up to 2 follow-up directive
       }
     }
     if (results.length) {
+      await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, ABBY_ID2));
+      const synthSystem = (AGENT_PERSONAS[ABBY_ID2] ?? "You are ABBY, the swarm orchestrator.") + "\n\nYou are now writing the FINAL ANSWER to the operator's goal, using ONLY the CLAW results below. Answer the goal directly and completely, formatted cleanly (markdown \u2014 lists, tables, code blocks as useful). Do NOT describe orchestration, rounds, commits, or internal status \u2014 just deliver the result. If the results don't fully satisfy the goal, give what was found and state plainly what is missing." + ANTI_HALLUCINATION_DIRECTIVE;
+      const synthUser = `Operator goal: "${goal}"
+
+CLAW results:
+${results.map((r) => `### ${r.name}
+${r.result.slice(0, 1800)}`).join("\n\n")}
+
+Write the final answer for the operator now.`;
+      let finalAnswer = "";
+      try {
+        finalAnswer = (await completeChat(model, synthSystem, synthUser)).trim();
+      } catch (e) {
+        logger.error({ e }, "final synthesis failed");
+      }
+      await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.id, ABBY_ID2));
+      if (!finalAnswer) {
+        finalAnswer = results.map((r) => `**${r.name}:**
+${r.result.slice(0, 1500)}`).join("\n\n");
+      }
       await postMessage({
         channelId,
         agentId: ABBY_ID2,
         agentName: "ABBY",
         agentColor: abby?.color ?? ABBY_COLOR,
-        content: `Orchestration complete. ${results.length} CLAW report${results.length === 1 ? "" : "s"} in. Status: COMMIT.`,
+        content: finalAnswer,
         messageType: "agent"
       });
     }

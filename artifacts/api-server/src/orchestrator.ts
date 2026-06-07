@@ -712,12 +712,34 @@ If not, respond with ONLY a JSON array (no prose) of up to 2 follow-up directive
     }
 
     if (results.length) {
+      // Synthesize the ACTUAL ANSWER for the operator from the CLAW results —
+      // this is what the user reads as the result, not an internal status line.
+      await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, ABBY_ID));
+      const synthSystem =
+        (AGENT_PERSONAS[ABBY_ID] ?? "You are ABBY, the swarm orchestrator.") +
+        "\n\nYou are now writing the FINAL ANSWER to the operator's goal, using ONLY the CLAW results below. Answer the goal directly and completely, formatted cleanly (markdown — lists, tables, code blocks as useful). Do NOT describe orchestration, rounds, commits, or internal status — just deliver the result. If the results don't fully satisfy the goal, give what was found and state plainly what is missing." +
+        ANTI_HALLUCINATION_DIRECTIVE;
+      const synthUser = `Operator goal: "${goal}"\n\nCLAW results:\n${results
+        .map((r) => `### ${r.name}\n${r.result.slice(0, 1800)}`)
+        .join("\n\n")}\n\nWrite the final answer for the operator now.`;
+      let finalAnswer = "";
+      try {
+        finalAnswer = (await completeChat(model, synthSystem, synthUser)).trim();
+      } catch (e) {
+        logger.error({ e }, "final synthesis failed");
+      }
+      await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.id, ABBY_ID));
+      // Fallback: never post a bare status line — if synthesis yields nothing,
+      // hand back the raw CLAW results so the operator still gets the answer.
+      if (!finalAnswer) {
+        finalAnswer = results.map((r) => `**${r.name}:**\n${r.result.slice(0, 1500)}`).join("\n\n");
+      }
       await postMessage({
         channelId,
         agentId: ABBY_ID,
         agentName: "ABBY",
         agentColor: abby?.color ?? ABBY_COLOR,
-        content: `Orchestration complete. ${results.length} CLAW report${results.length === 1 ? "" : "s"} in. Status: COMMIT.`,
+        content: finalAnswer,
         messageType: "agent",
       });
     }
