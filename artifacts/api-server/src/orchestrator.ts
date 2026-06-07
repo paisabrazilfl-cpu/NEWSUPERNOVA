@@ -42,6 +42,7 @@ import {
   getToolNamesForAgent,
   buildCapabilityCard,
   runTool,
+  sanitizeForStorage,
   type ToolContext,
 } from "./tools";
 import { sendInngestEvent, traceLlmRun } from "./lib/integrations";
@@ -326,7 +327,7 @@ export async function executeAgentCommand(opts: {
         .values({ agentId: agent.id, toolName: "web_scrape", args: JSON.stringify({ url }), status: "running" })
         .returning();
       try {
-        const scraped = (await steelScrape(url)).slice(0, 6000);
+        const scraped = sanitizeForStorage((await steelScrape(url)).slice(0, 6000));
         priming = scraped;
         await db
           .update(toolCallsTable)
