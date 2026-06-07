@@ -21995,7 +21995,7 @@ var require_request = __commonJS({
     defineGetter(req, "path", function path2() {
       return parse3(this).pathname;
     });
-    defineGetter(req, "host", function host2() {
+    defineGetter(req, "host", function host() {
       var trust = this.app.get("trust proxy fn");
       var val = this.get("X-Forwarded-Host");
       if (!val || !trust(this.socket.remoteAddress, 0)) {
@@ -22006,11 +22006,11 @@ var require_request = __commonJS({
       return val || void 0;
     });
     defineGetter(req, "hostname", function hostname2() {
-      var host2 = this.host;
-      if (!host2) return;
-      var offset = host2[0] === "[" ? host2.indexOf("]") + 1 : 0;
-      var index = host2.indexOf(":", offset);
-      return index !== -1 ? host2.substring(0, index) : host2;
+      var host = this.host;
+      if (!host) return;
+      var offset = host[0] === "[" ? host.indexOf("]") + 1 : 0;
+      var index = host.indexOf(":", offset);
+      return index !== -1 ? host.substring(0, index) : host;
     });
     defineGetter(req, "fresh", function() {
       var method = this.method;
@@ -31714,11 +31714,11 @@ var require_connection = __commonJS({
           }
         });
       }
-      connect(port2, host2) {
+      connect(port2, host) {
         const self2 = this;
         this._connecting = true;
         this.stream.setNoDelay(true);
-        this.stream.connect(port2, host2);
+        this.stream.connect(port2, host);
         this.stream.once("connect", function() {
           if (self2._keepAlive) {
             self2.stream.setKeepAlive(true, self2._keepAliveInitialDelayMillis);
@@ -31760,8 +31760,8 @@ var require_connection = __commonJS({
             }
           }
           const net = __require("net");
-          if (net.isIP && net.isIP(host2) === 0) {
-            options.servername = host2;
+          if (net.isIP && net.isIP(host) === 0) {
+            options.servername = host;
           }
           try {
             self2.stream = getSecureStream(options);
@@ -54592,7 +54592,7 @@ function integrationStatus() {
     { key: "helicone", name: "Helicone", category: "observability", envVar: "HELICONE_API_KEY", configured: has("HELICONE_API_KEY") },
     { key: "langsmith", name: "LangSmith (LangChain)", category: "observability", envVar: "LANGSMITH_API_KEY", configured: langsmithEnabled() },
     { key: "embeddings", name: "Embeddings (semantic memory)", category: "memory", envVar: "EMBEDDINGS_API_KEY", configured: has("EMBEDDINGS_API_KEY") },
-    { key: "pinecone", name: "Pinecone (vector memory)", category: "memory", envVar: "PINECONE_API_KEY", configured: has("PINECONE_API_KEY") && (has("PINECONE_INDEX_HOST") || has("PINECONE_INDEX_URL")) },
+    { key: "pinecone", name: "Pinecone (vector memory)", category: "memory", envVar: "PINECONE_API_KEY", configured: has("PINECONE_API_KEY") && (has("PINECONE_INDEX_HOST") || has("PINECONE_INDEX_URL") || has("PINECONE_INDEX")) },
     { key: "tavily", name: "Tavily", category: "search", envVar: "TAVILY_API_KEY", configured: has("TAVILY_API_KEY") },
     { key: "exa", name: "Exa", category: "search", envVar: "EXA_API_KEY", configured: has("EXA_API_KEY") },
     { key: "firecrawl", name: "Firecrawl", category: "search", envVar: "FIRECRAWL_API_KEY", configured: has("FIRECRAWL_API_KEY") },
@@ -54918,22 +54918,48 @@ var init_embeddings = __esm({
 });
 
 // src/lib/pinecone.ts
-function host() {
+function explicitHost() {
   const h = process.env["PINECONE_INDEX_HOST"] || process.env["PINECONE_INDEX_URL"];
   if (!h) return null;
   const trimmed = h.trim().replace(/\/$/, "");
   if (!trimmed) return null;
   return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
 }
+async function resolveHost() {
+  const explicit = explicitHost();
+  if (explicit) return explicit;
+  const key = process.env["PINECONE_API_KEY"];
+  const name = process.env["PINECONE_INDEX"]?.trim();
+  if (!key || !name) return null;
+  const cacheKey = `${key}:${name}`;
+  if (cachedHost && cachedHost.key === cacheKey) return cachedHost.host;
+  try {
+    const r = await fetch(`https://api.pinecone.io/indexes/${encodeURIComponent(name)}`, {
+      headers: { "Api-Key": key, "X-Pinecone-API-Version": "2024-07" }
+    });
+    if (!r.ok) {
+      logger.debug({ status: r.status }, "pinecone: describe_index failed");
+      return null;
+    }
+    const data = await r.json();
+    if (!data.host) return null;
+    const h = /^https?:\/\//i.test(data.host) ? data.host : `https://${data.host}`;
+    cachedHost = { key: cacheKey, host: h };
+    return h;
+  } catch (err) {
+    logger.debug({ err }, "pinecone: describe_index errored");
+    return null;
+  }
+}
 function namespace() {
   return process.env["PINECONE_NAMESPACE"] ?? "";
 }
 function pineconeConfigured() {
-  return !!process.env["PINECONE_API_KEY"] && !!host();
+  return !!process.env["PINECONE_API_KEY"] && (!!explicitHost() || !!process.env["PINECONE_INDEX"]?.trim());
 }
 async function pineconeUpsert(id, values, metadata) {
   const key = process.env["PINECONE_API_KEY"];
-  const base = host();
+  const base = await resolveHost();
   if (!key || !base) return false;
   const ctrl = new AbortController();
   const timer2 = setTimeout(() => ctrl.abort(), 15e3);
@@ -54958,7 +54984,7 @@ async function pineconeUpsert(id, values, metadata) {
 }
 async function pineconeQuery(values, topK) {
   const key = process.env["PINECONE_API_KEY"];
-  const base = host();
+  const base = await resolveHost();
   if (!key || !base) return null;
   const ctrl = new AbortController();
   const timer2 = setTimeout(() => ctrl.abort(), 15e3);
@@ -54982,10 +55008,12 @@ async function pineconeQuery(values, topK) {
     clearTimeout(timer2);
   }
 }
+var cachedHost;
 var init_pinecone = __esm({
   "src/lib/pinecone.ts"() {
     "use strict";
     init_logger2();
+    cachedHost = null;
   }
 });
 
@@ -77519,13 +77547,13 @@ ${err.stdout}`.toLowerCase();
        * @returns Command result from the command runner.
        */
       async dangerouslyAuthenticate(opts) {
-        const _a3 = opts, { username, password, host: host2, protocol } = _a3, rest = __objRest(_a3, ["username", "password", "host", "protocol"]);
+        const _a3 = opts, { username, password, host, protocol } = _a3, rest = __objRest(_a3, ["username", "password", "host", "protocol"]);
         if (!username || !password) {
           throw new InvalidArgumentError(
             "Both username and password are required to authenticate git."
           );
         }
-        const targetHost = (host2 != null ? host2 : "github.com").trim();
+        const targetHost = (host != null ? host : "github.com").trim();
         const targetProtocol = (protocol != null ? protocol : "https").trim();
         const credentialInput = [
           `protocol=${targetProtocol}`,
@@ -78717,8 +78745,8 @@ ${err.stdout}`.toLowerCase();
     }
     function resolveRulesForBody(rules) {
       const out = {};
-      for (const [host2, hostRules] of rules) {
-        out[host2] = hostRules.map(
+      for (const [host, hostRules] of rules) {
+        out[host] = hostRules.map(
           (rule) => rule.transform === void 0 ? {} : { transform: rule.transform }
         );
       }
@@ -81681,15 +81709,15 @@ async function ssrfGuard(url2) {
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
     return "error: only http(s) urls are allowed.";
   }
-  const host2 = parsed.hostname.toLowerCase();
-  if (host2 === "localhost" || host2.endsWith(".localhost") || host2.endsWith(".internal") || host2.endsWith(".local")) {
+  const host = parsed.hostname.toLowerCase();
+  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".internal") || host.endsWith(".local")) {
     return "error: requests to internal hostnames are blocked.";
   }
-  if (isIP(host2)) {
-    return ipIsPrivate(host2) ? "error: requests to private/internal addresses are blocked." : null;
+  if (isIP(host)) {
+    return ipIsPrivate(host) ? "error: requests to private/internal addresses are blocked." : null;
   }
   try {
-    const records = await lookup(host2, { all: true });
+    const records = await lookup(host, { all: true });
     if (!records.length) return "error: could not resolve host.";
     for (const rec of records) {
       if (ipIsPrivate(rec.address)) {
@@ -82068,8 +82096,8 @@ var init_tools = __esm({
           const url2 = String(args["url"] ?? "").trim();
           if (!/^https?:\/\//i.test(url2)) return "error: a valid absolute http(s) url is required.";
           try {
-            const host2 = new URL(url2).hostname.toLowerCase();
-            if (host2 === "github.com" || host2 === "www.github.com") {
+            const host = new URL(url2).hostname.toLowerCase();
+            if (host === "github.com" || host === "www.github.com") {
               const m = url2.match(/github\.com\/search\?(.*)$/i);
               const apiHint = m ? `https://api.github.com/search/repositories?${m[1].replace(/type=repositories&?/i, "")}` : "https://api.github.com/repos/<owner>/<repo>  (or /search/repositories?q=...)";
               return `error: github.com web pages are JavaScript-rendered and not scrapable. Use http_request (GET) against the GitHub REST API instead \u2014 it is auto-authenticated. Try: ${apiHint}`;
@@ -82146,8 +82174,8 @@ var init_tools = __esm({
           }
           const body = args["body"] != null && method !== "GET" && method !== "DELETE" ? await substituteSecrets(String(args["body"]), usedSecrets) : void 0;
           try {
-            const host2 = new URL(url2).hostname.toLowerCase();
-            if (host2 === "api.github.com" || host2.endsWith(".githubusercontent.com")) {
+            const host = new URL(url2).hostname.toLowerCase();
+            if (host === "api.github.com" || host.endsWith(".githubusercontent.com")) {
               const lc = Object.keys(headers).map((k) => k.toLowerCase());
               const ghToken = process.env["GITHUB_API_KEY"] || process.env["GITHUB_TOKEN"] || process.env["SANDBOX_GITHUB_TOKEN"];
               if (ghToken && !lc.includes("authorization")) {
@@ -82155,7 +82183,7 @@ var init_tools = __esm({
                 usedSecrets.add(ghToken);
               }
               if (!lc.includes("user-agent")) headers["User-Agent"] = "OpenClaw-Omega";
-              if (host2 === "api.github.com" && !lc.includes("accept")) headers["Accept"] = "application/vnd.github+json";
+              if (host === "api.github.com" && !lc.includes("accept")) headers["Accept"] = "application/vnd.github+json";
             }
           } catch {
           }

@@ -19,7 +19,7 @@
  */
 import { logger } from "./logger";
 
-function host(): string | null {
+function explicitHost(): string | null {
   const h = process.env["PINECONE_INDEX_HOST"] || process.env["PINECONE_INDEX_URL"];
   if (!h) return null;
   const trimmed = h.trim().replace(/\/$/, "");
@@ -27,13 +27,48 @@ function host(): string | null {
   return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
 }
 
+let cachedHost: { key: string; host: string } | null = null;
+
+/**
+ * Resolve the index host. Prefers an explicit PINECONE_INDEX_HOST/URL; otherwise,
+ * given PINECONE_API_KEY + PINECONE_INDEX (name), asks the Pinecone control plane
+ * (describe_index) for the host — so the operator only needs the key + index name,
+ * not the long host URL. Cached. Returns null if it can't be resolved.
+ */
+async function resolveHost(): Promise<string | null> {
+  const explicit = explicitHost();
+  if (explicit) return explicit;
+  const key = process.env["PINECONE_API_KEY"];
+  const name = process.env["PINECONE_INDEX"]?.trim();
+  if (!key || !name) return null;
+  const cacheKey = `${key}:${name}`;
+  if (cachedHost && cachedHost.key === cacheKey) return cachedHost.host;
+  try {
+    const r = await fetch(`https://api.pinecone.io/indexes/${encodeURIComponent(name)}`, {
+      headers: { "Api-Key": key, "X-Pinecone-API-Version": "2024-07" },
+    });
+    if (!r.ok) {
+      logger.debug({ status: r.status }, "pinecone: describe_index failed");
+      return null;
+    }
+    const data = (await r.json()) as { host?: string };
+    if (!data.host) return null;
+    const h = /^https?:\/\//i.test(data.host) ? data.host : `https://${data.host}`;
+    cachedHost = { key: cacheKey, host: h };
+    return h;
+  } catch (err) {
+    logger.debug({ err }, "pinecone: describe_index errored");
+    return null;
+  }
+}
+
 function namespace(): string {
   return process.env["PINECONE_NAMESPACE"] ?? "";
 }
 
-/** True when a Pinecone key AND an index host are both configured. */
+/** True when a key AND (an explicit host OR an index name to resolve) are set. */
 export function pineconeConfigured(): boolean {
-  return !!process.env["PINECONE_API_KEY"] && !!host();
+  return !!process.env["PINECONE_API_KEY"] && (!!explicitHost() || !!process.env["PINECONE_INDEX"]?.trim());
 }
 
 export interface PineconeMatch {
@@ -45,7 +80,7 @@ export interface PineconeMatch {
 /** Upsert one vector. Returns true on success, false (logged) on any failure. */
 export async function pineconeUpsert(id: string, values: number[], metadata: Record<string, unknown>): Promise<boolean> {
   const key = process.env["PINECONE_API_KEY"];
-  const base = host();
+  const base = await resolveHost();
   if (!key || !base) return false;
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 15000);
@@ -76,7 +111,7 @@ export async function pineconeUpsert(id: string, values: number[], metadata: Rec
  */
 export async function pineconeQuery(values: number[], topK: number): Promise<PineconeMatch[] | null> {
   const key = process.env["PINECONE_API_KEY"];
-  const base = host();
+  const base = await resolveHost();
   if (!key || !base) return null;
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 15000);

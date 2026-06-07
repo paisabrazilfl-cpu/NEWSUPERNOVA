@@ -81,7 +81,11 @@ services:
         value: text-embedding-3-small
       # Pinecone = primary vector store (falls back to Postgres if unset/unreachable).
       # The index dimension MUST match the embedding model (1536 for the default).
+      # Provide EITHER PINECONE_INDEX (the index name — host auto-resolved via the
+      # Pinecone API) OR the full PINECONE_INDEX_HOST. PINECONE_INDEX is simplest.
       - key: PINECONE_API_KEY
+        sync: false
+      - key: PINECONE_INDEX
         sync: false
       - key: PINECONE_INDEX_HOST
         sync: false
