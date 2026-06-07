@@ -86379,7 +86379,14 @@ function safeCalc(expr) {
     return "error: could not evaluate expression.";
   }
 }
-async function steelScrape(url2) {
+function scrapeLooksBlocked(text2) {
+  const t = text2.trim();
+  if (t.length < 200) return true;
+  return /performing security verification|verify you are (not a |a )?(human|bot)|enable javascript|access denied|captcha|unusual traffic|request blocked|are not a bot/i.test(
+    t
+  );
+}
+async function steelScrapeOnce(url2, useProxy) {
   const key = process.env["STEEL_API_KEY"];
   if (!key) throw new Error("STEEL_API_KEY is not set");
   const r = await fetch(`${STEEL_BASE}/scrape`, {
@@ -86388,7 +86395,7 @@ async function steelScrape(url2) {
     // Ask for cleaned markdown, not raw HTML — far more signal per character, so a
     // single scrape fits the readable content (titles, scores) inside the response
     // budget instead of being truncated mid-page and forcing extra calls.
-    body: JSON.stringify({ url: url2, format: ["markdown"], useProxy: false })
+    body: JSON.stringify({ url: url2, format: ["markdown"], useProxy })
   });
   if (!r.ok) throw new Error(`Steel ${r.status}: ${(await r.text()).slice(0, 200)}`);
   const data = await r.json();
@@ -86398,6 +86405,17 @@ async function steelScrape(url2) {
     return content["markdown"] || content["text"] || content["html"] || JSON.stringify(content);
   }
   return data["markdown"] || JSON.stringify(data);
+}
+async function steelScrape(url2) {
+  const direct = await steelScrapeOnce(url2, false);
+  if (!scrapeLooksBlocked(direct)) return direct;
+  try {
+    const viaProxy = await steelScrapeOnce(url2, true);
+    if (!scrapeLooksBlocked(viaProxy)) return viaProxy;
+    return viaProxy.trim().length > direct.trim().length ? viaProxy : direct;
+  } catch {
+    return direct;
+  }
 }
 async function steelScreenshot(url2) {
   const key = process.env["STEEL_API_KEY"];
