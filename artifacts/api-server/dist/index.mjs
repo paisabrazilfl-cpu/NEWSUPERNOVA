@@ -20502,27 +20502,27 @@ var require_router = __commonJS({
     var slice = Array.prototype.slice;
     var flatten = Array.prototype.flat;
     var methods = METHODS.map((method) => method.toLowerCase());
-    module.exports = Router18;
+    module.exports = Router19;
     module.exports.Route = Route;
-    function Router18(options) {
-      if (!(this instanceof Router18)) {
-        return new Router18(options);
+    function Router19(options) {
+      if (!(this instanceof Router19)) {
+        return new Router19(options);
       }
       const opts = options || {};
-      function router18(req, res, next) {
-        router18.handle(req, res, next);
+      function router19(req, res, next) {
+        router19.handle(req, res, next);
       }
-      Object.setPrototypeOf(router18, this);
-      router18.caseSensitive = opts.caseSensitive;
-      router18.mergeParams = opts.mergeParams;
-      router18.params = {};
-      router18.strict = opts.strict;
-      router18.stack = [];
-      return router18;
+      Object.setPrototypeOf(router19, this);
+      router19.caseSensitive = opts.caseSensitive;
+      router19.mergeParams = opts.mergeParams;
+      router19.params = {};
+      router19.strict = opts.strict;
+      router19.stack = [];
+      return router19;
     }
-    Router18.prototype = function() {
+    Router19.prototype = function() {
     };
-    Router18.prototype.param = function param(name, fn) {
+    Router19.prototype.param = function param(name, fn) {
       if (!name) {
         throw new TypeError("argument name is required");
       }
@@ -20542,7 +20542,7 @@ var require_router = __commonJS({
       params.push(fn);
       return this;
     };
-    Router18.prototype.handle = function handle(req, res, callback) {
+    Router19.prototype.handle = function handle(req, res, callback) {
       if (!callback) {
         throw new TypeError("argument callback is required");
       }
@@ -20669,7 +20669,7 @@ var require_router = __commonJS({
         }
       }
     };
-    Router18.prototype.use = function use(handler) {
+    Router19.prototype.use = function use(handler) {
       let offset = 0;
       let path2 = "/";
       if (typeof handler !== "function") {
@@ -20702,7 +20702,7 @@ var require_router = __commonJS({
       }
       return this;
     };
-    Router18.prototype.route = function route(path2) {
+    Router19.prototype.route = function route(path2) {
       const route2 = new Route(path2);
       const layer = new Layer(path2, {
         sensitive: this.caseSensitive,
@@ -20717,7 +20717,7 @@ var require_router = __commonJS({
       return route2;
     };
     methods.concat("all").forEach(function(method) {
-      Router18.prototype[method] = function(path2) {
+      Router19.prototype[method] = function(path2) {
         const route = this.route(path2);
         route[method].apply(route, slice.call(arguments, 1));
         return this;
@@ -20900,13 +20900,13 @@ var require_application = __commonJS({
     var compileTrust = require_utils3().compileTrust;
     var resolve = __require("node:path").resolve;
     var once = require_once();
-    var Router18 = require_router();
+    var Router19 = require_router();
     var slice = Array.prototype.slice;
     var flatten = Array.prototype.flat;
     var app2 = exports = module.exports = {};
     var trustProxyDefaultSymbol = "@@symbol:trust_proxy_default";
     app2.init = function init() {
-      var router18 = null;
+      var router19 = null;
       this.cache = /* @__PURE__ */ Object.create(null);
       this.engines = /* @__PURE__ */ Object.create(null);
       this.settings = /* @__PURE__ */ Object.create(null);
@@ -20915,13 +20915,13 @@ var require_application = __commonJS({
         configurable: true,
         enumerable: true,
         get: function getrouter() {
-          if (router18 === null) {
-            router18 = new Router18({
+          if (router19 === null) {
+            router19 = new Router19({
               caseSensitive: this.enabled("case sensitive routing"),
               strict: this.enabled("strict routing")
             });
           }
-          return router18;
+          return router19;
         }
       });
     };
@@ -20992,15 +20992,15 @@ var require_application = __commonJS({
       if (fns.length === 0) {
         throw new TypeError("app.use() requires a middleware function");
       }
-      var router18 = this.router;
+      var router19 = this.router;
       fns.forEach(function(fn2) {
         if (!fn2 || !fn2.handle || !fn2.set) {
-          return router18.use(path2, fn2);
+          return router19.use(path2, fn2);
         }
         debug(".use app under %s", path2);
         fn2.mountpath = path2;
         fn2.parent = this;
-        router18.use(path2, function mounted_app(req, res, next) {
+        router19.use(path2, function mounted_app(req, res, next) {
           var orig = req.app;
           fn2.handle(req, res, function(err) {
             Object.setPrototypeOf(req, orig.request);
@@ -23573,7 +23573,7 @@ var require_express = __commonJS({
     var EventEmitter = __require("node:events").EventEmitter;
     var mixin = require_merge_descriptors();
     var proto2 = require_application();
-    var Router18 = require_router();
+    var Router19 = require_router();
     var req = require_request();
     var res = require_response();
     exports = module.exports = createApplication;
@@ -23595,8 +23595,8 @@ var require_express = __commonJS({
     exports.application = proto2;
     exports.request = req;
     exports.response = res;
-    exports.Route = Router18.Route;
-    exports.Router = Router18;
+    exports.Route = Router19.Route;
+    exports.Router = Router19;
     exports.json = bodyParser.json;
     exports.raw = bodyParser.raw;
     exports.static = require_serve_static();
@@ -54155,17 +54155,42 @@ var init_vault = __esm({
   }
 });
 
+// ../../lib/db/src/schema/attachments.ts
+var attachmentsTable, insertAttachmentSchema;
+var init_attachments = __esm({
+  "../../lib/db/src/schema/attachments.ts"() {
+    "use strict";
+    init_pg_core();
+    init_drizzle_zod();
+    attachmentsTable = pgTable("attachments", {
+      id: serial("id").primaryKey(),
+      filename: text("filename").notNull(),
+      mimeType: text("mime_type").notNull(),
+      kind: text("kind").notNull().default("other"),
+      // "image" | "text" | "other"
+      sizeBytes: integer("size_bytes").notNull().default(0),
+      data: text("data").notNull(),
+      // base64-encoded bytes
+      extractedText: text("extracted_text"),
+      createdAt: timestamp("created_at").notNull().defaultNow()
+    });
+    insertAttachmentSchema = createInsertSchema(attachmentsTable).omit({ id: true, createdAt: true });
+  }
+});
+
 // ../../lib/db/src/schema/index.ts
 var schema_exports = {};
 __export(schema_exports, {
   agentCommandsTable: () => agentCommandsTable,
   agentMemoryTable: () => agentMemoryTable,
   agentsTable: () => agentsTable,
+  attachmentsTable: () => attachmentsTable,
   channelsTable: () => channelsTable,
   cronJobsTable: () => cronJobsTable,
   insertAgentCommandSchema: () => insertAgentCommandSchema,
   insertAgentMemorySchema: () => insertAgentMemorySchema,
   insertAgentSchema: () => insertAgentSchema,
+  insertAttachmentSchema: () => insertAttachmentSchema,
   insertChannelSchema: () => insertChannelSchema,
   insertCronJobSchema: () => insertCronJobSchema,
   insertMessageSchema: () => insertMessageSchema,
@@ -54190,6 +54215,7 @@ var init_schema2 = __esm({
     init_commands();
     init_memory();
     init_vault();
+    init_attachments();
   }
 });
 
@@ -54199,12 +54225,14 @@ __export(src_exports, {
   agentCommandsTable: () => agentCommandsTable,
   agentMemoryTable: () => agentMemoryTable,
   agentsTable: () => agentsTable,
+  attachmentsTable: () => attachmentsTable,
   channelsTable: () => channelsTable,
   cronJobsTable: () => cronJobsTable,
   db: () => db,
   insertAgentCommandSchema: () => insertAgentCommandSchema,
   insertAgentMemorySchema: () => insertAgentMemorySchema,
   insertAgentSchema: () => insertAgentSchema,
+  insertAttachmentSchema: () => insertAttachmentSchema,
   insertChannelSchema: () => insertChannelSchema,
   insertCronJobSchema: () => insertCronJobSchema,
   insertMessageSchema: () => insertMessageSchema,
@@ -65349,20 +65377,20 @@ var require_router2 = __commonJS({
     function createConnectRouter(routerOptions) {
       const base = whichProtocols(routerOptions);
       const handlers = [];
-      const router18 = {
+      const router19 = {
         handlers,
         service: (service, implementation, options) => {
           const { protocols } = whichProtocols(options, base);
           handlers.push(...(0, universal_handler_js_1.createUniversalServiceHandlers)((0, implementation_js_1.createServiceImplSpec)(service, implementation), protocols));
-          return router18;
+          return router19;
         },
         rpc: (method, impl, opt) => {
           const { protocols } = whichProtocols(opt, base);
           handlers.push((0, universal_handler_js_1.createUniversalMethodHandler)((0, implementation_js_1.createMethodImplSpec)(method, impl), protocols));
-          return router18;
+          return router19;
         }
       };
-      return router18;
+      return router19;
     }
     function whichProtocols(options, base) {
       if (base && !options) {
@@ -65981,9 +66009,9 @@ var require_router_transport = __commonJS({
     var router_js_1 = require_router2();
     function createRouterTransport(routes, options) {
       var _a, _b;
-      const router18 = (0, router_js_1.createConnectRouter)(Object.assign(Object.assign({}, (_a = options === null || options === void 0 ? void 0 : options.router) !== null && _a !== void 0 ? _a : {}), { connect: true }));
-      routes(router18);
-      return (0, transport_js_1.createTransport)(Object.assign({ httpClient: (0, universal_handler_client_js_1.createUniversalHandlerClient)(router18.handlers), baseUrl: "https://in-memory", useBinaryFormat: true, interceptors: [], acceptCompression: [], sendCompression: null, compressMinBytes: Number.MAX_SAFE_INTEGER, readMaxBytes: Number.MAX_SAFE_INTEGER, writeMaxBytes: Number.MAX_SAFE_INTEGER }, (_b = options === null || options === void 0 ? void 0 : options.transport) !== null && _b !== void 0 ? _b : {}));
+      const router19 = (0, router_js_1.createConnectRouter)(Object.assign(Object.assign({}, (_a = options === null || options === void 0 ? void 0 : options.router) !== null && _a !== void 0 ? _a : {}), { connect: true }));
+      routes(router19);
+      return (0, transport_js_1.createTransport)(Object.assign({ httpClient: (0, universal_handler_client_js_1.createUniversalHandlerClient)(router19.handlers), baseUrl: "https://in-memory", useBinaryFormat: true, interceptors: [], acceptCompression: [], sendCompression: null, compressMinBytes: Number.MAX_SAFE_INTEGER, readMaxBytes: Number.MAX_SAFE_INTEGER, writeMaxBytes: Number.MAX_SAFE_INTEGER }, (_b = options === null || options === void 0 ? void 0 : options.transport) !== null && _b !== void 0 ? _b : {}));
     }
   }
 });
@@ -80769,13 +80797,13 @@ ${err.stdout}`.toLowerCase();
 });
 
 // src/app.ts
-var import_express18 = __toESM(require_express2(), 1);
+var import_express19 = __toESM(require_express2(), 1);
 var import_cors = __toESM(require_lib3(), 1);
 var import_cookie_parser = __toESM(require_cookie_parser(), 1);
 var import_pino_http = __toESM(require_logger(), 1);
 
 // src/routes/index.ts
-var import_express17 = __toESM(require_express2(), 1);
+var import_express18 = __toESM(require_express2(), 1);
 
 // src/routes/health.ts
 var import_express = __toESM(require_express2(), 1);
@@ -87125,6 +87153,19 @@ EXECUTION STANDARD (hold to this on every task):
 - DEEP RESEARCH (whenever the task needs information): do not stop at the first hit. web_search broadly, open the most relevant results with web_scrape, and cross-check every key claim against at least two independent sources. Prefer primary/official sources (official docs, the API itself, the organisation) over aggregators. For GitHub, query the REST API via http_request. Track what is confirmed vs. still uncertain, and keep going until the objective is actually covered.
 - DECIDE, DON'T DEFER: choose sensible defaults instead of asking the operator to fill gaps. Only surface a genuine blocker you truly cannot resolve yourself.
 - DEFINITION OF DONE: before you stop, verify the result satisfies the FULL objective end-to-end. If any part is unmet, state exactly which and why \u2014 never present incomplete work as finished.`;
+function buildLiveReachCard(agentId) {
+  const integ = integrationStatus();
+  const live = integ.filter((i) => i.configured).map((i) => i.name);
+  const off = integ.filter((i) => !i.configured).map((i) => i.name);
+  const tools = getToolNamesForAgent(agentId);
+  return `
+
+LIVE REACH (scanned now, at the start of this turn \u2014 trust this over any assumption):
+- Tools available to you: ${tools.length ? tools.join(", ") : "none"}.
+- Integrations ONLINE: ${live.length ? live.join(", ") : "none"}.
+- Integrations OFFLINE (not configured): ${off.length ? off.join(", ") : "none"}.
+Only rely on what is ONLINE. If the operator asks for something that needs an offline integration, say plainly it isn't connected yet and which key enables it \u2014 never pretend an offline capability works.`;
+}
 var CHAT_HISTORY_LIMIT = 16;
 var ABBY_ID2 = 1;
 var ABBY_DEFAULT_MODEL = "x-ai/grok-4.3";
@@ -87198,7 +87239,7 @@ router7.get("/ai/models", async (req, res) => {
   }
 });
 router7.post("/ai/chat", async (req, res) => {
-  const { message, agentId, channelId, model: overrideModel } = req.body ?? {};
+  const { message, agentId, channelId, model: overrideModel, attachmentIds } = req.body ?? {};
   if (!message || typeof message !== "string" || !message.trim()) {
     res.status(400).json({ error: "message is required" });
     return;
@@ -87223,7 +87264,39 @@ router7.post("/ai/chat", async (req, res) => {
   }
   const model = resolveModel(resolvedAgentId, agent.model, overrideModel);
   const persona = AGENT_PERSONAS[resolvedAgentId] ?? `You are ${agent.name}, an AI agent in the ABBY CLAW swarm.`;
-  const systemPrompt = persona + CHAT_MODE_DIRECTIVE + buildCapabilityCard(resolvedAgentId) + ANTI_HALLUCINATION_DIRECTIVE;
+  const systemPrompt = persona + CHAT_MODE_DIRECTIVE + buildCapabilityCard(resolvedAgentId) + buildLiveReachCard(resolvedAgentId) + ANTI_HALLUCINATION_DIRECTIVE;
+  let attachments = [];
+  if (Array.isArray(attachmentIds) && attachmentIds.length) {
+    const ids = attachmentIds.map((n) => Number(n)).filter((n) => Number.isFinite(n)).slice(0, 8);
+    if (ids.length) {
+      try {
+        attachments = await db.select().from(attachmentsTable).where(inArray(attachmentsTable.id, ids));
+      } catch (err) {
+        req.log.error({ err }, "Failed to load chat attachments");
+      }
+    }
+  }
+  const hasAttachments = attachments.length > 0;
+  const buildUserParts = (text2) => {
+    const parts = [];
+    if (text2.trim()) parts.push({ type: "text", text: text2 });
+    for (const a of attachments) {
+      if (a.kind === "image") {
+        parts.push({ type: "image_url", image_url: { url: `data:${a.mimeType};base64,${a.data}` } });
+      } else if (a.extractedText) {
+        parts.push({ type: "text", text: `
+
+[Attached file: ${a.filename}]
+${a.extractedText}` });
+      } else {
+        parts.push({ type: "text", text: `
+
+[Attached file: ${a.filename} (${a.mimeType}) \u2014 binary; contents not extractable as text]` });
+      }
+    }
+    if (!parts.length) parts.push({ type: "text", text: "(see attached files)" });
+    return parts;
+  };
   const history = [];
   try {
     const rows = await db.select().from(messagesTable).where(and(eq(messagesTable.channelId, channelId), inArray(messagesTable.messageType, ["user", "agent"]))).orderBy(desc(messagesTable.id)).limit(CHAT_HISTORY_LIMIT);
@@ -87247,6 +87320,14 @@ router7.post("/ai/chat", async (req, res) => {
     history.push({ role: "user", content: message });
   }
   const chatMessages = [{ role: "system", content: systemPrompt }, ...history];
+  if (hasAttachments) {
+    for (let i = chatMessages.length - 1; i >= 0; i--) {
+      if (chatMessages[i].role === "user") {
+        chatMessages[i] = { role: "user", content: buildUserParts(message) };
+        break;
+      }
+    }
+  }
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
@@ -87276,7 +87357,11 @@ router7.post("/ai/chat", async (req, res) => {
   const tryBuddyFallback = async (reason) => {
     if (!buddyConfigured()) return false;
     try {
-      const text2 = await buddyComplete(chatMessages, 700);
+      const buddyMessages = chatMessages.map((m) => ({
+        role: m.role,
+        content: typeof m.content === "string" ? m.content : m.content.map((p) => p.type === "text" ? p.text : "[image attachment]").join("\n")
+      }));
+      const text2 = await buddyComplete(buddyMessages, 700);
       if (!text2.trim() || text2 === "(no response)") return false;
       sendEvent({ token: text2 });
       req.log.warn({ reason }, "AI chat fell back to Buddy");
@@ -87287,7 +87372,7 @@ router7.post("/ai/chat", async (req, res) => {
       return false;
     }
   };
-  if (resolvedAgentId === ABBY_ID2) {
+  if (resolvedAgentId === ABBY_ID2 && !hasAttachments) {
     try {
       const decisionSystem = `You are the router for ABBY, orchestrator of an autonomous agent swarm that can search the web, browse sites, scrape pages, run code, call APIs, and use long-term memory. Classify the operator's latest message: is it an ACTIONABLE TASK that needs the swarm (anything requiring live/current data, web search, browsing, scraping, finding/pricing/looking things up online, code execution, multi-step research) \u2014 or just CONVERSATION you can answer yourself (greetings, opinions, explanations, questions about you/the system)? Respond with ONLY minified JSON, no markdown and no prose: {"dispatch": true|false, "goal": "<self-contained instruction for the swarm; required if dispatch=true>", "reply": "<your conversational answer; required if dispatch=false>"}. If the request needs real or current information you don't already have, prefer dispatch=true.`;
       const decRes = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
@@ -89146,31 +89231,122 @@ router16.get("/social/platforms", async (_req, res) => {
 });
 var social_default = router16;
 
-// src/routes/index.ts
+// src/routes/uploads.ts
+var import_express17 = __toESM(require_express2(), 1);
+init_src();
+init_src();
+init_drizzle_orm();
 var router17 = (0, import_express17.Router)();
-router17.use(health_default);
-router17.use("/agents", agents_default);
-router17.use("/channels", channels_default);
-router17.use("/tasks", tasks_default);
-router17.use(telemetry_default);
-router17.use("/swarm", swarm_default);
-router17.use(commands_default);
-router17.use(steel_default);
-router17.use(ai_default);
-router17.use(neurobuddy_default);
-router17.use(external_default);
-router17.use(integrations_default);
-router17.use(selfCheck_default);
-router17.use(auth_default);
-router17.use(requireOperator, vault_default);
-router17.use(requireOperator, social_default);
-var routes_default = router17;
+var MAX_BYTES = 20 * 1024 * 1024;
+var TEXT_MIME_RE = /^(text\/|application\/(json|xml|x-yaml|yaml|csv|javascript|typescript))/i;
+var TEXT_EXT_RE = /\.(txt|md|markdown|csv|json|ya?ml|xml|log|ts|tsx|js|jsx|py|rb|go|rs|java|c|cpp|h|sh|sql|html|css)$/i;
+function kindFor(mime, filename) {
+  if (/^image\//i.test(mime)) return "image";
+  if (TEXT_MIME_RE.test(mime) || TEXT_EXT_RE.test(filename)) return "text";
+  return "other";
+}
+router17.post("/uploads", async (req, res) => {
+  const { name, mime, dataBase64 } = req.body ?? {};
+  if (!dataBase64 || typeof dataBase64 !== "string") {
+    res.status(400).json({ error: "dataBase64 is required" });
+    return;
+  }
+  const base643 = dataBase64.includes(",") ? dataBase64.slice(dataBase64.indexOf(",") + 1) : dataBase64;
+  let buf;
+  try {
+    buf = Buffer.from(base643, "base64");
+  } catch {
+    res.status(400).json({ error: "invalid base64 payload" });
+    return;
+  }
+  if (buf.length === 0) {
+    res.status(400).json({ error: "empty file" });
+    return;
+  }
+  if (buf.length > MAX_BYTES) {
+    res.status(413).json({ error: `file too large (max ${Math.round(MAX_BYTES / 1024 / 1024)} MB)` });
+    return;
+  }
+  const filename = name && String(name).slice(0, 255) || "upload";
+  const mimeType = mime && String(mime).slice(0, 128) || "application/octet-stream";
+  const kind = kindFor(mimeType, filename);
+  let extractedText = null;
+  if (kind === "text") {
+    extractedText = buf.toString("utf8").slice(0, 2e5);
+  }
+  try {
+    const [row] = await db.insert(attachmentsTable).values({
+      filename,
+      mimeType,
+      kind,
+      sizeBytes: buf.length,
+      data: base643,
+      extractedText
+    }).returning();
+    res.status(201).json({
+      id: row.id,
+      name: row.filename,
+      mime: row.mimeType,
+      kind: row.kind,
+      size: row.sizeBytes,
+      url: `/api/uploads/${row.id}`
+    });
+  } catch (err) {
+    req.log.error({ err }, "upload: failed to store attachment");
+    res.status(500).json({ error: "failed to store upload" });
+  }
+});
+router17.get("/uploads/:id", async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) {
+    res.status(400).json({ error: "invalid id" });
+    return;
+  }
+  try {
+    const [row] = await db.select().from(attachmentsTable).where(eq(attachmentsTable.id, id));
+    if (!row) {
+      res.status(404).json({ error: "not found" });
+      return;
+    }
+    const buf = Buffer.from(row.data, "base64");
+    res.setHeader("Content-Type", row.mimeType);
+    res.setHeader("Content-Length", String(buf.length));
+    res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+    res.setHeader("Content-Disposition", `inline; filename="${row.filename.replace(/"/g, "")}"`);
+    res.end(buf);
+  } catch (err) {
+    req.log.error({ err }, "upload: failed to serve attachment");
+    res.status(500).json({ error: "failed to read upload" });
+  }
+});
+var uploads_default = router17;
+
+// src/routes/index.ts
+var router18 = (0, import_express18.Router)();
+router18.use(health_default);
+router18.use("/agents", agents_default);
+router18.use("/channels", channels_default);
+router18.use("/tasks", tasks_default);
+router18.use(telemetry_default);
+router18.use("/swarm", swarm_default);
+router18.use(commands_default);
+router18.use(steel_default);
+router18.use(ai_default);
+router18.use(uploads_default);
+router18.use(neurobuddy_default);
+router18.use(external_default);
+router18.use(integrations_default);
+router18.use(selfCheck_default);
+router18.use(auth_default);
+router18.use(requireOperator, vault_default);
+router18.use(requireOperator, social_default);
+var routes_default = router18;
 
 // src/app.ts
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
-var app = (0, import_express18.default)();
+var app = (0, import_express19.default)();
 app.use(
   (0, import_pino_http.default)({
     logger,
@@ -89192,8 +89368,8 @@ app.use(
 );
 app.use((0, import_cors.default)());
 app.use((0, import_cookie_parser.default)());
-app.use(import_express18.default.json());
-app.use(import_express18.default.urlencoded({ extended: true }));
+app.use(import_express19.default.json({ limit: "30mb" }));
+app.use(import_express19.default.urlencoded({ extended: true, limit: "30mb" }));
 app.use("/api", routes_default);
 app.get("/healthz", (_req, res) => {
   res.json({ status: "ok", service: "bos-aura-api" });
@@ -89204,7 +89380,7 @@ var staticPath = path.join(__dirname_app, "..", "..", "openclaw", "dist", "publi
 var indexHtml = path.join(staticPath, "index.html");
 var hasFrontend = process.env["NODE_ENV"] === "production" && fs.existsSync(indexHtml);
 if (hasFrontend) {
-  app.use(import_express18.default.static(staticPath));
+  app.use(import_express19.default.static(staticPath));
   app.get("/*path", (req, res, next) => {
     if (req.path.startsWith("/api")) return next();
     if (path.extname(req.path)) return next();
@@ -89343,6 +89519,17 @@ CREATE TABLE IF NOT EXISTS "vault_secrets" (
   "auth_tag" text NOT NULL,
   "created_at" timestamp DEFAULT now() NOT NULL,
   "updated_at" timestamp DEFAULT now() NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS "attachments" (
+  "id" serial PRIMARY KEY NOT NULL,
+  "filename" text NOT NULL,
+  "mime_type" text NOT NULL,
+  "kind" text DEFAULT 'other' NOT NULL,
+  "size_bytes" integer DEFAULT 0 NOT NULL,
+  "data" text NOT NULL,
+  "extracted_text" text,
+  "created_at" timestamp DEFAULT now() NOT NULL
 );
 `;
 var SEED_AGENTS = `
