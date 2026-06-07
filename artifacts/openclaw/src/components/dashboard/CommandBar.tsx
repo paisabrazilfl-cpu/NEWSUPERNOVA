@@ -7,19 +7,17 @@ import { useAiStream } from "@/hooks/useAiStream";
 
 type TabMode = "chat" | "command";
 
+// Real, natural-language goals the swarm actually executes. ABBY decomposes
+// each into directives and dispatches the right CLAW(s) — these all work with
+// the live tools (web search/scrape, code sandbox, memory, etc.).
 const COMMAND_PRESETS = [
-  "exec: pnpm run build",
-  "exec: pnpm run typecheck",
-  "web_search: github.com/openclaw latest release",
-  "web_fetch: https://api.abbyclaw.io/status",
-  "steel_browser: launch session=persistent",
-  "steel_scrape: url=https://github.com/trending",
-  "steel_screenshot: url=https://dashboard.abbyclaw.io fullPage=true",
-  "steel_pdf: url=https://docs.abbyclaw.io",
-  "browser: navigate https://dashboard.abbyclaw.io",
-  "memory_lancedb: query collection=sessions limit=10",
-  "firecrawl: scrape https://github.com/openclaw",
-  "n8n_trigger: workflow_id=health-check",
+  "Research the top 3 open-source AI agent frameworks and summarize their differences",
+  "Scrape https://news.ycombinator.com and list the top 5 stories with links",
+  "Search the web for today's biggest AI news and post a 3-bullet brief",
+  "Write and run a Python script that prints the first 20 prime numbers",
+  "Open https://example.com and report what the page is about",
+  "Find and compare the pricing of Steel.dev vs Firecrawl",
+  "Remember our current goal, then check the live status of github.com/trending",
 ];
 
 const PRIORITIES = ["low", "normal", "high", "urgent"] as const;
@@ -439,7 +437,7 @@ export function CommandBar({ activeChannelId }: CommandBarProps) {
                     value={cmdText}
                     onChange={e => setCmdText(e.target.value)}
                     onKeyDown={handleCmdKey}
-                    placeholder="exec: …  |  web_search: …  |  browser: …  |  steel_scrape: …"
+                    placeholder="Command in plain English — e.g. “Scrape example.com and summarize it”"
                     className="bg-transparent border-none focus:ring-0 h-9 py-2 px-2 text-sm font-mono placeholder:text-muted-foreground/40 text-[#bf00ff]/90 w-full"
                     data-testid="input-abby-command"
                   />

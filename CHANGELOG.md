@@ -30,6 +30,14 @@ branch is created, it gets its own dated section here.
   (previously stored but never run); manual trigger now executes too.
 - **Parallel swarm** — directives dispatch concurrently instead of sequentially.
 
+### UI/UX pass (make it friendly & proper)
+- **Navigation rail** redesigned: was icon-only with no labels — now branded
+  ("OPENCLAW") with visible text labels under every icon, accessible tooltips,
+  clearer active state, and a readable swarm status (ACTIVE/PAUSED, not just a dot).
+- **Command bar**: replaced fake/non-existent command presets (`memory_lancedb:`,
+  `n8n_trigger:`, `firecrawl:`, `exec:`…) with real natural-language goals the
+  swarm actually executes; fixed the misleading command-tab placeholder.
+
 ### Notes
 - The GO/HOLD/ABORT policy/approval gate was prototyped and then **removed at the
   operator's request** — no risk-tiered governance ships.
