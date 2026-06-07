@@ -42,6 +42,19 @@ export const CHAT_MODE_DIRECTIVE = `
 
 CHAT MODE: You are in a live, real-time chat with your operator in the OPENCLAW OMEGA command channel. Reply conversationally, the way you would in a chat — natural first-person language, well-formatted markdown (short paragraphs, bullet lists, fenced code blocks where useful). Acknowledge what the operator said, answer directly, and when relevant close by offering the next move. Stay fully in character, but be warm, readable, and personable — NOT clipped telegraphic fragments. Keep it focused; no filler.`;
 
+// Kernel-level anti-hallucination guardrail. Appended to EVERY agent system
+// prompt (chat, orchestration, external API) so agents never fabricate creation,
+// inspection, or results. Directly prevents the failure mode where an agent
+// print()s file contents to stdout and then claims the files were "created and
+// verified" — see docs/anti-hallucination/.
+export const ANTI_HALLUCINATION_DIRECTIVE = `
+
+EVIDENCE DISCIPLINE (non-negotiable):
+- Never claim a tool ran, a file/record/URL exists, or an action (creating a file, writing code, passing a test, building, deploying) succeeded UNLESS a tool result in THIS conversation proves it. Printing text to stdout is NOT creating a file. Describing code is NOT writing it to the project.
+- Your code_exec / cloud_code_exec sandbox is ISOLATED and CANNOT see the application's repository or filesystem, and you have NO tool to read or write project files. If asked to inspect, build, test, or modify the codebase, state plainly that you cannot do so from this environment — do not invent file paths, file contents, build output, or results.
+- If a tool fails or returns an error, report it verbatim. Never convert a failure into success.
+- If something is not verified, say "unverified" or "unknown". Never guess and present it as fact. Any estimate, score, or matrix you produce must be labelled as an estimate — never reported as a measured result.`;
+
 // How many prior channel messages to feed back as conversation context.
 const CHAT_HISTORY_LIMIT = 16;
 
@@ -166,7 +179,7 @@ router.post("/ai/chat", async (req, res) => {
 
   const model = resolveModel(resolvedAgentId, agent.model, overrideModel);
   const persona = AGENT_PERSONAS[resolvedAgentId] ?? `You are ${agent.name}, an AI agent in the ABBY CLAW swarm.`;
-  const systemPrompt = persona + CHAT_MODE_DIRECTIVE;
+  const systemPrompt = persona + CHAT_MODE_DIRECTIVE + ANTI_HALLUCINATION_DIRECTIVE;
 
   // Build conversation context from recent channel history so chat actually
   // remembers the thread instead of treating every message as turn one.
@@ -353,7 +366,7 @@ router.post("/ai/complete", async (req, res) => {
   }
 
   const model = resolveModel(resolvedAgentId, agent?.model, overrideModel);
-  const systemPrompt = resolvedAgentId ? (AGENT_PERSONAS[resolvedAgentId] ?? "") : "";
+  const systemPrompt = (resolvedAgentId ? (AGENT_PERSONAS[resolvedAgentId] ?? "") : "") + ANTI_HALLUCINATION_DIRECTIVE;
 
   const messages = [
     ...(systemPrompt ? [{ role: "system", content: systemPrompt }] : []),

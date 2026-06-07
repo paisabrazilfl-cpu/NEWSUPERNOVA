@@ -21,6 +21,7 @@ import { db } from "@workspace/db";
 import { agentsTable, messagesTable, channelsTable } from "@workspace/db";
 import { eq, desc } from "drizzle-orm";
 import { llmBaseUrl, heliconeHeaders } from "../lib/integrations";
+import { ANTI_HALLUCINATION_DIRECTIVE } from "./ai";
 
 const router = Router();
 // Routed through Helicone when configured (see lib/integrations).
@@ -151,7 +152,7 @@ router.post("/external/v1/chat/completions", async (req, res) => {
   const orKey = process.env["OPENROUTER_API_KEY"];
   if (!orKey) { res.status(500).json({ error: "OPENROUTER_API_KEY not configured on server" }); return; }
 
-  const systemPrompt = AGENT_PERSONAS[agentId] ?? `You are ${agent.name}, an AI agent in the ABBY CLAW swarm.`;
+  const systemPrompt = (AGENT_PERSONAS[agentId] ?? `You are ${agent.name}, an AI agent in the ABBY CLAW swarm.`) + ANTI_HALLUCINATION_DIRECTIVE;
   const orMessages = [{ role: "system", content: systemPrompt }, ...messages];
   const orHeaders = {
     "Authorization": `Bearer ${orKey}`,

@@ -83,3 +83,17 @@ branch is created, it gets its own dated section here.
   operator's request** — no risk-tiered governance ships.
 - Env plumbing for all of the above added to `.env.example`, `render.yaml`, and
   the Render env-setter; `.env*` is git-ignored.
+
+## 2026-06-07 — Anti-hallucination kernel + rule sets
+
+Motivated by a real incident: a "self-test the build" directive made the runtime
+swarm fabricate `src/runtime/*.ts` files (printed to stdout, never written) and
+declare them "created and verified", plus a fake "92.3% satisfied" matrix.
+
+- **Kernel fix:** `ANTI_HALLUCINATION_DIRECTIVE` (artifacts/api-server/src/routes/ai.ts)
+  appended to every agent system prompt — chat, orchestrator, and external API.
+  Agents must now state they cannot see/modify the repo from their sandbox and
+  must never claim unproven creation/inspection/results.
+- **Rule sets:** docs/anti-hallucination/ (index, execution rules, runtime/kernel
+  rules, verification ledger + verdict format, pre-flight card).
+- **Governance:** CLAUDE.md (dev agent) + .agents/memory/anti-hallucination.md.

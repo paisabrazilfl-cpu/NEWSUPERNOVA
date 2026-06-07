@@ -32,6 +32,7 @@ import {
   openrouterHeaders,
   buddyConfigured,
   buddyComplete,
+  ANTI_HALLUCINATION_DIRECTIVE,
 } from "./routes/ai";
 import { isSwarmPaused } from "./routes/swarm";
 import {
@@ -341,7 +342,7 @@ export async function executeAgentCommand(opts: {
     const toolGuide = toolNames.length
       ? `\n\nYou are an autonomous tool-using agent. You have these tools: ${toolNames.join(", ")}. Call tools to gather real data and perform real work instead of guessing — chain multiple calls when needed. When the directive is fully satisfied, stop calling tools and reply with your final concrete result (no preamble).`
       : "";
-    const system = persona + toolGuide;
+    const system = persona + toolGuide + ANTI_HALLUCINATION_DIRECTIVE;
 
     const messages: ChatMessage[] = [
       { role: "system", content: system },
