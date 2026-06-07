@@ -14,6 +14,7 @@ import {
   ABBY_ID,
   EXECUTION_DOCTRINE,
   ANTI_HALLUCINATION_DIRECTIVE,
+  RESEARCH_PLAYBOOKS,
 } from "./ai";
 
 // The fabricated "cognition" theater that was removed. None of it may come back
@@ -86,6 +87,23 @@ describe("EXECUTION_DOCTRINE — the 10/10 worker standard", () => {
 
   it("enforces an end-to-end definition of done", () => {
     expect(EXECUTION_DOCTRINE).toContain("DEFINITION OF DONE");
+  });
+
+  it("requires output to be the answer, not internal state", () => {
+    expect(EXECUTION_DOCTRINE).toContain("OUTPUT IS THE ANSWER, NOT YOUR INTERNAL STATE");
+  });
+});
+
+describe("RESEARCH_PLAYBOOKS — VPD + market research methods", () => {
+  it("includes a Value Proposition Design / canvas playbook", () => {
+    expect(RESEARCH_PLAYBOOKS).toContain("VALUE PROPOSITION DESIGN");
+    expect(RESEARCH_PLAYBOOKS.toLowerCase()).toContain("pain reliever");
+    expect(RESEARCH_PLAYBOOKS.toLowerCase()).toContain("gain creator");
+  });
+
+  it("includes a market-research playbook with TAM/SAM/SOM", () => {
+    expect(RESEARCH_PLAYBOOKS).toContain("MARKET RESEARCH");
+    expect(RESEARCH_PLAYBOOKS).toContain("TAM/SAM/SOM");
   });
 });
 
