@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Claw &amp; Crumbs</title>
+<style>
+  :root { --ink:#10131a; }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%;
+    background: radial-gradient(120% 80% at 50% 0%, #2a2140 0%, #141019 60%, #0b0810 100%);
+    color: #f4f7fb; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    overflow: hidden; -webkit-tap-highlight-color: transparent;
+  }
+  #wrap { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; }
+  /* Internal resolution is fixed (480x640); CSS scales it to fit any screen. */
+  canvas {
+    height: min(100vh, 100vw * 1.3333);
+    width: auto; max-width: 100vw;
+    image-rendering: -webkit-optimize-contrast;
+    background: #0b0810; border-radius: 10px;
+    box-shadow: 0 10px 50px rgba(0,0,0,.6), 0 0 0 1px rgba(255,255,255,.05);
+    touch-action: none;
+  }
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="game" width="480" height="640"></canvas></div>
+<script>
+"use strict";
+/*
+  CLAW & CRUMBS — an original arcade platform-chase game.
+  100% original code; every graphic is drawn procedurally on the canvas
+  (there are no image, sprite, or audio files), so the game contains no
+  third-party or copyrighted assets. Inspired in STRUCTURE only by the classic
+  arcade barrel-platformer pattern.
+*/
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+const GW = 480, GH = 640;
+
+// ── Level geometry ──────────────────────────────────────────────────────────
+// Platforms ordered top → bottom. dir = the direction hazards roll on it; it
+// alternates so hazards zig-zag down the tower. Player starts at the bottom and
+// must climb to the golden cheese at the top.
+const platforms = [
+  { y: 120, x1: 20, x2: 460, dir:  1, top: true  },
+  { y: 210, x1: 20, x2: 460, dir: -1 },
+  { y: 300, x1: 20, x2: 460, dir:  1 },
+  { y: 390, x1: 20, x2: 460, dir: -1 },
+  { y: 480, x1: 20, x2: 460, dir:  1 },
+  { y: 590, x1:  0, x2: 480, dir: -1, bottom: true },
+];
+const LAST = platforms.length - 1;
+const PW = 14; // platform thickness
+
+// Ladders connect platform i (upper) to i+1 (lower), placed on alternating sides.
+const ladders = [];
+for (let i = 0; i < LAST; i++) {
+  const x = (i % 2 === 0) ? 410 : 70;
+  ladders.push({ x, yTop: platforms[i].y, yBottom: platforms[i + 1].y });
+}
+
+// Boss (Max the Alley Cat) sits on the top platform; the goal (golden cheese +
+// mouse hole) is on the opposite end.
+const boss = { x: 60, y: platforms[0].y - 40, t: 0, throwT: 0 };
+const goal = { x: 405, y: platforms[0].y - 34, w: 46, h: 34 };
+
+// ── Player: Milo the House Mouse (small + fast) ─────────────────────────────
+const START = { x: 230, y: platforms[LAST].y - 22 };
+const player = {
+  x: START.x, y: START.y, w: 20, h: 22,
+  vx: 0, vy: 0, onGround: true, climbing: false, ladder: null,
+  facing: 1, lives: 3, invuln: 0, walkT: 0,
+};
+
+// ── Hazards: yarn balls, rolling cheese wheels, pots & pans ──────────────────
+const HAZARD_TYPES = ["yarn", "cheese", "pan"];
+let hazards = [];
+let hazardTimer = 0, hazardSeq = 0;
+
+let state = "start";          // start | playing | win | lose
+let score = 0, frame = 0;
+
+// ── Input ───────────────────────────────────────────────────────────────────
+const keys = {};
+function setKey(e, down) {
+  const k = e.key.toLowerCase();
+  const map = {
+    arrowleft:"left", a:"left", arrowright:"right", d:"right",
+    arrowup:"up", w:"up", arrowdown:"down", s:"down",
+    " ":"jump", spacebar:"jump", enter:"enter",
+  };
+  const action = map[k];
+  if (!action) return;
+  e.preventDefault();
+  keys[action] = down;
+  if (down && action === "enter") {
+    if (state === "start" || state === "win" || state === "lose") startGame();
+  }
+  if (down && action === "jump" && state === "playing") tryJump();
+}
+addEventListener("keydown", (e) => setKey(e, true), { passive: false });
+addEventListener("keyup",   (e) => setKey(e, false), { passive: false });
+
+// Touch: tap left/right halves to move, top area to jump, double-tap to start.
+let touchDir = 0;
+canvas.addEventListener("pointerdown", (e) => {
+  if (state !== "playing") { startGame(); return; }
+  const r = canvas.getBoundingClientRect();
+  const ny = (e.clientY - r.top) / r.height;
+  const nx = (e.clientX - r.left) / r.width;
+  if (ny < 0.30) tryJump();
+  else touchDir = nx < 0.5 ? -1 : 1;
+}, { passive: true });
+canvas.addEventListener("pointerup", () => { touchDir = 0; }, { passive: true });
+
+// ── Game flow ───────────────────────────────────────────────────────────────
+function startGame() {
+  state = "playing";
+  score = 0; frame = 0;
+  player.x = START.x; player.y = START.y;
+  player.vx = player.vy = 0; player.onGround = true;
+  player.climbing = false; player.ladder = null; player.lives = 3; player.invuln = 60;
+  hazards = []; hazardTimer = 40; hazardSeq = 0;
+}
+function tryJump() {
+  if (player.onGround && !player.climbing) { player.vy = -9.2; player.onGround = false; }
+}
+function loseLife() {
+  if (player.invuln > 0) return;
+  player.lives--;
+  if (player.lives <= 0) { state = "lose"; return; }
+  player.x = START.x; player.y = START.y;
+  player.vx = player.vy = 0; player.climbing = false; player.ladder = null; player.invuln = 70;
+}
+
+// ── Update ──────────────────────────────────────────────────────────────────
+function platformUnder(px, feetY) {
+  // The platform whose surface the given foot position is standing on / falling onto.
+  for (const p of platforms) {
+    if (px + player.w > p.x1 && px < p.x2) {
+      if (feetY >= p.y - 2 && feetY <= p.y + 12) return p;
+    }
+  }
+  return null;
+}
+function nearLadder() {
+  const cx = player.x + player.w / 2;
+  const feet = player.y + player.h;
+  for (const l of ladders) {
+    if (Math.abs(cx - l.x) < 16 && feet >= l.yTop - 4 && feet <= l.yBottom + 6) return l;
+  }
+  return null;
+}
+
+function update() {
+  frame++;
+  if (player.invuln > 0) player.invuln--;
+  boss.t++; boss.throwT++;
+
+  // Spawn hazards from the cat.
+  hazardTimer--;
+  if (hazardTimer <= 0) {
+    hazardTimer = 95 - Math.min(40, frame / 30); // ramps up difficulty
+    boss.throwT = 0;
+    hazards.push({
+      x: boss.x + 18, y: platforms[0].y - 10, pi: 0,
+      dir: platforms[0].dir, r: 11, spin: 0,
+      type: HAZARD_TYPES[hazardSeq++ % HAZARD_TYPES.length], dropping: 0, scored: false,
+    });
+  }
+
+  // Move hazards: roll along a platform, then drop to the next, alternating dir.
+  for (const h of hazards) {
+    h.spin += h.dir * 0.25;
+    if (h.dropping > 0) {
+      h.y += 4; h.dropping--;
+      if (h.dropping === 0) h.y = platforms[h.pi].y - h.r;
+      continue;
+    }
+    const p = platforms[h.pi];
+    h.x += h.dir * 2.2;
+    h.y = p.y - h.r;
+    const atEnd = h.dir > 0 ? h.x > p.x2 - h.r : h.x < p.x1 + h.r;
+    if (atEnd) {
+      if (h.pi >= LAST) { h.remove = true; }   // rolled off the bottom
+      else { h.pi++; h.dir = platforms[h.pi].dir; h.dropping = Math.round((platforms[h.pi].y - p.y) / 4); }
+    }
+    // Award points when a hazard passes safely below the player's row.
+    if (!h.scored && h.pi > 0 && p.y > player.y + player.h) { h.scored = true; score += 10; }
+  }
+  hazards = hazards.filter((h) => !h.remove && h.y < GH + 30);
+
+  // ── Player movement ──
+  const left = keys.left || touchDir < 0, right = keys.right || touchDir > 0;
+  if (player.climbing) {
+    const l = player.ladder;
+    player.x = l.x - player.w / 2;
+    if (keys.up)   player.y -= 2.4;
+    if (keys.down) player.y += 2.4;
+    const feet = player.y + player.h;
+    if (feet <= l.yTop)    { player.y = l.yTop - player.h; player.climbing = false; player.onGround = true; player.vy = 0; }
+    if (feet >= l.yBottom) { player.y = l.yBottom - player.h; player.climbing = false; player.onGround = true; player.vy = 0; }
+  } else {
+    player.vx = (left ? -2.6 : 0) + (right ? 2.6 : 0);
+    if (player.vx) { player.facing = player.vx < 0 ? -1 : 1; player.walkT += 0.3; }
+    player.x += player.vx;
+    player.x = Math.max(0, Math.min(GW - player.w, player.x));
+
+    // Enter a ladder by pressing up/down on it.
+    const l = nearLadder();
+    if (l && (keys.up || keys.down)) {
+      player.climbing = true; player.ladder = l; player.onGround = false;
+      player.x = l.x - player.w / 2; player.vy = 0;
+    } else {
+      // Gravity + landing.
+      player.vy += 0.5; player.y += player.vy;
+      const feet = player.y + player.h;
+      const p = platformUnder(player.x, feet);
+      if (p && player.vy >= 0) { player.y = p.y - player.h; player.vy = 0; player.onGround = true; }
+      else player.onGround = false;
+      if (player.y + player.h > GH) loseLife();
+    }
+  }
+
+  // ── Collisions ──
+  const pcx = player.x + player.w / 2, pcy = player.y + player.h / 2;
+  for (const h of hazards) {
+    const dx = pcx - h.x, dy = pcy - h.y;
+    if (dx * dx + dy * dy < (h.r + 9) * (h.r + 9)) { loseLife(); break; }
+  }
+  // Reaching the golden cheese wins.
+  if (player.x + player.w > goal.x && player.x < goal.x + goal.w &&
+      player.y + player.h > goal.y && player.y < goal.y + goal.h) {
+    score += 500 + player.lives * 100; state = "win";
+  }
+  if (frame % 30 === 0) score += 1; // small survival tick
+}
+
+// ── Rendering ───────────────────────────────────────────────────────────────
+function drawPlatform(p) {
+  const y = p.y, x1 = p.x1, x2 = p.x2;
+  ctx.fillStyle = "#7a4a2b";
+  ctx.fillRect(x1, y, x2 - x1, PW);
+  ctx.fillStyle = "#9c6438";
+  ctx.fillRect(x1, y, x2 - x1, 4);
+  ctx.fillStyle = "#5c3620";
+  for (let x = x1 + 8; x < x2 - 6; x += 22) ctx.fillRect(x, y + 8, 4, 4);
+}
+function drawLadder(l) {
+  ctx.strokeStyle = "#e8c34a"; ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(l.x - 9, l.yTop); ctx.lineTo(l.x - 9, l.yBottom);
+  ctx.moveTo(l.x + 9, l.yTop); ctx.lineTo(l.x + 9, l.yBottom);
+  ctx.stroke();
+  ctx.lineWidth = 2;
+  for (let y = l.yTop + 8; y < l.yBottom; y += 14) {
+    ctx.beginPath(); ctx.moveTo(l.x - 9, y); ctx.lineTo(l.x + 9, y); ctx.stroke();
+  }
+}
+function drawHazard(h) {
+  ctx.save(); ctx.translate(h.x, h.y); ctx.rotate(h.spin);
+  if (h.type === "yarn") {
+    ctx.fillStyle = "#e8557a"; circle(0, 0, h.r);
+    ctx.strokeStyle = "#b83a5c"; ctx.lineWidth = 1.5;
+    for (let a = 0; a < 3; a++) { ctx.beginPath(); ctx.ellipse(0, 0, h.r, h.r * 0.5, a * 1.05, 0, Math.PI * 2); ctx.stroke(); }
+  } else if (h.type === "cheese") {
+    ctx.fillStyle = "#f2c244"; circle(0, 0, h.r);
+    ctx.fillStyle = "#caa028";
+    [[3,-3],[-4,2],[2,5],[-2,-5]].forEach(([dx,dy]) => circle(dx, dy, 2));
+  } else { // pan
+    ctx.fillStyle = "#3b3f46"; circle(0, 0, h.r);
+    ctx.fillStyle = "#22252b"; circle(0, 0, h.r * 0.6);
+    ctx.fillStyle = "#3b3f46"; ctx.fillRect(h.r - 1, -2.5, h.r + 6, 5);
+  }
+  ctx.restore();
+}
+function circle(x, y, r) { ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); }
+
+function drawGoal() {
+  // Mouse hole behind the cheese.
+  ctx.fillStyle = "#1a1320";
+  ctx.beginPath();
+  ctx.ellipse(goal.x + goal.w / 2 + 8, goal.y + goal.h - 2, 18, 22, 0, Math.PI, 0);
+  ctx.fill();
+  // Golden cheese wedge (glowing).
+  const gx = goal.x, gy = goal.y;
+  ctx.save();
+  ctx.shadowColor = "#ffd866"; ctx.shadowBlur = 14 + Math.sin(frame / 8) * 5;
+  ctx.fillStyle = "#ffd34d";
+  ctx.beginPath(); ctx.moveTo(gx, gy + goal.h); ctx.lineTo(gx + goal.w, gy + goal.h);
+  ctx.lineTo(gx + goal.w, gy + 8); ctx.closePath(); ctx.fill();
+  ctx.restore();
+  ctx.fillStyle = "#e3b53a";
+  [[14,18],[28,24],[34,12],[20,27]].forEach(([dx,dy]) => circle(gx + dx, gy + dy, 2.5));
+}
+
+function drawMouse(px, py, f, walkT) {
+  ctx.save(); ctx.translate(px + 10, py + 11); ctx.scale(f, 1);
+  // tail
+  ctx.strokeStyle = "#c98fae"; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(-7, 4); ctx.quadraticCurveTo(-16, 2, -13, -6); ctx.stroke();
+  // legs (simple walk wiggle)
+  const lw = Math.sin(walkT) * 2;
+  ctx.fillStyle = "#8b8f98";
+  ctx.fillRect(-5, 7, 4, 4 + lw); ctx.fillRect(2, 7, 4, 4 - lw);
+  // body
+  ctx.fillStyle = "#9aa0aa";
+  ctx.beginPath(); ctx.ellipse(0, 1, 9, 8, 0, 0, Math.PI * 2); ctx.fill();
+  // ears
+  ctx.fillStyle = "#9aa0aa"; circle(5, -7, 4.5); circle(-1, -8, 4);
+  ctx.fillStyle = "#e7a8c6"; circle(5, -7, 2.2); circle(-1, -8, 2);
+  // face
+  ctx.fillStyle = "#aeb4be"; ctx.beginPath(); ctx.ellipse(7, -1, 5, 5, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = "#16181d"; circle(8, -2, 1.4);          // eye
+  ctx.fillStyle = "#e7679a"; circle(11.5, 0, 1.6);        // nose
+  ctx.restore();
+}
+
+function drawCat(bx, by, t) {
+  const bob = Math.sin(t / 18) * 2, arm = boss.throwT < 14 ? -0.6 : 0;
+  ctx.save(); ctx.translate(bx + 18, by + 22 + bob);
+  // tail (dramatic swish)
+  ctx.strokeStyle = "#e08a3c"; ctx.lineWidth = 5;
+  ctx.beginPath(); ctx.moveTo(-12, 6); ctx.quadraticCurveTo(-30, 0, -24, -16 + Math.sin(t/12)*4); ctx.stroke();
+  // body
+  ctx.fillStyle = "#e8923f";
+  ctx.beginPath(); ctx.ellipse(0, 4, 16, 15, 0, 0, Math.PI * 2); ctx.fill();
+  // stripes
+  ctx.strokeStyle = "#cf761f"; ctx.lineWidth = 2.5;
+  for (let i = -1; i <= 1; i++) { ctx.beginPath(); ctx.moveTo(-8 + i*7, -6); ctx.lineTo(-8 + i*7, 12); ctx.stroke(); }
+  // raised paw (throwing)
+  ctx.save(); ctx.translate(12, -4); ctx.rotate(arm);
+  ctx.fillStyle = "#e8923f"; ctx.fillRect(0, -3, 12, 7); circle(13, 0, 5); ctx.restore();
+  // head
+  ctx.fillStyle = "#e8923f"; ctx.beginPath(); ctx.ellipse(0, -14, 13, 11, 0, 0, Math.PI * 2); ctx.fill();
+  // ears
+  ctx.beginPath(); ctx.moveTo(-12,-22); ctx.lineTo(-5,-26); ctx.lineTo(-4,-16); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(12,-22); ctx.lineTo(5,-26); ctx.lineTo(4,-16); ctx.closePath(); ctx.fill();
+  // muzzle
+  ctx.fillStyle = "#fff3e6"; ctx.beginPath(); ctx.ellipse(0, -9, 8, 6, 0, 0, Math.PI*2); ctx.fill();
+  // angry brows + eyes
+  ctx.fillStyle = "#16181d";
+  ctx.save(); ctx.translate(-5,-15); ctx.rotate(0.4); ctx.fillRect(-3,-1,7,2.5); ctx.restore();
+  ctx.save(); ctx.translate(5,-15); ctx.rotate(-0.4); ctx.fillRect(-4,-1,7,2.5); ctx.restore();
+  circle(-4, -13, 1.6); circle(5, -13, 1.6);
+  ctx.fillStyle = "#e7679a"; circle(0, -9, 1.6); // nose
+  // whiskers
+  ctx.strokeStyle = "#fff3e6"; ctx.lineWidth = 1;
+  for (const s of [-1,1]) { ctx.beginPath(); ctx.moveTo(s*3,-8); ctx.lineTo(s*14,-10); ctx.moveTo(s*3,-7); ctx.lineTo(s*14,-6); ctx.stroke(); }
+  ctx.restore();
+}
+
+function drawHUD() {
+  ctx.fillStyle = "#f4f7fb"; ctx.font = "bold 16px system-ui"; ctx.textAlign = "left";
+  ctx.fillText("CLAW & CRUMBS", 14, 24);
+  ctx.font = "12px system-ui"; ctx.fillStyle = "#a8b0bd";
+  ctx.fillText("Score " + score, 14, 42);
+  // lives as little mice
+  ctx.textAlign = "right"; ctx.fillStyle = "#a8b0bd"; ctx.fillText("Milo:", GW - 90, 24);
+  for (let i = 0; i < player.lives; i++) drawMouse(GW - 78 + i * 22, 8, 1, 0);
+}
+
+function screen(title, sub, lines) {
+  ctx.fillStyle = "rgba(8,6,14,0.82)"; ctx.fillRect(0, 0, GW, GH);
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#ffd34d"; ctx.font = "bold 40px system-ui"; ctx.fillText(title, GW/2, 200);
+  ctx.fillStyle = "#f4f7fb"; ctx.font = "16px system-ui"; ctx.fillText(sub, GW/2, 240);
+  ctx.fillStyle = "#a8b0bd"; ctx.font = "14px system-ui";
+  lines.forEach((t, i) => ctx.fillText(t, GW/2, 320 + i * 26));
+  ctx.fillStyle = "#7fe3c0"; ctx.font = "bold 16px system-ui";
+  ctx.fillText("Press ENTER", GW/2, 320 + lines.length * 26 + 28);
+}
+
+function render() {
+  ctx.clearRect(0, 0, GW, GH);
+  // backdrop: rooftop kitchen night
+  const g = ctx.createLinearGradient(0, 0, 0, GH);
+  g.addColorStop(0, "#241a33"); g.addColorStop(1, "#120d1c");
+  ctx.fillStyle = g; ctx.fillRect(0, 0, GW, GH);
+  for (const l of ladders) drawLadder(l);
+  for (const p of platforms) drawPlatform(p);
+  drawGoal();
+  drawCat(boss.x, boss.y, boss.t);
+  for (const h of hazards) drawHazard(h);
+  if (!(player.invuln > 0 && frame % 8 < 4)) drawMouse(player.x, player.y, player.facing, player.walkT);
+  drawHUD();
+
+  if (state === "start")
+    screen("Claw & Crumbs", "Help Milo reach the golden cheese!",
+      ["Max the Alley Cat hurls yarn, cheese", "wheels & pans down the tower.", "← → / A D move   ·   SPACE jump",
+       "↑ ↓ / W S climb ladders"]);
+  else if (state === "win")
+    screen("You got the cheese!", "Milo escapes with the crumbs. Score: " + score, ["Max is furious. 🧀"]);
+  else if (state === "lose")
+    screen("Max caught you!", "Milo got bonked. Score: " + score, ["Dust yourself off and try again."]);
+}
+
+function loop() {
+  if (state === "playing") update();
+  render();
+  requestAnimationFrame(loop);
+}
+loop();
+
+// Test/debug hooks (used by the Playwright validation; no effect on play).
+window.__claw = {
+  get state() { return state; },
+  get hazards() { return hazards.length; },
+  get player() { return { x: player.x, y: player.y, vy: player.vy, lives: player.lives }; },
+  start: startGame,
+  forceWin() { score += 500; state = "win"; },
+  forceLose() { player.lives = 1; player.invuln = 0; loseLife(); },
+};
+</script>
+</body>
+</html>
