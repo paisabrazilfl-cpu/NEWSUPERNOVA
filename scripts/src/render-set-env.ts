@@ -40,6 +40,7 @@ const OPTIONAL_KEYS = [
   "INNGEST_EVENT_KEY",
   "INNGEST_SIGNING_KEY",
   "E2B_API_KEY",
+  "SANDBOX_GITHUB_TOKEN",
 ] as const;
 
 function requireEnv(key: string): string {

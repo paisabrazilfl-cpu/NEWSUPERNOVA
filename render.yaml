@@ -81,6 +81,11 @@ services:
         sync: false
       - key: E2B_API_KEY
         sync: false
+      # GitHub token for the sandbox git tools (agents push branches / open PRs).
+      # Use a FINE-GRAINED token scoped to this repo only (Contents + PRs write).
+      # Value is set in the Render dashboard or the in-app vault — never committed.
+      - key: SANDBOX_GITHUB_TOKEN
+        sync: false
 
 databases:
   - name: bos-aura-db
