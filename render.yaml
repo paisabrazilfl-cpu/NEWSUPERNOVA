@@ -21,6 +21,8 @@ services:
         value: /
       - key: SESSION_SECRET
         generateValue: true
+      - key: OPERATOR_PASSWORD
+        sync: false
       - key: DATABASE_URL
         fromDatabase:
           name: bos-aura-db
