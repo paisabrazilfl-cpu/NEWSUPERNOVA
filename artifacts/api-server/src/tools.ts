@@ -294,8 +294,21 @@ function safeCalc(expr: string): string {
 
 // ─── Steel browser ───────────────────────────────────────────────────────────
 
-/** Real one-shot Steel scrape. Returns extracted page content as text. */
-export async function steelScrape(url: string): Promise<string> {
+/**
+ * A scrape result looks blocked/empty when a bot-wall or near-empty shell came
+ * back instead of real content. Listing sites (cars.com etc.) serve a security
+ * interstitial to datacenter IPs; that's the signal to retry through a proxy.
+ */
+function scrapeLooksBlocked(text: string): boolean {
+  const t = text.trim();
+  if (t.length < 200) return true;
+  return /performing security verification|verify you are (not a |a )?(human|bot)|enable javascript|access denied|captcha|unusual traffic|request blocked|are not a bot/i.test(
+    t,
+  );
+}
+
+/** Single Steel scrape pass (optionally through a residential proxy). */
+async function steelScrapeOnce(url: string, useProxy: boolean): Promise<string> {
   const key = process.env["STEEL_API_KEY"];
   if (!key) throw new Error("STEEL_API_KEY is not set");
   const r = await fetch(`${STEEL_BASE}/scrape`, {
@@ -304,7 +317,7 @@ export async function steelScrape(url: string): Promise<string> {
     // Ask for cleaned markdown, not raw HTML — far more signal per character, so a
     // single scrape fits the readable content (titles, scores) inside the response
     // budget instead of being truncated mid-page and forcing extra calls.
-    body: JSON.stringify({ url, format: ["markdown"], useProxy: false }),
+    body: JSON.stringify({ url, format: ["markdown"], useProxy }),
   });
   if (!r.ok) throw new Error(`Steel ${r.status}: ${(await r.text()).slice(0, 200)}`);
   const data = (await r.json()) as Record<string, unknown>;
@@ -319,6 +332,25 @@ export async function steelScrape(url: string): Promise<string> {
     );
   }
   return (data["markdown"] as string) || JSON.stringify(data);
+}
+
+/**
+ * Real Steel scrape. Tries direct first (fast/cheap); if the page comes back as a
+ * bot-wall or empty shell, retries once through Steel's proxy — which defeats the
+ * security interstitials that listing/marketplace sites serve to datacenter IPs.
+ */
+export async function steelScrape(url: string): Promise<string> {
+  const direct = await steelScrapeOnce(url, false);
+  if (!scrapeLooksBlocked(direct)) return direct;
+  try {
+    const viaProxy = await steelScrapeOnce(url, true);
+    // Prefer the proxied result when it actually got through; otherwise keep
+    // whichever has more usable content so we never return less than we had.
+    if (!scrapeLooksBlocked(viaProxy)) return viaProxy;
+    return viaProxy.trim().length > direct.trim().length ? viaProxy : direct;
+  } catch {
+    return direct;
+  }
 }
 
 async function steelScreenshot(url: string): Promise<number> {
