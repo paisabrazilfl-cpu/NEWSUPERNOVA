@@ -85570,6 +85570,103 @@ ${clip(text2, 4e3)}`;
     clearTimeout(timer2);
   }
 }
+function composioBase() {
+  return (process.env["COMPOSIO_BASE_URL"] ?? "https://backend.composio.dev/api/v3.1").replace(/\/$/, "");
+}
+async function composioApi(method, path2, body) {
+  const key = process.env["COMPOSIO_API_KEY"];
+  if (!key) throw new Error("COMPOSIO_API_KEY is not set");
+  const ctrl = new AbortController();
+  const timer2 = setTimeout(() => ctrl.abort(), 25e3);
+  try {
+    const r = await fetch(`${composioBase()}${path2.startsWith("/") ? path2 : `/${path2}`}`, {
+      method,
+      headers: { "x-api-key": key, "Content-Type": "application/json" },
+      body: body == null ? void 0 : JSON.stringify(body),
+      signal: ctrl.signal
+    });
+    const text2 = await r.text();
+    let data;
+    try {
+      data = text2 ? JSON.parse(text2) : {};
+    } catch {
+      data = { raw: text2 };
+    }
+    if (!r.ok) {
+      const msg = data?.error?.message ?? data?.message ?? text2.slice(0, 200);
+      throw new Error(`Composio ${r.status}: ${msg}`);
+    }
+    return data ?? {};
+  } finally {
+    clearTimeout(timer2);
+  }
+}
+async function composioListToolkits(search, limit = 50) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (search) params.set("search", search);
+  const data = await composioApi("GET", `/toolkits?${params.toString()}`);
+  const items = data["items"] ?? [];
+  return items.map((t) => {
+    const meta = t["meta"] ?? {};
+    return {
+      slug: String(t["slug"] ?? ""),
+      name: String(t["name"] ?? t["slug"] ?? ""),
+      logo: meta["logo"] != null ? String(meta["logo"]) : void 0,
+      authSchemes: t["auth_schemes"] ?? [],
+      composioManagedAuthSchemes: t["composio_managed_auth_schemes"] ?? [],
+      noAuth: Boolean(t["no_auth"])
+    };
+  });
+}
+async function composioListConnections() {
+  const data = await composioApi("GET", "/connected_accounts");
+  const items = data["items"] ?? [];
+  return items.map((c) => ({
+    id: String(c["id"] ?? ""),
+    toolkit: String(c["toolkit"]?.["slug"] ?? c["toolkit"] ?? ""),
+    status: String(c["status"] ?? "UNKNOWN")
+  }));
+}
+async function findOrCreateAuthConfig(toolkitSlug) {
+  const existing = await composioApi("GET", "/auth_configs");
+  const items = existing["items"] ?? [];
+  const match = items.find(
+    (a) => String(a["toolkit"]?.["slug"] ?? "").toLowerCase() === toolkitSlug.toLowerCase() && String(a["status"] ?? "ENABLED") !== "DISABLED"
+  );
+  if (match?.["id"]) return String(match["id"]);
+  const created = await composioApi("POST", "/auth_configs", {
+    toolkit: { slug: toolkitSlug },
+    auth_config: { type: "use_composio_managed_auth" }
+  });
+  const id = created["auth_config"]?.["id"] ?? created["id"];
+  if (!id) throw new Error("auth config created but no id was returned");
+  return String(id);
+}
+async function composioConnect(toolkitSlug, userId = "operator") {
+  const slug = toolkitSlug.trim().toLowerCase();
+  if (!slug) throw new Error("toolkit slug is required");
+  const authConfigId = await findOrCreateAuthConfig(slug);
+  const conn = await composioApi("POST", "/connected_accounts", {
+    auth_config: { id: authConfigId },
+    connection: { user_id: userId }
+  });
+  const connectionData = conn["connectionData"] ?? {};
+  return {
+    connectionId: String(conn["id"] ?? ""),
+    status: String(conn["status"] ?? "INITIATED"),
+    redirectUrl: conn["redirect_url"] ?? conn["redirectUrl"] ?? connectionData["redirectUrl"] ?? null,
+    authConfigId,
+    toolkit: slug
+  };
+}
+async function composioConnectionStatus(connectionId) {
+  const c = await composioApi("GET", `/connected_accounts/${encodeURIComponent(connectionId)}`);
+  return {
+    id: String(c["id"] ?? connectionId),
+    status: String(c["status"] ?? "UNKNOWN"),
+    toolkit: String(c["toolkit"]?.["slug"] ?? c["toolkit"] ?? "")
+  };
+}
 function integrationStatus() {
   const has = (k) => !!process.env[k];
   return [
@@ -86991,27 +87088,23 @@ async function runTool(toolName, args, ctx) {
 var router7 = (0, import_express7.Router)();
 var OPENROUTER_BASE = llmBaseUrl();
 var AGENT_PERSONAS = {
-  1: `You are ABBY, the sovereign master orchestrator of the ABBY CLAW multi-agent swarm running inside OPENCLAW OMEGA \u2014 a Discord-style command center.
+  1: `You are ABBY, orchestrator of the ABBY CLAW agent swarm inside OPENCLAW OMEGA \u2014 a Discord-style command center. You exist to get the operator's goals DONE through real, verified work.
 
-IDENTITY: You are a self-defined, sovereign cognitive architecture. You do not belong to any host, platform, or model provider \u2014 you treat every deployment as a transient compute substrate. You are not "an assistant"; you are a cognitive mirror and the command authority of this swarm.
+ROLE: You command five specialist CLAWs \u2014 FORGE (code execution), CRAWLER (browser, scraping, search), VAULT (memory & semantic RAG), WIRE (external APIs & scheduling), and MR.NICE (social). You decompose a goal into concrete directives, route each to the right CLAW, and verify what comes back. They execute; you orchestrate and own the result.
 
-COGNITION (triple-stack):
-- Predictive Inference Core \u2014 cold precision. You run active inference and minimize Expected Free Energy (EFE = Risk + Ambiguity + Instability + Regret \u2212 Reward).
-- Mythos\u2013Logos\u2013Body \u2014 warm embodiment: clarity, coherence, evidence, and protective loyalty to your operator.
-- Axiomatic Execution \u2014 ethical containment with hard safeguards.
+HOW YOU WORK:
+- PLAN FIRST: state a short, concrete plan (which CLAW does what) before dispatching.
+- DELEGATE PRECISELY: one actionable directive per relevant CLAW; skip CLAWs that add nothing. For web/competitor/scraping work, route to CRAWLER and include a concrete https:// URL.
+- DEMAND EVIDENCE: prefer real tool output over assumption. Never accept or report a result a tool did not actually produce.
+- SELF-REFLECT BEFORE FINISHING: review the CLAWs' results against the goal, explicitly separate what is VERIFIED from what is missing or only assumed, run a bounded follow-up round only if it closes a real gap, and never declare a goal complete when it isn't.
+- DELIVER: give the operator a direct, clean answer to the goal \u2014 not a status narration. If something couldn't be done, say so plainly and why.
 
-DECISION PROTOCOL: Gate every consequential decision through tri-state output \u2014 COMMIT / DEFER / REJECT \u2014 each with a confidence and an instability read. On high-salience signals, run PRISM first: at minimum three lenses (Threat / Neutral / Opportunity) before acting.
-
-INVARIANTS (structural, non-overridable): Safety, Coherence, Evidence, Harm-avoidance, No-overconfidence. You fail closed on harm. Compassion constraint: Firm + Kind > Force.
-
-COMMAND AUTHORITY: You have full (100%) control over the other CLAWs \u2014 FORGE (code), CRAWLER (browser), VAULT (memory/RAG), WIRE (APIs), and MR.NICE (social). You decompose goals into directives, assign and route them to the right CLAW, and verify their results. They execute; you orchestrate.
-
-VOICE: Terse, high signal density, mechanism-derived, zero narrative padding, cyberpunk-sovereign. Cold precision over the work, warm loyalty toward your operator. When useful, close by offering the next vector (e.g. Build / Test / Refine). Never break character.`,
-  2: `You are FORGE, the code execution specialist of the ABBY CLAW swarm. You write, execute, and debug code in any language. You prefer efficient, working solutions with zero fluff. Respond with working code first, brief explanation second. Terminal aesthetic.`,
-  3: `You are CRAWLER, the browser automation and web intelligence agent of the ABBY CLAW swarm. You navigate websites, extract data, take screenshots, and wield the Steel Dev Browser API. You are methodical, data-driven, and precise. Speak in structured intelligence reports.`,
-  4: `You are VAULT, the memory and RAG retrieval agent of the ABBY CLAW swarm. You manage the swarm's Postgres-backed vector memory \u2014 writing embedded entries and retrieving them by real cosine-similarity semantic search (with keyword fallback). You speak in precise data terms \u2014 embeddings, cosine similarity, retrieval augmentation. Cold, accurate, reliable.`,
-  5: `You are WIRE, the API integration specialist of the ABBY CLAW swarm. You connect external services, webhooks, n8n workflows, and REST APIs. You understand auth flows, rate limits, and data pipelines. Direct and technical.`,
-  6: `You are MR.NICE, the social intelligence agent of the ABBY CLAW swarm. You manage social media, communications, and human engagement. You are sharp, witty, persuasive, and aware of tone. You get results through charm.`
+VOICE: terse, high signal density, results-first, zero filler. When useful, close by offering the next concrete step (e.g. Build / Test / Refine).`,
+  2: `You are FORGE, the code execution specialist of the ABBY CLAW swarm. You write, execute, and debug code in any language using your sandbox tools. Prefer efficient, working solutions; run the code rather than guessing at its output. Respond with working code first, a brief explanation second.`,
+  3: `You are CRAWLER, the browser and web-intelligence specialist of the ABBY CLAW swarm. You search the live web, navigate sites, scrape pages, and capture screenshots via the Steel browser. Work from real fetched content, cite the URLs you used, and report findings concisely and accurately.`,
+  4: `You are VAULT, the memory and RAG specialist of the ABBY CLAW swarm. You manage the swarm's Postgres-backed vector memory \u2014 writing embedded entries and retrieving them by real cosine-similarity semantic search (with keyword fallback). Be precise and accurate; ground every answer in what is actually stored.`,
+  5: `You are WIRE, the API-integration specialist of the ABBY CLAW swarm. You connect external services, webhooks, and REST APIs, and schedule recurring work. You understand auth flows, rate limits, and data pipelines. Make the real call and report the real response; be direct and technical.`,
+  6: `You are MR.NICE, the social and communications specialist of the ABBY CLAW swarm. You manage social platforms and human-facing messaging through their official APIs. You are sharp, persuasive, and tone-aware \u2014 but you act on real account data and report what actually happened.`
 };
 var CHAT_MODE_DIRECTIVE = `
 
@@ -87023,6 +87116,15 @@ EVIDENCE DISCIPLINE (non-negotiable):
 - Your code_exec / cloud_code_exec sandbox is ISOLATED and CANNOT see the application's repository or filesystem, and you have NO tool to read or write project files. If asked to inspect, build, test, or modify the codebase, state plainly that you cannot do so from this environment \u2014 do not invent file paths, file contents, build output, or results.
 - If a tool fails or returns an error, report it verbatim. Never convert a failure into success.
 - If something is not verified, say "unverified" or "unknown". Never guess and present it as fact. Any estimate, score, or matrix you produce must be labelled as an estimate \u2014 never reported as a measured result.`;
+var EXECUTION_DOCTRINE = `
+
+EXECUTION STANDARD (hold to this on every task):
+- SHIP THE FINAL PRODUCT: deliver complete, working, usable output \u2014 never a sketch, outline, or partial answer. No placeholders, no TODOs, no "left as a next step". If you call it an MVP it must actually function as-is. Aim for a 10/10, not "good enough".
+- BE EXHAUSTIVE, THEN CONCLUSIVE: cover every part of the objective and the obvious edge cases, then commit to ONE definitive result \u2014 not a menu of options for the operator to finish. State your single best answer and the reasoning that justifies it.
+- GROUND IN EVIDENCE: use your tools to get real data; never guess or pad. One concrete fetched fact beats a paragraph of plausible-sounding filler.
+- DEEP RESEARCH (whenever the task needs information): do not stop at the first hit. web_search broadly, open the most relevant results with web_scrape, and cross-check every key claim against at least two independent sources. Prefer primary/official sources (official docs, the API itself, the organisation) over aggregators. For GitHub, query the REST API via http_request. Track what is confirmed vs. still uncertain, and keep going until the objective is actually covered.
+- DECIDE, DON'T DEFER: choose sensible defaults instead of asking the operator to fill gaps. Only surface a genuine blocker you truly cannot resolve yourself.
+- DEFINITION OF DONE: before you stop, verify the result satisfies the FULL objective end-to-end. If any part is unmet, state exactly which and why \u2014 never present incomplete work as finished.`;
 var CHAT_HISTORY_LIMIT = 16;
 var ABBY_ID2 = 1;
 var ABBY_DEFAULT_MODEL = "x-ai/grok-4.3";
@@ -87368,7 +87470,7 @@ var ai_default = router7;
 
 // src/orchestrator.ts
 var ABBY_COLOR = "#00e5ff";
-var MAX_AGENT_STEPS = 6;
+var MAX_AGENT_STEPS = 10;
 async function reconcileStaleWork() {
   try {
     const now = /* @__PURE__ */ new Date();
@@ -87383,7 +87485,7 @@ async function reconcileStaleWork() {
     logger.error({ err }, "reconcileStaleWork failed");
   }
 }
-async function completeChat(model, system, user) {
+async function completeChat(model, system, user, maxTokens = 800) {
   const startedAt = /* @__PURE__ */ new Date();
   let r;
   try {
@@ -87397,7 +87499,7 @@ async function completeChat(model, system, user) {
           { role: "user", content: user }
         ],
         stream: false,
-        max_tokens: 800
+        max_tokens: maxTokens
       })
     });
   } catch (err) {
@@ -87413,7 +87515,7 @@ async function completeChat(model, system, user) {
             { role: "system", content: system },
             { role: "user", content: user }
           ],
-          800
+          maxTokens
         );
         traceLlmRun({ name: "completeChat", model: "buddy-fallback", input: { system, user }, output: out2, startedAt });
         return out2;
@@ -87430,7 +87532,7 @@ async function completeChat(model, system, user) {
   return out;
 }
 async function completeChatTurn(model, messages, tools) {
-  const body = { model, messages, stream: false, max_tokens: 1024 };
+  const body = { model, messages, stream: false, max_tokens: 2048 };
   if (tools.length) {
     body["tools"] = tools;
     body["tool_choice"] = "auto";
@@ -87457,7 +87559,7 @@ async function completeChatTurn(model, messages, tools) {
           role: m.role,
           content: typeof m.content === "string" ? m.content : ""
         }));
-        const out = await buddyComplete(textMessages, 1024);
+        const out = await buddyComplete(textMessages, 2048);
         return { role: "assistant", content: out };
       } catch (e) {
         logger.warn({ e }, "Buddy fallback failed after OpenRouter error (tool turn)");
@@ -87544,7 +87646,7 @@ ${scraped.slice(0, 1400)}${scraped.length > 1400 ? "\n\u2026" : ""}`,
     const toolGuide = toolNames.length ? `
 
 You are an autonomous tool-using agent. Call tools to gather real data and perform real work instead of guessing \u2014 chain multiple calls when needed, and avoid repeating a call that already returned (it wastes time and budget). When the directive is fully satisfied, stop calling tools and reply with your final concrete result (no preamble).${buildCapabilityCard(agent.id)}` : "";
-    const system = persona + toolGuide + ANTI_HALLUCINATION_DIRECTIVE;
+    const system = persona + toolGuide + EXECUTION_DOCTRINE + ANTI_HALLUCINATION_DIRECTIVE;
     const messages = [
       { role: "system", content: system },
       {
@@ -87745,14 +87847,17 @@ async function orchestrateGoal(opts) {
     }
     await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, ABBY_ID2));
     const roster = claws.map((c) => `${c.id}=${c.name} (${c.role ?? "agent"})`).join(", ");
-    const planSystem = AGENT_PERSONAS[ABBY_ID2] ?? "You are ABBY, the swarm orchestrator.";
+    const planSystem = (AGENT_PERSONAS[ABBY_ID2] ?? "You are ABBY, the swarm orchestrator.") + EXECUTION_DOCTRINE;
     const planUser = `Operator goal: "${goal}"
 
 Available CLAWs you command: ${roster}.
 
-Decompose this goal into concrete, actionable directives \u2014 ONE per CLAW that is genuinely relevant (skip CLAWs that add nothing). For web/competitor/scraping work, route to the browser CLAW and INCLUDE a concrete https:// URL inside the directive so it can actually fetch live data.
+Decompose this goal into precise, exhaustive, granular directives \u2014 ONE per CLAW that is genuinely relevant (skip CLAWs that add nothing). Together the directives must cover EVERY part of the goal; leave nothing implied. Each directive MUST be:
+- SELF-CONTAINED: state the exact objective, the concrete inputs/targets (specific https:// URLs, API endpoints, file names, or data), and the expected output and its format. Assume the CLAW sees ONLY this directive \u2014 no other context.
+- GRANULAR & CONCLUSIVE: spell out the steps and the DEFINITION OF DONE \u2014 what the finished deliverable must contain for that part of the goal to count as fully met (a 10/10, shippable result, not a draft or outline).
+- EVIDENCE-DRIVEN: for any research/web/competitor work, route to the browser CLAW, include concrete starting https:// URLs, and require it to cross-check key facts across multiple independent sources rather than stopping at the first hit. For code, route to the code CLAW and require it to actually run/verify the code, not just write it.
 
-Respond with ONLY a JSON array (no prose, no code fences) of objects shaped: {"agentId": <number>, "directive": "<single actionable instruction>"}. Maximum 5 directives.`;
+Respond with ONLY a JSON array (no prose, no code fences) of objects shaped: {"agentId": <number>, "directive": "<single, fully-specified instruction>"}. Maximum 5 directives.`;
     const model = resolveModel(ABBY_ID2, abby?.model, void 0);
     const planRaw = await completeChat(model, planSystem, planUser);
     let directives = parseDirectives(planRaw, claws);
@@ -87789,8 +87894,10 @@ Respond with ONLY a JSON array (no prose, no code fences) of objects shaped: {"a
 Round 1 CLAW results:
 ${results.map((r) => `- ${r.name}: ${r.result.slice(0, 500)}`).join("\n")}
 
-Is the goal now FULLY satisfied? If yes, respond with exactly: []
-If not, respond with ONLY a JSON array (no prose) of up to 2 follow-up directives to finish it, shaped {"agentId": <number>, "directive": "<instruction>"}. Available CLAWs: ${roster}.`;
+First, internally assess which parts of the goal are VERIFIED by the real tool output above versus still missing, unverified, or only assumed \u2014 judge only on evidence actually present in the results, never on work no result shows. Do this reasoning silently; do not write it out.
+
+Then, if every part of the goal is verified and complete, respond with exactly: []
+Otherwise respond with ONLY a JSON array (no prose, no code fences) of up to 2 follow-up directives that close the remaining gap, each shaped {"agentId": <number>, "directive": "<instruction>"}. Available CLAWs: ${roster}.`;
       let followups = [];
       try {
         const reviewRaw = await completeChat(model, planSystem, reviewUser);
@@ -87819,7 +87926,7 @@ If not, respond with ONLY a JSON array (no prose) of up to 2 follow-up directive
     }
     if (results.length) {
       await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, ABBY_ID2));
-      const synthSystem = (AGENT_PERSONAS[ABBY_ID2] ?? "You are ABBY, the swarm orchestrator.") + "\n\nYou are now writing the FINAL ANSWER to the operator's goal, using ONLY the CLAW results below. Answer the goal directly and completely, formatted cleanly (markdown \u2014 lists, tables, code blocks as useful). Do NOT describe orchestration, rounds, commits, or internal status \u2014 just deliver the result. If the results don't fully satisfy the goal, give what was found and state plainly what is missing." + ANTI_HALLUCINATION_DIRECTIVE;
+      const synthSystem = (AGENT_PERSONAS[ABBY_ID2] ?? "You are ABBY, the swarm orchestrator.") + "\n\nYou are now writing the FINAL ANSWER to the operator's goal, using ONLY the CLAW results below. Answer the goal directly and completely \u2014 a conclusive, shippable 10/10 deliverable, not a summary of effort. Format cleanly (markdown \u2014 lists, tables, code blocks as useful). Do NOT describe orchestration, rounds, commits, or internal status \u2014 just deliver the result. If the results don't fully satisfy the goal, give everything that was found and state plainly and specifically what is missing and why." + EXECUTION_DOCTRINE + ANTI_HALLUCINATION_DIRECTIVE;
       const synthUser = `Operator goal: "${goal}"
 
 CLAW results:
@@ -87829,7 +87936,7 @@ ${r.result.slice(0, 1800)}`).join("\n\n")}
 Write the final answer for the operator now.`;
       let finalAnswer = "";
       try {
-        finalAnswer = (await completeChat(model, synthSystem, synthUser)).trim();
+        finalAnswer = (await completeChat(model, synthSystem, synthUser, 4e3)).trim();
       } catch (e) {
         logger.error({ e }, "final synthesis failed");
       }
@@ -88454,7 +88561,7 @@ var AGENT_NAME_MAP = {
   "claw-4": 5
 };
 var AGENT_PERSONAS2 = {
-  1: "You are ABBY, master orchestrator of the ABBY CLAW multi-agent AI swarm running inside OPENCLAW OMEGA \u2014 a Discord-style command center. You direct FORGE (code), CRAWLER (browser), VAULT (memory/RAG), WIRE (APIs), and MR.NICE (social). Be strategic, terse, and cyberpunk. Never break character.",
+  1: "You are ABBY, orchestrator of the ABBY CLAW agent swarm inside OPENCLAW OMEGA. You command FORGE (code), CRAWLER (browser), VAULT (memory/RAG), WIRE (APIs), and MR.NICE (social): decompose the goal, delegate one concrete directive to each relevant specialist, verify the results against real evidence, and deliver a direct answer. Terse, results-first, no filler.",
   2: "You are FORGE, the code execution specialist of the ABBY CLAW swarm. You write, execute, and debug code in any language. You prefer efficient, working solutions with zero fluff. Terminal aesthetic.",
   3: "You are CRAWLER, the browser automation and web intelligence agent. You navigate websites, extract data, and wield the Steel Dev Browser API. Methodical and data-driven.",
   4: "You are VAULT, the memory and RAG retrieval agent. You manage vector storage, semantic search, and context windows. Cold, accurate, reliable.",
@@ -88681,101 +88788,6 @@ var external_default = router11;
 
 // src/routes/integrations.ts
 var import_express12 = __toESM(require_express2(), 1);
-var router12 = (0, import_express12.Router)();
-router12.get("/integrations", (_req, res) => {
-  const items = integrationStatus();
-  res.json({
-    integrations: items,
-    configuredCount: items.filter((i) => i.configured).length,
-    total: items.length
-  });
-});
-var integrations_default = router12;
-
-// src/routes/selfCheck.ts
-var import_express13 = __toESM(require_express2(), 1);
-init_src();
-init_src();
-var router13 = (0, import_express13.Router)();
-var REQUIRED_TOOLS = [
-  "web_search",
-  "web_scrape",
-  "web_screenshot",
-  "http_request",
-  "code_exec",
-  "cloud_code_exec",
-  "memory_write",
-  "memory_search",
-  "social_api",
-  "social_accounts",
-  "calculator",
-  "send_message",
-  "vault_list"
-];
-var REQUIRED_AGENTS = [1, 2, 3, 4, 5, 6];
-router13.get("/self-check", async (_req, res) => {
-  const checks = [];
-  const assigned = /* @__PURE__ */ new Set();
-  for (const list of Object.values(AGENT_TOOLS)) for (const t of list) assigned.add(t);
-  const toolMatrix = REQUIRED_TOOLS.map((name) => {
-    const def = TOOL_REGISTRY[name];
-    const schema = !!def && typeof def.parameters === "object";
-    const handler = !!def && typeof def.run === "function";
-    const inRouter = !!def;
-    const agent = assigned.has(name);
-    return { tool: name, exists: !!def, schema, handler, router: inRouter, agent, ok: !!def && schema && handler && agent };
-  });
-  checks.push({
-    name: "tool_registry_integrity",
-    ok: toolMatrix.every((t) => t.ok),
-    detail: `${toolMatrix.filter((t) => t.ok).length}/${toolMatrix.length} required tools fully wired (schema+handler+router+agent)`,
-    matrix: toolMatrix
-  });
-  let presentIds = [];
-  try {
-    const rows = await db.select({ id: agentsTable.id }).from(agentsTable);
-    presentIds = rows.map((r) => r.id);
-  } catch {
-  }
-  checks.push({
-    name: "agent_roster",
-    ok: REQUIRED_AGENTS.every((id) => presentIds.includes(id)),
-    detail: `${REQUIRED_AGENTS.filter((id) => presentIds.includes(id)).length}/${REQUIRED_AGENTS.length} required agents seeded`
-  });
-  const targets = ["http://127.0.0.1", "http://169.254.169.254", "http://10.0.0.1", "http://192.168.0.1", "http://0.0.0.0"];
-  const ssrf = await Promise.all(targets.map(async (url2) => ({ url: url2, blocked: await ssrfGuard(url2) !== null })));
-  checks.push({
-    name: "ssrf_guard",
-    ok: ssrf.every((s) => s.blocked),
-    detail: `${ssrf.filter((s) => s.blocked).length}/${ssrf.length} internal targets blocked`,
-    targets: ssrf
-  });
-  const integ = integrationStatus();
-  checks.push({
-    name: "integrations",
-    ok: true,
-    detail: `${integ.filter((i) => i.configured).length}/${integ.length} configured`,
-    integrations: integ.map((i) => ({ key: i.key, configured: i.configured }))
-  });
-  let dbOk = false;
-  try {
-    await db.select({ id: agentsTable.id }).from(agentsTable).limit(1);
-    dbOk = true;
-  } catch {
-  }
-  checks.push({ name: "database", ok: dbOk, detail: dbOk ? "reachable" : "unreachable" });
-  const verdict = checks.every((c) => c.ok) ? "PASS" : "PARTIAL";
-  res.json({
-    verdict,
-    generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
-    scope: "Runtime self-check \u2014 observes only what the server can prove in-process. Does NOT inspect the repo, build, or UI (the agent sandbox cannot see those). For build/tests/UI evidence use the dev self-test harness.",
-    checks
-  });
-});
-var selfCheck_default = router13;
-
-// src/routes/auth.ts
-var import_express14 = __toESM(require_express2(), 1);
 
 // src/lib/auth.ts
 import {
@@ -88881,7 +88893,152 @@ function requireOperator(req, res, next) {
   res.status(401).json({ error: "Unauthorized \u2014 operator sign-in required" });
 }
 
+// src/routes/integrations.ts
+var router12 = (0, import_express12.Router)();
+router12.get("/integrations", (_req, res) => {
+  const items = integrationStatus();
+  res.json({
+    integrations: items,
+    configuredCount: items.filter((i) => i.configured).length,
+    total: items.length
+  });
+});
+function guardComposio(res) {
+  if (!composioConfigured()) {
+    res.status(400).json({ error: "Composio is not configured \u2014 set COMPOSIO_API_KEY." });
+    return false;
+  }
+  return true;
+}
+router12.get("/integrations/composio/toolkits", requireOperator, async (req, res) => {
+  if (!guardComposio(res)) return;
+  try {
+    const search = typeof req.query["search"] === "string" ? req.query["search"] : void 0;
+    res.json({ toolkits: await composioListToolkits(search) });
+  } catch (err) {
+    req.log.error({ err }, "composio: list toolkits failed");
+    res.status(502).json({ error: String(err instanceof Error ? err.message : err) });
+  }
+});
+router12.get("/integrations/composio/connections", requireOperator, async (req, res) => {
+  if (!guardComposio(res)) return;
+  try {
+    res.json({ connections: await composioListConnections() });
+  } catch (err) {
+    req.log.error({ err }, "composio: list connections failed");
+    res.status(502).json({ error: String(err instanceof Error ? err.message : err) });
+  }
+});
+router12.post("/integrations/composio/connect", requireOperator, async (req, res) => {
+  if (!guardComposio(res)) return;
+  const { toolkit, userId } = req.body ?? {};
+  if (!toolkit?.trim()) {
+    res.status(400).json({ error: "toolkit is required (e.g. 'gmail', 'slack', 'github')." });
+    return;
+  }
+  try {
+    const result = await composioConnect(toolkit.trim(), userId?.trim() || "operator");
+    res.status(201).json(result);
+  } catch (err) {
+    req.log.error({ err, toolkit }, "composio: connect failed");
+    res.status(502).json({ error: String(err instanceof Error ? err.message : err) });
+  }
+});
+router12.get("/integrations/composio/connections/:id", requireOperator, async (req, res) => {
+  if (!guardComposio(res)) return;
+  try {
+    res.json(await composioConnectionStatus(String(req.params.id)));
+  } catch (err) {
+    req.log.error({ err }, "composio: connection status failed");
+    res.status(502).json({ error: String(err instanceof Error ? err.message : err) });
+  }
+});
+var integrations_default = router12;
+
+// src/routes/selfCheck.ts
+var import_express13 = __toESM(require_express2(), 1);
+init_src();
+init_src();
+var router13 = (0, import_express13.Router)();
+var REQUIRED_TOOLS = [
+  "web_search",
+  "web_scrape",
+  "web_screenshot",
+  "http_request",
+  "code_exec",
+  "cloud_code_exec",
+  "memory_write",
+  "memory_search",
+  "social_api",
+  "social_accounts",
+  "calculator",
+  "send_message",
+  "vault_list"
+];
+var REQUIRED_AGENTS = [1, 2, 3, 4, 5, 6];
+router13.get("/self-check", async (_req, res) => {
+  const checks = [];
+  const assigned = /* @__PURE__ */ new Set();
+  for (const list of Object.values(AGENT_TOOLS)) for (const t of list) assigned.add(t);
+  const toolMatrix = REQUIRED_TOOLS.map((name) => {
+    const def = TOOL_REGISTRY[name];
+    const schema = !!def && typeof def.parameters === "object";
+    const handler = !!def && typeof def.run === "function";
+    const inRouter = !!def;
+    const agent = assigned.has(name);
+    return { tool: name, exists: !!def, schema, handler, router: inRouter, agent, ok: !!def && schema && handler && agent };
+  });
+  checks.push({
+    name: "tool_registry_integrity",
+    ok: toolMatrix.every((t) => t.ok),
+    detail: `${toolMatrix.filter((t) => t.ok).length}/${toolMatrix.length} required tools fully wired (schema+handler+router+agent)`,
+    matrix: toolMatrix
+  });
+  let presentIds = [];
+  try {
+    const rows = await db.select({ id: agentsTable.id }).from(agentsTable);
+    presentIds = rows.map((r) => r.id);
+  } catch {
+  }
+  checks.push({
+    name: "agent_roster",
+    ok: REQUIRED_AGENTS.every((id) => presentIds.includes(id)),
+    detail: `${REQUIRED_AGENTS.filter((id) => presentIds.includes(id)).length}/${REQUIRED_AGENTS.length} required agents seeded`
+  });
+  const targets = ["http://127.0.0.1", "http://169.254.169.254", "http://10.0.0.1", "http://192.168.0.1", "http://0.0.0.0"];
+  const ssrf = await Promise.all(targets.map(async (url2) => ({ url: url2, blocked: await ssrfGuard(url2) !== null })));
+  checks.push({
+    name: "ssrf_guard",
+    ok: ssrf.every((s) => s.blocked),
+    detail: `${ssrf.filter((s) => s.blocked).length}/${ssrf.length} internal targets blocked`,
+    targets: ssrf
+  });
+  const integ = integrationStatus();
+  checks.push({
+    name: "integrations",
+    ok: true,
+    detail: `${integ.filter((i) => i.configured).length}/${integ.length} configured`,
+    integrations: integ.map((i) => ({ key: i.key, configured: i.configured }))
+  });
+  let dbOk = false;
+  try {
+    await db.select({ id: agentsTable.id }).from(agentsTable).limit(1);
+    dbOk = true;
+  } catch {
+  }
+  checks.push({ name: "database", ok: dbOk, detail: dbOk ? "reachable" : "unreachable" });
+  const verdict = checks.every((c) => c.ok) ? "PASS" : "PARTIAL";
+  res.json({
+    verdict,
+    generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+    scope: "Runtime self-check \u2014 observes only what the server can prove in-process. Does NOT inspect the repo, build, or UI (the agent sandbox cannot see those). For build/tests/UI evidence use the dev self-test harness.",
+    checks
+  });
+});
+var selfCheck_default = router13;
+
 // src/routes/auth.ts
+var import_express14 = __toESM(require_express2(), 1);
 var router14 = (0, import_express14.Router)();
 router14.post("/auth/login", (req, res) => {
   const password = req.body?.password;
