@@ -9,6 +9,7 @@
     "ui-smoke": "tsx ./src/ui-smoke.ts",
     "responsive-check": "tsx ./src/responsive-check.ts",
     "visual-audit": "tsx ./src/visual-audit.ts",
+    "agentic-test": "tsx ./src/agentic-test.ts",
     "self-test": "tsx ./src/self-test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
