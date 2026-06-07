@@ -60,6 +60,38 @@ export function resolveModel(agentId: number, agentModel: string | null | undefi
   return candidate;
 }
 
+// ─── Buddy AI fallback (OpenAI-compatible) ───────────────────────────────────
+// An optional secondary LLM endpoint (e.g. NeuroBuddy / BOS-OMEGA). When the
+// primary OpenRouter call fails and Buddy is configured, the orchestrator falls
+// back to it so a single-provider outage doesn't kill a run.
+
+export function buddyConfigured(): boolean {
+  return !!(process.env["BUDDY_API_KEY"] && process.env["BUDDY_BASE_URL"]);
+}
+
+/** Non-streaming completion against the Buddy endpoint. Throws on failure. */
+export async function buddyComplete(
+  messages: Array<{ role: string; content: string }>,
+  maxTokens = 1024,
+): Promise<string> {
+  const key = process.env["BUDDY_API_KEY"];
+  const base = process.env["BUDDY_BASE_URL"];
+  if (!key || !base) throw new Error("Buddy fallback is not configured");
+  const model = process.env["BUDDY_MODEL"] ?? "bos-omega";
+  const r = await fetch(`${base.replace(/\/$/, "")}/chat/completions`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${key}`,
+      "Content-Type": "application/json",
+      ...heliconeHeaders(),
+    },
+    body: JSON.stringify({ model, messages, max_tokens: maxTokens }),
+  });
+  if (!r.ok) throw new Error(`Buddy ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  const data = (await r.json()) as { choices?: Array<{ message?: { content?: string } }> };
+  return data.choices?.[0]?.message?.content?.trim() || "(no response)";
+}
+
 export function openrouterHeaders() {
   const key = process.env["OPENROUTER_API_KEY"];
   if (!key) throw new Error("OPENROUTER_API_KEY is not set");

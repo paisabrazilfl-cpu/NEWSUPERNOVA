@@ -300,6 +300,60 @@ export async function e2bExec(language: string, source: string): Promise<string>
   }
 }
 
+// ─── Composio (authenticated SaaS/API tool router) ───────────────────────────
+// Executes authenticated actions across connected SaaS apps (Gmail, Slack,
+// GitHub, Notion, …) via Composio. Gated by ALLOW_COMPOSIO_EXECUTE so it can't
+// fire external writes until the operator explicitly enables it.
+
+export function composioConfigured(): boolean {
+  return !!process.env["COMPOSIO_API_KEY"];
+}
+
+export function composioExecuteEnabled(): boolean {
+  const v = process.env["ALLOW_COMPOSIO_EXECUTE"];
+  return v != null && ["1", "true", "yes", "on"].includes(v.toLowerCase());
+}
+
+export async function composioExecute(input: {
+  endpoint?: string;
+  method?: string;
+  body?: unknown;
+  toolkit?: string;
+  action?: string;
+  arguments?: Record<string, unknown>;
+  connectedAccountId?: string;
+}): Promise<string> {
+  const key = process.env["COMPOSIO_API_KEY"];
+  if (!key) return "error: COMPOSIO_API_KEY is not set.";
+  const base = (process.env["COMPOSIO_BASE_URL"] ?? "https://backend.composio.dev/api/v3.1").replace(/\/$/, "");
+  const endpoint = input.endpoint ?? "/tools/execute/proxy";
+  const method = (input.method ?? "POST").toUpperCase();
+  const body =
+    input.body ??
+    {
+      connectedAccountId: input.connectedAccountId,
+      toolkit: input.toolkit,
+      action: input.action,
+      arguments: input.arguments ?? {},
+    };
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 30000);
+  try {
+    const r = await fetch(`${base}${endpoint.startsWith("/") ? endpoint : `/${endpoint}`}`, {
+      method,
+      headers: { "x-api-key": key, "Content-Type": "application/json" },
+      body: method === "GET" ? undefined : JSON.stringify(body),
+      signal: ctrl.signal,
+    });
+    const text = await r.text();
+    return `Composio → HTTP ${r.status} ${r.statusText}\n${clip(text, 4000)}`;
+  } catch (err) {
+    return `error: Composio call failed: ${String(err).slice(0, 300)}`;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // ─── Status snapshot ─────────────────────────────────────────────────────────
 // A non-secret view of which integrations are configured, for the dashboard /
 // health checks. Only booleans are exposed — never the key values themselves.
@@ -326,5 +380,7 @@ export function integrationStatus(): IntegrationStatus[] {
     { key: "steel", name: "Steel", category: "browser", envVar: "STEEL_API_KEY", configured: has("STEEL_API_KEY") },
     { key: "inngest", name: "Inngest", category: "events", envVar: "INNGEST_EVENT_KEY", configured: has("INNGEST_EVENT_KEY") },
     { key: "e2b", name: "E2B", category: "sandbox", envVar: "E2B_API_KEY", configured: has("E2B_API_KEY") },
+    { key: "composio", name: "Composio", category: "tools", envVar: "COMPOSIO_API_KEY", configured: has("COMPOSIO_API_KEY") },
+    { key: "buddy", name: "Buddy AI (fallback LLM)", category: "llm", envVar: "BUDDY_API_KEY", configured: has("BUDDY_API_KEY") && has("BUDDY_BASE_URL") },
   ];
 }

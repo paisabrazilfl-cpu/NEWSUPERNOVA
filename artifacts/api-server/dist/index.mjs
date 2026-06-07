@@ -58969,6 +58969,43 @@ ${clip(execution.text.trim(), 4e3)}`);
     }
   }
 }
+function composioConfigured() {
+  return !!process.env["COMPOSIO_API_KEY"];
+}
+function composioExecuteEnabled() {
+  const v = process.env["ALLOW_COMPOSIO_EXECUTE"];
+  return v != null && ["1", "true", "yes", "on"].includes(v.toLowerCase());
+}
+async function composioExecute(input) {
+  const key = process.env["COMPOSIO_API_KEY"];
+  if (!key) return "error: COMPOSIO_API_KEY is not set.";
+  const base = (process.env["COMPOSIO_BASE_URL"] ?? "https://backend.composio.dev/api/v3.1").replace(/\/$/, "");
+  const endpoint = input.endpoint ?? "/tools/execute/proxy";
+  const method = (input.method ?? "POST").toUpperCase();
+  const body = input.body ?? {
+    connectedAccountId: input.connectedAccountId,
+    toolkit: input.toolkit,
+    action: input.action,
+    arguments: input.arguments ?? {}
+  };
+  const ctrl = new AbortController();
+  const timer2 = setTimeout(() => ctrl.abort(), 3e4);
+  try {
+    const r = await fetch(`${base}${endpoint.startsWith("/") ? endpoint : `/${endpoint}`}`, {
+      method,
+      headers: { "x-api-key": key, "Content-Type": "application/json" },
+      body: method === "GET" ? void 0 : JSON.stringify(body),
+      signal: ctrl.signal
+    });
+    const text2 = await r.text();
+    return `Composio \u2192 HTTP ${r.status} ${r.statusText}
+${clip(text2, 4e3)}`;
+  } catch (err) {
+    return `error: Composio call failed: ${String(err).slice(0, 300)}`;
+  } finally {
+    clearTimeout(timer2);
+  }
+}
 function integrationStatus() {
   const has = (k) => !!process.env[k];
   return [
@@ -58982,7 +59019,9 @@ function integrationStatus() {
     { key: "firecrawl", name: "Firecrawl", category: "search", envVar: "FIRECRAWL_API_KEY", configured: has("FIRECRAWL_API_KEY") },
     { key: "steel", name: "Steel", category: "browser", envVar: "STEEL_API_KEY", configured: has("STEEL_API_KEY") },
     { key: "inngest", name: "Inngest", category: "events", envVar: "INNGEST_EVENT_KEY", configured: has("INNGEST_EVENT_KEY") },
-    { key: "e2b", name: "E2B", category: "sandbox", envVar: "E2B_API_KEY", configured: has("E2B_API_KEY") }
+    { key: "e2b", name: "E2B", category: "sandbox", envVar: "E2B_API_KEY", configured: has("E2B_API_KEY") },
+    { key: "composio", name: "Composio", category: "tools", envVar: "COMPOSIO_API_KEY", configured: has("COMPOSIO_API_KEY") },
+    { key: "buddy", name: "Buddy AI (fallback LLM)", category: "llm", envVar: "BUDDY_API_KEY", configured: has("BUDDY_API_KEY") && has("BUDDY_BASE_URL") }
   ];
 }
 
@@ -59024,6 +59063,27 @@ function resolveModel(agentId, agentModel, override) {
     return ABBY_DEFAULT_MODEL;
   }
   return candidate;
+}
+function buddyConfigured() {
+  return !!(process.env["BUDDY_API_KEY"] && process.env["BUDDY_BASE_URL"]);
+}
+async function buddyComplete(messages, maxTokens = 1024) {
+  const key = process.env["BUDDY_API_KEY"];
+  const base = process.env["BUDDY_BASE_URL"];
+  if (!key || !base) throw new Error("Buddy fallback is not configured");
+  const model = process.env["BUDDY_MODEL"] ?? "bos-omega";
+  const r = await fetch(`${base.replace(/\/$/, "")}/chat/completions`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${key}`,
+      "Content-Type": "application/json",
+      ...heliconeHeaders()
+    },
+    body: JSON.stringify({ model, messages, max_tokens: maxTokens })
+  });
+  if (!r.ok) throw new Error(`Buddy ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  const data = await r.json();
+  return data.choices?.[0]?.message?.content?.trim() || "(no response)";
 }
 function openrouterHeaders() {
   const key = process.env["OPENROUTER_API_KEY"];
@@ -60114,6 +60174,32 @@ ${stored}` : stored);
       ].join("\n");
     }
   },
+  composio_action: {
+    name: "composio_action",
+    description: "Execute an authenticated action on a connected SaaS app (Gmail, Slack, GitHub, Notion, Calendar, Sheets, CRM, \u2026) via Composio's tool/auth router. Use for real external actions on accounts the operator has connected in Composio. Disabled unless the operator has enabled it.",
+    parameters: {
+      type: "object",
+      properties: {
+        toolkit: { type: "string", description: "Composio toolkit/app slug, e.g. 'gmail', 'slack', 'github'." },
+        action: { type: "string", description: "The action/tool to run, e.g. 'GMAIL_SEND_EMAIL'." },
+        arguments: { type: "object", description: "Action arguments as a key/value object." },
+        connectedAccountId: { type: "string", description: "Optional connected-account id to act as." }
+      },
+      required: ["action"]
+    },
+    run: async (args) => {
+      if (!composioConfigured()) return "error: Composio is not configured (set COMPOSIO_API_KEY).";
+      if (!composioExecuteEnabled()) {
+        return "error: Composio execution is disabled. The operator must set ALLOW_COMPOSIO_EXECUTE=true after connecting accounts.";
+      }
+      return composioExecute({
+        toolkit: args["toolkit"] != null ? String(args["toolkit"]) : void 0,
+        action: args["action"] != null ? String(args["action"]) : void 0,
+        arguments: args["arguments"] ?? {},
+        connectedAccountId: args["connectedAccountId"] != null ? String(args["connectedAccountId"]) : void 0
+      });
+    }
+  },
   social_api: {
     name: "social_api",
     description: "Call the OFFICIAL API of a connected social platform on the operator's own authorized account. OAuth and the access token are fully managed by Replit \u2014 you never see or handle the token. Use this for real reads (profile, media, insights, comments) and writes (publishing) instead of any browser/password login. Run social_accounts first to confirm the platform is connected.",
@@ -60179,7 +60265,7 @@ var AGENT_TOOLS = {
   // CRAWLER — browser
   4: ["memory_write", "memory_search", "web_search", "web_scrape", "http_request", "calculator", "vault_list", "send_message"],
   // VAULT — memory/RAG
-  5: ["http_request", "web_scrape", "web_search", "code_exec", "cloud_code_exec", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "send_message"],
+  5: ["http_request", "web_scrape", "web_search", "code_exec", "cloud_code_exec", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_action", "send_message"],
   // WIRE — APIs
   6: ["web_scrape", "web_search", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "send_message"]
   // MR.NICE — social
@@ -60245,6 +60331,21 @@ async function completeChat(model, system, user) {
   }
   if (!r.ok) {
     const errText = (await r.text()).slice(0, 200);
+    if (buddyConfigured()) {
+      try {
+        const out2 = await buddyComplete(
+          [
+            { role: "system", content: system },
+            { role: "user", content: user }
+          ],
+          800
+        );
+        traceLlmRun({ name: "completeChat", model: "buddy-fallback", input: { system, user }, output: out2, startedAt });
+        return out2;
+      } catch (e) {
+        logger.warn({ e }, "Buddy fallback failed after OpenRouter error");
+      }
+    }
     traceLlmRun({ name: "completeChat", model, input: { system, user }, output: null, startedAt, error: `OpenRouter ${r.status}: ${errText}` });
     throw new Error(`OpenRouter ${r.status}: ${errText}`);
   }
@@ -60274,7 +60375,20 @@ async function completeChatTurn(model, messages, tools) {
     });
   }
   if (!r.ok) {
-    throw new Error(`OpenRouter ${r.status}: ${(await r.text()).slice(0, 200)}`);
+    const errText = (await r.text()).slice(0, 200);
+    if (buddyConfigured()) {
+      try {
+        const textMessages = messages.map((m) => ({
+          role: m.role,
+          content: typeof m.content === "string" ? m.content : ""
+        }));
+        const out = await buddyComplete(textMessages, 1024);
+        return { role: "assistant", content: out };
+      } catch (e) {
+        logger.warn({ e }, "Buddy fallback failed after OpenRouter error (tool turn)");
+      }
+    }
+    throw new Error(`OpenRouter ${r.status}: ${errText}`);
   }
   const data = await r.json();
   const msg = data?.choices?.[0]?.message;

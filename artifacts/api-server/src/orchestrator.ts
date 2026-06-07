@@ -30,6 +30,8 @@ import {
   OPENROUTER_BASE,
   resolveModel,
   openrouterHeaders,
+  buddyConfigured,
+  buddyComplete,
 } from "./routes/ai";
 import { isSwarmPaused } from "./routes/swarm";
 import {
@@ -101,6 +103,23 @@ async function completeChat(model: string, system: string, user: string): Promis
   }
   if (!r.ok) {
     const errText = (await r.text()).slice(0, 200);
+    // Fall back to Buddy AI if configured, so a single-provider outage doesn't
+    // kill the run.
+    if (buddyConfigured()) {
+      try {
+        const out = await buddyComplete(
+          [
+            { role: "system", content: system },
+            { role: "user", content: user },
+          ],
+          800,
+        );
+        traceLlmRun({ name: "completeChat", model: "buddy-fallback", input: { system, user }, output: out, startedAt });
+        return out;
+      } catch (e) {
+        logger.warn({ e }, "Buddy fallback failed after OpenRouter error");
+      }
+    }
     traceLlmRun({ name: "completeChat", model, input: { system, user }, output: null, startedAt, error: `OpenRouter ${r.status}: ${errText}` });
     throw new Error(`OpenRouter ${r.status}: ${errText}`);
   }
@@ -162,7 +181,21 @@ async function completeChatTurn(
     });
   }
   if (!r.ok) {
-    throw new Error(`OpenRouter ${r.status}: ${(await r.text()).slice(0, 200)}`);
+    const errText = (await r.text()).slice(0, 200);
+    // Buddy fallback: tool-free completion so the loop can still make progress.
+    if (buddyConfigured()) {
+      try {
+        const textMessages = messages.map((m) => ({
+          role: m.role,
+          content: typeof (m as { content?: unknown }).content === "string" ? (m as { content: string }).content : "",
+        }));
+        const out = await buddyComplete(textMessages, 1024);
+        return { role: "assistant", content: out };
+      } catch (e) {
+        logger.warn({ e }, "Buddy fallback failed after OpenRouter error (tool turn)");
+      }
+    }
+    throw new Error(`OpenRouter ${r.status}: ${errText}`);
   }
   const data = (await r.json()) as {
     choices?: Array<{ message?: AssistantMessage }>;

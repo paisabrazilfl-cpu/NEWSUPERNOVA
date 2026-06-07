@@ -33,7 +33,15 @@ import {
   isPlatformConnected,
   callPlatformApi,
 } from "./lib/connectors";
-import { tavilySearch, exaSearch, e2bExec, e2bConfigured } from "./lib/integrations";
+import {
+  tavilySearch,
+  exaSearch,
+  e2bExec,
+  e2bConfigured,
+  composioConfigured,
+  composioExecuteEnabled,
+  composioExecute,
+} from "./lib/integrations";
 import { embed, embeddingsConfigured, cosineSimilarity, parseEmbedding } from "./lib/embeddings";
 
 const STEEL_BASE = "https://api.steel.dev/v1";
@@ -781,6 +789,34 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
     },
   },
 
+  composio_action: {
+    name: "composio_action",
+    description:
+      "Execute an authenticated action on a connected SaaS app (Gmail, Slack, GitHub, Notion, Calendar, Sheets, CRM, …) via Composio's tool/auth router. Use for real external actions on accounts the operator has connected in Composio. Disabled unless the operator has enabled it.",
+    parameters: {
+      type: "object",
+      properties: {
+        toolkit: { type: "string", description: "Composio toolkit/app slug, e.g. 'gmail', 'slack', 'github'." },
+        action: { type: "string", description: "The action/tool to run, e.g. 'GMAIL_SEND_EMAIL'." },
+        arguments: { type: "object", description: "Action arguments as a key/value object." },
+        connectedAccountId: { type: "string", description: "Optional connected-account id to act as." },
+      },
+      required: ["action"],
+    },
+    run: async (args) => {
+      if (!composioConfigured()) return "error: Composio is not configured (set COMPOSIO_API_KEY).";
+      if (!composioExecuteEnabled()) {
+        return "error: Composio execution is disabled. The operator must set ALLOW_COMPOSIO_EXECUTE=true after connecting accounts.";
+      }
+      return composioExecute({
+        toolkit: args["toolkit"] != null ? String(args["toolkit"]) : undefined,
+        action: args["action"] != null ? String(args["action"]) : undefined,
+        arguments: (args["arguments"] as Record<string, unknown>) ?? {},
+        connectedAccountId: args["connectedAccountId"] != null ? String(args["connectedAccountId"]) : undefined,
+      });
+    },
+  },
+
   social_api: {
     name: "social_api",
     description:
@@ -849,7 +885,7 @@ export const AGENT_TOOLS: Record<number, string[]> = {
   2: ["code_exec", "cloud_code_exec", "calculator", "http_request", "web_scrape", "web_search", "memory_search", "memory_write", "vault_list", "send_message"], // FORGE — code
   3: ["web_scrape", "web_screenshot", "web_search", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "send_message"], // CRAWLER — browser
   4: ["memory_write", "memory_search", "web_search", "web_scrape", "http_request", "calculator", "vault_list", "send_message"], // VAULT — memory/RAG
-  5: ["http_request", "web_scrape", "web_search", "code_exec", "cloud_code_exec", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "send_message"], // WIRE — APIs
+  5: ["http_request", "web_scrape", "web_search", "code_exec", "cloud_code_exec", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_action", "send_message"], // WIRE — APIs
   6: ["web_scrape", "web_search", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "send_message"], // MR.NICE — social
 };
 

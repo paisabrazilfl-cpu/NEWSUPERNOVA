@@ -33,6 +33,20 @@ services:
         sync: false
       - key: NEUROBUDDY_API_KEY
         sync: false
+      # Buddy AI fallback LLM
+      - key: BUDDY_API_KEY
+        sync: false
+      - key: BUDDY_BASE_URL
+        sync: false
+      - key: BUDDY_MODEL
+        value: bos-omega
+      # Composio tool/auth router (execution off by default)
+      - key: COMPOSIO_API_KEY
+        sync: false
+      - key: COMPOSIO_BASE_URL
+        value: https://backend.composio.dev/api/v3.1
+      - key: ALLOW_COMPOSIO_EXECUTE
+        value: "false"
       # ── Additional integrations (all optional; set the ones you use) ──
       # Observability
       - key: HELICONE_API_KEY

@@ -23,6 +23,12 @@ const REQUIRED_KEYS = ["OPENROUTER_API_KEY", "STEEL_API_KEY", "FIRECRAWL_API_KEY
 // so the script never fails just because an integration isn't configured yet.
 const OPTIONAL_KEYS = [
   "NEUROBUDDY_API_KEY",
+  "BUDDY_API_KEY",
+  "BUDDY_BASE_URL",
+  "BUDDY_MODEL",
+  "COMPOSIO_API_KEY",
+  "COMPOSIO_BASE_URL",
+  "ALLOW_COMPOSIO_EXECUTE",
   "HELICONE_API_KEY",
   "LANGSMITH_API_KEY",
   "LANGSMITH_PROJECT",
