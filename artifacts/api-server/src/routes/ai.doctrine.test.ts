@@ -130,6 +130,14 @@ describe("RESEARCH_PLAYBOOKS — VPD(both) + market research + decks", () => {
   });
 });
 
+describe("RESEARCH_PLAYBOOKS — Tier-1 source policy", () => {
+  it("carries the source hierarchy + evidence labeling + tier1_sources pointer", () => {
+    expect(RESEARCH_PLAYBOOKS).toContain("SOURCE POLICY");
+    expect(RESEARCH_PLAYBOOKS).toContain("CONFIRMED");
+    expect(RESEARCH_PLAYBOOKS.toLowerCase()).toContain("tier1_sources");
+  });
+});
+
 describe("EXECUTION_DOCTRINE — no internal-state / navel-gazing", () => {
   it("forbids reporting on the swarm itself", () => {
     expect(EXECUTION_DOCTRINE).toContain("NEVER REPORT ON THE SWARM ITSELF");
