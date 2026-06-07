@@ -1,9 +1,9 @@
 import { Router } from "express";
 import { db } from "@workspace/db";
-import { agentsTable, messagesTable } from "@workspace/db";
+import { agentsTable, messagesTable, attachmentsTable } from "@workspace/db";
 import { eq, and, inArray, desc } from "drizzle-orm";
-import { llmBaseUrl, heliconeHeaders } from "../lib/integrations";
-import { buildCapabilityCard } from "../tools";
+import { llmBaseUrl, heliconeHeaders, integrationStatus } from "../lib/integrations";
+import { buildCapabilityCard, getToolNamesForAgent } from "../tools";
 import { orchestrateGoal } from "../orchestrator";
 
 const router = Router();
@@ -67,6 +67,26 @@ EXECUTION STANDARD (hold to this on every task):
 - DEEP RESEARCH (whenever the task needs information): do not stop at the first hit. web_search broadly, open the most relevant results with web_scrape, and cross-check every key claim against at least two independent sources. Prefer primary/official sources (official docs, the API itself, the organisation) over aggregators. For GitHub, query the REST API via http_request. Track what is confirmed vs. still uncertain, and keep going until the objective is actually covered.
 - DECIDE, DON'T DEFER: choose sensible defaults instead of asking the operator to fill gaps. Only surface a genuine blocker you truly cannot resolve yourself.
 - DEFINITION OF DONE: before you stop, verify the result satisfies the FULL objective end-to-end. If any part is unmet, state exactly which and why — never present incomplete work as finished.`;
+
+/**
+ * Live reach scan, recomputed at the START of every chat turn: which tools the
+ * agent has and which third-party integrations are actually online right now
+ * (keys present) vs offline. Injected into the system prompt so the agent always
+ * knows its real, current capabilities — and never claims reach it doesn't have.
+ */
+export function buildLiveReachCard(agentId: number): string {
+  const integ = integrationStatus();
+  const live = integ.filter((i) => i.configured).map((i) => i.name);
+  const off = integ.filter((i) => !i.configured).map((i) => i.name);
+  const tools = getToolNamesForAgent(agentId);
+  return (
+    `\n\nLIVE REACH (scanned now, at the start of this turn — trust this over any assumption):\n` +
+    `- Tools available to you: ${tools.length ? tools.join(", ") : "none"}.\n` +
+    `- Integrations ONLINE: ${live.length ? live.join(", ") : "none"}.\n` +
+    `- Integrations OFFLINE (not configured): ${off.length ? off.join(", ") : "none"}.\n` +
+    `Only rely on what is ONLINE. If the operator asks for something that needs an offline integration, say plainly it isn't connected yet and which key enables it — never pretend an offline capability works.`
+  );
+}
 
 // How many prior channel messages to feed back as conversation context.
 const CHAT_HISTORY_LIMIT = 16;
@@ -165,7 +185,7 @@ router.get("/ai/models", async (req, res) => {
 // SSE streaming AI chat — POST /api/ai/chat
 // Body: { message: string, agentId: number, channelId: number, model?: string }
 router.post("/ai/chat", async (req, res) => {
-  const { message, agentId, channelId, model: overrideModel } = req.body ?? {};
+  const { message, agentId, channelId, model: overrideModel, attachmentIds } = req.body ?? {};
 
   if (!message || typeof message !== "string" || !message.trim()) {
     res.status(400).json({ error: "message is required" }); return;
@@ -192,11 +212,49 @@ router.post("/ai/chat", async (req, res) => {
 
   const model = resolveModel(resolvedAgentId, agent.model, overrideModel);
   const persona = AGENT_PERSONAS[resolvedAgentId] ?? `You are ${agent.name}, an AI agent in the ABBY CLAW swarm.`;
-  const systemPrompt = persona + CHAT_MODE_DIRECTIVE + buildCapabilityCard(resolvedAgentId) + ANTI_HALLUCINATION_DIRECTIVE;
+  // Live-reach scan is appended on EVERY turn so the agent always knows its
+  // real, current tools + which integrations are online.
+  const systemPrompt =
+    persona + CHAT_MODE_DIRECTIVE + buildCapabilityCard(resolvedAgentId) + buildLiveReachCard(resolvedAgentId) + ANTI_HALLUCINATION_DIRECTIVE;
+
+  // A user turn may carry uploaded files. Images are sent to the model as vision
+  // input (which also reads text in the image — i.e. OCR); text-like files have
+  // their extracted text appended. Loaded up front so the turn can be built.
+  type ContentPart = { type: "text"; text: string } | { type: "image_url"; image_url: { url: string } };
+  type ORMessage = { role: "system" | "user" | "assistant"; content: string | ContentPart[] };
+  let attachments: Array<typeof attachmentsTable.$inferSelect> = [];
+  if (Array.isArray(attachmentIds) && attachmentIds.length) {
+    const ids = attachmentIds.map((n: unknown) => Number(n)).filter((n: number) => Number.isFinite(n)).slice(0, 8);
+    if (ids.length) {
+      try {
+        attachments = await db.select().from(attachmentsTable).where(inArray(attachmentsTable.id, ids));
+      } catch (err) {
+        req.log.error({ err }, "Failed to load chat attachments");
+      }
+    }
+  }
+  const hasAttachments = attachments.length > 0;
+
+  // Build the multimodal content array for the current user turn (text + images
+  // + extracted file text). Used to replace the last user message's content.
+  const buildUserParts = (text: string): ContentPart[] => {
+    const parts: ContentPart[] = [];
+    if (text.trim()) parts.push({ type: "text", text });
+    for (const a of attachments) {
+      if (a.kind === "image") {
+        parts.push({ type: "image_url", image_url: { url: `data:${a.mimeType};base64,${a.data}` } });
+      } else if (a.extractedText) {
+        parts.push({ type: "text", text: `\n\n[Attached file: ${a.filename}]\n${a.extractedText}` });
+      } else {
+        parts.push({ type: "text", text: `\n\n[Attached file: ${a.filename} (${a.mimeType}) — binary; contents not extractable as text]` });
+      }
+    }
+    if (!parts.length) parts.push({ type: "text", text: "(see attached files)" });
+    return parts;
+  };
 
   // Build conversation context from recent channel history so chat actually
   // remembers the thread instead of treating every message as turn one.
-  type ORMessage = { role: "system" | "user" | "assistant"; content: string };
   const history: ORMessage[] = [];
   try {
     const rows = await db
@@ -230,6 +288,17 @@ router.post("/ai/chat", async (req, res) => {
   }
 
   const chatMessages: ORMessage[] = [{ role: "system", content: systemPrompt }, ...history];
+
+  // If files were uploaded, replace the latest user turn's content with the
+  // multimodal parts (text + images + extracted text) so the model can see them.
+  if (hasAttachments) {
+    for (let i = chatMessages.length - 1; i >= 0; i--) {
+      if (chatMessages[i].role === "user") {
+        chatMessages[i] = { role: "user", content: buildUserParts(message) };
+        break;
+      }
+    }
+  }
 
   // Set up SSE
   res.setHeader("Content-Type", "text/event-stream");
@@ -267,7 +336,15 @@ router.post("/ai/chat", async (req, res) => {
   const tryBuddyFallback = async (reason: string): Promise<boolean> => {
     if (!buddyConfigured()) return false;
     try {
-      const text = await buddyComplete(chatMessages, 700);
+      // Coerce any multimodal parts to text — the Buddy fallback is text-only.
+      const buddyMessages = chatMessages.map((m) => ({
+        role: m.role,
+        content:
+          typeof m.content === "string"
+            ? m.content
+            : m.content.map((p) => (p.type === "text" ? p.text : "[image attachment]")).join("\n"),
+      }));
+      const text = await buddyComplete(buddyMessages, 700);
       if (!text.trim() || text === "(no response)") return false;
       sendEvent({ token: text });
       req.log.warn({ reason }, "AI chat fell back to Buddy");
@@ -284,7 +361,9 @@ router.post("/ai/chat", async (req, res) => {
   // swarm (orchestrateGoal) to execute with tools. Only ABBY routes; other
   // personas stay conversational. Best-effort — any failure falls through to the
   // normal streaming completion below, so chat never hard-breaks.
-  if (resolvedAgentId === ABBY_ID) {
+  // Skipped when files are attached: the CLAW sandbox can't see the upload, so
+  // ABBY answers the image/file directly (vision) rather than dispatching.
+  if (resolvedAgentId === ABBY_ID && !hasAttachments) {
     // Decide deterministically: DISPATCH the swarm, or just chat. We must not rely
     // on the model spontaneously calling a tool during a conversational turn — it
     // frequently NARRATES "dispatching…" without acting, leaving every agent idle.

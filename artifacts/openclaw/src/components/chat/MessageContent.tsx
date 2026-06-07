@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Copy, Check } from "lucide-react";
 
 /**
@@ -69,6 +69,35 @@ function inlineCode(text: string, keyBase: string) {
   });
 }
 
+/**
+ * Render a text run, turning markdown images ![alt](url) into actual <img>
+ * elements (used to show uploaded pictures inline) and leaving the rest to the
+ * inline-code renderer.
+ */
+function renderRun(text: string, keyBase: string) {
+  const img = /!\[([^\]]*)\]\(([^)\s]+)\)/g;
+  const out: ReactNode[] = [];
+  let last = 0;
+  let m: RegExpExecArray | null;
+  let n = 0;
+  while ((m = img.exec(text)) !== null) {
+    if (m.index > last) out.push(...inlineCode(text.slice(last, m.index), `${keyBase}-t${n}`));
+    out.push(
+      <img
+        key={`${keyBase}-img${n}`}
+        src={m[2]}
+        alt={m[1] || "attachment"}
+        className="my-2 max-h-80 max-w-full rounded-lg border border-card-border object-contain"
+        loading="lazy"
+      />,
+    );
+    last = img.lastIndex;
+    n++;
+  }
+  if (last < text.length) out.push(...inlineCode(text.slice(last), `${keyBase}-t${n}`));
+  return out;
+}
+
 export function MessageContent({ content }: { content: string }) {
   const segments = parse(content);
   return (
@@ -78,7 +107,7 @@ export function MessageContent({ content }: { content: string }) {
           <CodeBlock key={i} lang={seg.lang} text={seg.text} />
         ) : (
           <span key={i} className="whitespace-pre-wrap break-words">
-            {inlineCode(seg.text, String(i))}
+            {renderRun(seg.text, String(i))}
           </span>
         ),
       )}

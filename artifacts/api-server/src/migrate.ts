@@ -124,6 +124,17 @@ CREATE TABLE IF NOT EXISTS "vault_secrets" (
   "created_at" timestamp DEFAULT now() NOT NULL,
   "updated_at" timestamp DEFAULT now() NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS "attachments" (
+  "id" serial PRIMARY KEY NOT NULL,
+  "filename" text NOT NULL,
+  "mime_type" text NOT NULL,
+  "kind" text DEFAULT 'other' NOT NULL,
+  "size_bytes" integer DEFAULT 0 NOT NULL,
+  "data" text NOT NULL,
+  "extracted_text" text,
+  "created_at" timestamp DEFAULT now() NOT NULL
+);
 `;
 
 const SEED_AGENTS = `

@@ -15,6 +15,7 @@ import selfCheckRouter from "./selfCheck";
 import authRouter from "./auth";
 import vaultRouter from "./vault";
 import socialRouter from "./social";
+import uploadsRouter from "./uploads";
 import { requireOperator } from "../lib/auth";
 
 const router: IRouter = Router();
@@ -28,6 +29,7 @@ router.use("/swarm", swarmRouter);
 router.use(commandsRouter);
 router.use(steelRouter);
 router.use(aiRouter);
+router.use(uploadsRouter);
 router.use(neurobuddyRouter);
 router.use(externalRouter);
 router.use(integrationsRouter);
