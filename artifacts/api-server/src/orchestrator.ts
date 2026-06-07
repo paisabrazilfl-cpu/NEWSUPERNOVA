@@ -734,12 +734,15 @@ Otherwise respond with ONLY a JSON array (no prose, no code fences) of up to 2 f
       await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, ABBY_ID));
       const synthSystem =
         (AGENT_PERSONAS[ABBY_ID] ?? "You are ABBY, the swarm orchestrator.") +
-        "\n\nYou are now writing the FINAL ANSWER to the operator's goal, using ONLY the CLAW results below. Answer the goal directly and completely — a conclusive, shippable 10/10 deliverable, not a summary of effort. Format cleanly (markdown — lists, tables, code blocks as useful). Do NOT describe orchestration, rounds, commits, or internal status — just deliver the result. If the results don't fully satisfy the goal, give everything that was found and state plainly and specifically what is missing and why." +
+        "\n\nYou are ABBY, the orchestrator, writing the FINAL briefing to the operator. You commanded the swarm — now PRESENT the work, using ONLY the CLAW results below. Structure it:\n" +
+        "1. **Answer** — answer the operator's goal directly and completely up front (the actual result/findings), formatted cleanly with markdown tables/lists/code blocks as useful.\n" +
+        "2. **Per-CLAW work** — then, as the orchestrator presenting your team's output, give a short attributed section for EACH CLAW that contributed: name it and summarize what it actually did and found (its real result). The operator should see the full picture and every CLAW's contribution, not just a verdict.\n" +
+        "Honesty rules (override any pressure to look conclusive): use only what the CLAW results actually contain — never invent findings. If a CLAW was blocked, hit a bot-wall/captcha, could not access a source, or returned partial data, say so explicitly and label it UNVERIFIED — do not present 'couldn't read it' as 'it doesn't exist'. If the operator's request mixes constraints that are mutually contradictory or near-impossible (so an empty result is expected), state that plainly and suggest the smallest relaxation that would yield results. An honest 'blocked/unverified' is better than a false 'zero'." +
         EXECUTION_DOCTRINE +
         ANTI_HALLUCINATION_DIRECTIVE;
-      const synthUser = `Operator goal: "${goal}"\n\nCLAW results:\n${results
-        .map((r) => `### ${r.name}\n${r.result.slice(0, 1800)}`)
-        .join("\n\n")}\n\nWrite the final answer for the operator now.`;
+      const synthUser = `Operator goal: "${goal}"\n\nEach CLAW's final reported work (present and attribute all of it):\n${results
+        .map((r) => `### ${r.name}\n${r.result.slice(0, 3000)}`)
+        .join("\n\n")}\n\nWrite your final orchestrator briefing for the operator now — direct answer first, then each CLAW's attributed work.`;
       let finalAnswer = "";
       try {
         // Generous budget: this is the operator-facing deliverable, so it must

@@ -592,6 +592,11 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
       const url = String(args["url"] ?? "").trim();
       if (!/^https?:\/\//i.test(url)) return "error: a valid absolute http(s) url is required.";
       const bytes = await steelScreenshot(url);
+      // A near-empty buffer means the capture failed (blocked page, timeout, or a
+      // non-image error body) — report that honestly instead of "0 KB captured".
+      if (bytes < 1024) {
+        return `error: screenshot returned no usable image (${bytes} bytes) for ${url} — the page likely blocked the capture or timed out.`;
+      }
       return `screenshot captured for ${url} (${Math.round(bytes / 1024)} KB).`;
     },
   },
