@@ -27,6 +27,7 @@ export function useAiStream(onComplete?: (agentId: number | null) => void) {
     agentId?: number | null;
     channelId: number;
     model?: string;
+    attachmentIds?: number[];
   }) => {
     // Cancel any in-flight stream
     abortRef.current?.abort();
@@ -45,6 +46,7 @@ export function useAiStream(onComplete?: (agentId: number | null) => void) {
           agentId: opts.agentId ?? undefined,
           channelId: opts.channelId,
           model: opts.model,
+          attachmentIds: opts.attachmentIds?.length ? opts.attachmentIds : undefined,
         }),
       });
 

@@ -19,10 +19,19 @@ import {
   MessageSquare, Bot, AlertTriangle, Loader2, Sparkles,
 } from "lucide-react";
 
-// NOTE: there is no file-storage backend. The attach button is a real UI (select,
-// preview, remove) but on send we only note the filename inline so it shows in
-// history. Wire a real upload endpoint here when one exists.
-interface Attachment { name: string; size: number; }
+// Uploaded to /api/uploads on pick; images are rendered inline and sent to ABBY
+// as vision input, text files have their text read by the agent.
+interface Attachment { id: number; name: string; size: number; kind: string; mime: string; url: string; }
+
+// Read a File as a base64 data URL for upload.
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result));
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(file);
+  });
+}
 
 export default function ChatPage() {
   const qc = useQueryClient();
@@ -70,6 +79,7 @@ export default function ChatPage() {
   // ── Composer ──────────────────────────────────────────────────────────────
   const [text, setText] = useState("");
   const [attachment, setAttachment] = useState<Attachment | null>(null);
+  const [uploading, setUploading] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -111,9 +121,17 @@ export default function ChatPage() {
   const send = () => {
     const body = text.trim();
     if ((!body && !attachment) || activeId == null || ai.streaming) return;
-    const composed = attachment
-      ? `${body}${body ? "\n\n" : ""}📎 Attached: ${attachment.name} _(file upload backend not yet wired)_`
-      : body;
+    const att = attachment;
+    // What gets persisted/shown in the feed: images render inline via markdown,
+    // other files show as a labelled link.
+    let composed = body;
+    if (att) {
+      const tag =
+        att.kind === "image"
+          ? `![${att.name}](${resolveApiUrl(att.url)})`
+          : `📎 [${att.name}](${resolveApiUrl(att.url)})`;
+      composed = `${body}${body ? "\n\n" : ""}${tag}`;
+    }
     setText("");
     setAttachment(null);
     requestAnimationFrame(autoGrow);
@@ -122,7 +140,13 @@ export default function ChatPage() {
       {
         onSuccess: () => {
           qc.invalidateQueries({ queryKey: getListMessagesQueryKey(activeId) });
-          ai.send({ message: composed, agentId: null, channelId: activeId });
+          // The model gets the original text plus the attachment id (vision/text).
+          ai.send({
+            message: body || "(see attached file)",
+            agentId: null,
+            channelId: activeId,
+            attachmentIds: att ? [att.id] : undefined,
+          });
         },
         onError: () => toast.error("Couldn't send your message. Try again."),
       },
@@ -136,10 +160,33 @@ export default function ChatPage() {
     }
   };
 
-  const onPickFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const onPickFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
-    if (f) setAttachment({ name: f.name, size: f.size });
     e.target.value = "";
+    if (!f) return;
+    if (f.size > 20 * 1024 * 1024) {
+      toast.error("File too large (max 20 MB).");
+      return;
+    }
+    setUploading(true);
+    try {
+      const dataUrl = await fileToDataUrl(f);
+      const res = await fetch(resolveApiUrl("/api/uploads"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: f.name, mime: f.type || "application/octet-stream", dataBase64: dataUrl }),
+      });
+      if (!res.ok) {
+        const b = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(b.error || `HTTP ${res.status}`);
+      }
+      const a = (await res.json()) as Attachment;
+      setAttachment(a);
+    } catch (err) {
+      toast.error(`Upload failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setUploading(false);
+    }
   };
 
   // ── Conversation actions ────────────────────────────────────────────────
@@ -356,9 +403,19 @@ export default function ChatPage() {
         {/* Composer */}
         <div className="shrink-0 border-t border-card-border bg-background">
           <div className="max-w-3xl mx-auto px-4 py-3">
+            {uploading && (
+              <div className="mb-2 inline-flex items-center gap-2 rounded-lg border border-card-border bg-card px-2.5 py-1.5 text-sm text-muted-foreground">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                Uploading…
+              </div>
+            )}
             {attachment && (
               <div className="mb-2 inline-flex items-center gap-2 rounded-lg border border-card-border bg-card px-2.5 py-1.5 text-sm">
-                <Paperclip className="w-3.5 h-3.5 text-muted-foreground" />
+                {attachment.kind === "image" ? (
+                  <img src={resolveApiUrl(attachment.url)} alt={attachment.name} className="w-8 h-8 rounded object-cover border border-card-border" />
+                ) : (
+                  <Paperclip className="w-3.5 h-3.5 text-muted-foreground" />
+                )}
                 <span className="truncate max-w-[200px]">{attachment.name}</span>
                 <button onClick={() => setAttachment(null)} aria-label="Remove attachment" className="text-muted-foreground hover:text-destructive">
                   <X className="w-3.5 h-3.5" />
@@ -369,11 +426,11 @@ export default function ChatPage() {
               <input ref={fileRef} type="file" className="hidden" onChange={onPickFile} aria-hidden="true" />
               <button
                 onClick={() => fileRef.current?.click()}
-                disabled={activeId == null}
+                disabled={activeId == null || uploading}
                 aria-label="Attach a file"
                 className="p-2 text-muted-foreground hover:text-foreground disabled:opacity-40 transition-colors"
               >
-                <Paperclip className="w-5 h-5" />
+                {uploading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Paperclip className="w-5 h-5" />}
               </button>
               <textarea
                 ref={taRef}
@@ -388,7 +445,7 @@ export default function ChatPage() {
               />
               <button
                 onClick={send}
-                disabled={(!text.trim() && !attachment) || activeId == null || ai.streaming}
+                disabled={(!text.trim() && !attachment) || activeId == null || ai.streaming || uploading}
                 aria-label="Send message"
                 className="p-2.5 rounded-xl bg-primary text-primary-foreground disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 transition-opacity shrink-0"
               >

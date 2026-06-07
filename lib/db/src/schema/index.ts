@@ -6,3 +6,4 @@ export * from "./telemetry";
 export * from "./commands";
 export * from "./memory";
 export * from "./vault";
+export * from "./attachments";
