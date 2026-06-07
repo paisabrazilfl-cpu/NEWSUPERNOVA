@@ -1,31 +1,15 @@
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 import { Copy, Check } from "lucide-react";
 import { resolveApiUrl } from "@workspace/api-client-react";
+import ReactMarkdown, { type Components } from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 /**
- * Dependency-free message renderer. We intentionally avoid pulling in a markdown
- * library (supply-chain + bundle cost); this handles the cases that actually
- * matter for chat: fenced code blocks (```), inline `code`, and safe wrapping of
- * everything else. Plain text is rendered with preserved whitespace.
+ * Full markdown renderer for chat (GitHub-flavored): headings, bold/italic,
+ * lists, blockquotes, tables, links, images, and fenced code with a copy button.
+ * Links to /api/uploads render as download chips so generated artifacts are
+ * one-click downloadable.
  */
-
-type Segment =
-  | { type: "code"; lang: string; text: string }
-  | { type: "text"; text: string };
-
-function parse(content: string): Segment[] {
-  const segments: Segment[] = [];
-  const fence = /```([a-zA-Z0-9_+-]*)\n?([\s\S]*?)```/g;
-  let last = 0;
-  let m: RegExpExecArray | null;
-  while ((m = fence.exec(content)) !== null) {
-    if (m.index > last) segments.push({ type: "text", text: content.slice(last, m.index) });
-    segments.push({ type: "code", lang: m[1] || "", text: m[2].replace(/\n$/, "") });
-    last = fence.lastIndex;
-  }
-  if (last < content.length) segments.push({ type: "text", text: content.slice(last) });
-  return segments.length ? segments : [{ type: "text", text: content }];
-}
 
 function CodeBlock({ lang, text }: { lang: string; text: string }) {
   const [copied, setCopied] = useState(false);
@@ -55,93 +39,80 @@ function CodeBlock({ lang, text }: { lang: string; text: string }) {
   );
 }
 
-/** Render inline `code` spans within a text run. */
-function inlineCode(text: string, keyBase: string) {
-  const parts = text.split(/(`[^`]+`)/g);
-  return parts.map((p, i) => {
-    if (p.startsWith("`") && p.endsWith("`") && p.length > 1) {
-      return (
-        <code key={`${keyBase}-${i}`} className="px-1.5 py-0.5 rounded bg-muted text-foreground font-mono text-[0.85em]">
-          {p.slice(1, -1)}
-        </code>
-      );
-    }
-    return <span key={`${keyBase}-${i}`}>{p}</span>;
-  });
-}
-
-/**
- * Render a text run, turning markdown images ![alt](url) into actual <img>
- * elements (used to show uploaded pictures inline) and leaving the rest to the
- * inline-code renderer.
- */
+// Same-origin in prod; in dev the API lives elsewhere, so route /api links through resolveApiUrl.
 function resolveHref(href: string): string {
-  // Same-origin in prod; in dev the API lives elsewhere, so route /api links through resolveApiUrl.
   return href.startsWith("/api/") ? resolveApiUrl(href) : href;
 }
 
-function renderRun(text: string, keyBase: string) {
-  // Matches markdown images ![alt](url) and links [text](url) in one pass.
-  const re = /(!?)\[([^\]]*)\]\(([^)\s]+)\)/g;
-  const out: ReactNode[] = [];
-  let last = 0;
-  let m: RegExpExecArray | null;
-  let n = 0;
-  while ((m = re.exec(text)) !== null) {
-    if (m.index > last) out.push(...inlineCode(text.slice(last, m.index), `${keyBase}-t${n}`));
-    const isImg = m[1] === "!";
-    const label = m[2];
-    const rawHref = m[3];
-    const href = resolveHref(rawHref);
-    if (isImg) {
-      out.push(
-        <img
-          key={`${keyBase}-img${n}`}
-          src={href}
-          alt={label || "attachment"}
-          className="my-2 max-h-80 max-w-full rounded-lg border border-card-border object-contain"
-          loading="lazy"
-        />,
-      );
-    } else {
-      const isDownload = /[?&]download=1/.test(rawHref) || /\/api\/uploads\//.test(rawHref);
-      out.push(
-        <a
-          key={`${keyBase}-a${n}`}
-          href={href}
-          target="_blank"
-          rel="noopener noreferrer"
-          {...(isDownload ? { download: "" } : {})}
-          className={
-            isDownload
-              ? "inline-flex items-center gap-1.5 my-1 rounded-md border border-[#00e5ff]/50 bg-[#00e5ff]/10 px-2.5 py-1 text-sm font-medium text-[#00e5ff] hover:bg-[#00e5ff]/20 transition-colors no-underline"
-              : "text-[#00e5ff] underline underline-offset-2 hover:text-[#00e5ff]/80 break-words"
-          }
-        >
-          {isDownload ? `⬇ ${label || "Download"}` : label || href}
-        </a>,
-      );
+const components: Components = {
+  h1: ({ children }) => <h1 className="text-xl font-bold mt-3 mb-1.5 first:mt-0">{children}</h1>,
+  h2: ({ children }) => <h2 className="text-lg font-bold mt-3 mb-1.5 first:mt-0">{children}</h2>,
+  h3: ({ children }) => <h3 className="text-base font-semibold mt-2.5 mb-1 first:mt-0">{children}</h3>,
+  h4: ({ children }) => <h4 className="text-sm font-semibold mt-2 mb-1 first:mt-0">{children}</h4>,
+  p: ({ children }) => <p className="my-1.5 leading-relaxed break-words first:mt-0 last:mb-0">{children}</p>,
+  strong: ({ children }) => <strong className="font-semibold text-foreground">{children}</strong>,
+  em: ({ children }) => <em className="italic">{children}</em>,
+  ul: ({ children }) => <ul className="list-disc pl-5 my-1.5 space-y-0.5">{children}</ul>,
+  ol: ({ children }) => <ol className="list-decimal pl-5 my-1.5 space-y-0.5">{children}</ol>,
+  li: ({ children }) => <li className="leading-relaxed">{children}</li>,
+  blockquote: ({ children }) => (
+    <blockquote className="border-l-2 border-[#00e5ff]/50 pl-3 my-2 text-muted-foreground italic">{children}</blockquote>
+  ),
+  hr: () => <hr className="my-3 border-card-border" />,
+  table: ({ children }) => (
+    <div className="my-2 overflow-x-auto rounded-lg border border-card-border">
+      <table className="w-full border-collapse text-[13px]">{children}</table>
+    </div>
+  ),
+  thead: ({ children }) => <thead className="bg-card/60">{children}</thead>,
+  th: ({ children }) => <th className="border border-card-border px-2.5 py-1.5 text-left font-semibold">{children}</th>,
+  td: ({ children }) => <td className="border border-card-border px-2.5 py-1.5 align-top">{children}</td>,
+  a: ({ href, children }) => {
+    const raw = href ?? "";
+    const isDownload = /[?&]download=1/.test(raw) || /\/api\/uploads\//.test(raw);
+    return (
+      <a
+        href={resolveHref(raw)}
+        target="_blank"
+        rel="noopener noreferrer"
+        {...(isDownload ? { download: "" } : {})}
+        className={
+          isDownload
+            ? "inline-flex items-center gap-1.5 my-1 rounded-md border border-[#00e5ff]/50 bg-[#00e5ff]/10 px-2.5 py-1 text-sm font-medium text-[#00e5ff] hover:bg-[#00e5ff]/20 transition-colors no-underline"
+            : "text-[#00e5ff] underline underline-offset-2 hover:text-[#00e5ff]/80 break-words"
+        }
+      >
+        {isDownload ? <>⬇ {children}</> : children}
+      </a>
+    );
+  },
+  img: ({ src, alt }) => (
+    <img
+      src={typeof src === "string" ? resolveHref(src) : src}
+      alt={alt || "attachment"}
+      className="my-2 max-h-80 max-w-full rounded-lg border border-card-border object-contain"
+      loading="lazy"
+    />
+  ),
+  code: ({ className, children }) => {
+    const text = String(children ?? "").replace(/\n$/, "");
+    const match = /language-(\w+)/.exec(className || "");
+    // Block code: has a language class or spans multiple lines.
+    if (match || text.includes("\n")) {
+      return <CodeBlock lang={match?.[1] ?? ""} text={text} />;
     }
-    last = re.lastIndex;
-    n++;
-  }
-  if (last < text.length) out.push(...inlineCode(text.slice(last), `${keyBase}-t${n}`));
-  return out;
-}
+    return <code className="px-1.5 py-0.5 rounded bg-muted text-foreground font-mono text-[0.85em]">{children}</code>;
+  },
+  // `pre` would otherwise wrap our CodeBlock in an extra <pre>; render children directly.
+  pre: ({ children }) => <>{children}</>,
+};
 
 export function MessageContent({ content }: { content: string }) {
-  const segments = parse(content);
   return (
-    <div className="text-[15px] leading-relaxed">
-      {segments.map((seg, i) =>
-        seg.type === "code" ? (
-          <CodeBlock key={i} lang={seg.lang} text={seg.text} />
-        ) : (
-          <span key={i} className="whitespace-pre-wrap break-words">
-            {renderRun(seg.text, String(i))}
-          </span>
-        ),
-      )}
+    <div className="text-[15px] leading-relaxed [&>:first-child]:mt-0 [&>:last-child]:mb-0">
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+        {content}
+      </ReactMarkdown>
     </div>
   );
 }
