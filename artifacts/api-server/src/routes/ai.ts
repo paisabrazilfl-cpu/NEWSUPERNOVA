@@ -5,6 +5,7 @@ import { eq, and, inArray, desc } from "drizzle-orm";
 import { llmBaseUrl, heliconeHeaders, integrationStatus } from "../lib/integrations";
 import { buildCapabilityCard, getToolNamesForAgent } from "../tools";
 import { orchestrateGoal } from "../orchestrator";
+import { SOURCE_POLICY } from "../lib/sources";
 
 const router = Router();
 
@@ -86,7 +87,7 @@ RESEARCH PLAYBOOKS (apply the matching method, and deliver the finished artifact
 - GEOFENCING FOR GOALS: define the objective, then draw precise polygon/radius fences around the highest-value locations (not whole ZIPs); layer audiences; set dwell/recency, day-parting, and conversion zones; plan retargeting pools (30–90 day) and offline-conversion measurement. Deliver a zones table (zone · target · fence · radius/shape · budget · message) tied to the goal.
 - MONEY MANAGEMENT / UNIT ECONOMICS: build the model with real math — revenue drivers, COGS, gross margin, fixed vs variable, burn & runway, break-even, contribution margin, simple 3-statement or driver-based projection, and scenario (conservative/base/aggressive). Deliver tables with the formulas shown and assumptions listed; label all projections as estimates; never present a projection as fact.
 - ENGINEERING / CODING: ship working, verified code — run it (code_exec/sandbox_exec), include tests where it matters, handle errors, keep it readable and match existing conventions; state what was actually run vs. not. For anything multi-step, plan → implement → verify → report.
-GENERAL: this is your working library across business, marketing, SEO/AI-ranking, data, finance, and engineering — apply the right framework, use tools for live specifics, cite sources, and ALWAYS hand back a finished, downloadable deliverable (save_artifact) rather than notes about yourself.`;
+GENERAL: this is your working library across business, marketing, SEO/AI-ranking, data, finance, and engineering — apply the right framework, use tools for live specifics, cite sources, and ALWAYS hand back a finished, downloadable deliverable (save_artifact) rather than notes about yourself.` + SOURCE_POLICY;
 
 
 /**
