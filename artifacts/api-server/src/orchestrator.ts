@@ -50,8 +50,14 @@ type Agent = typeof agentsTable.$inferSelect;
 
 const ABBY_COLOR = "#00e5ff";
 
-/** Max autonomous reasoning/tool steps per CLAW directive (cost guardrail). */
-const MAX_AGENT_STEPS = 6;
+/**
+ * Max autonomous reasoning/tool steps per CLAW directive. Bounded for cost, but
+ * set high enough for genuine deep research inside a single directive (broad
+ * search → several scrapes → cross-checking multiple independent sources →
+ * synthesis) so the exhaustive standard in EXECUTION_DOCTRINE is actually
+ * reachable rather than truncated mid-investigation.
+ */
+const MAX_AGENT_STEPS = 10;
 
 /**
  * Crash/restart recovery. Execution is in-process and fire-and-forget, so a
@@ -82,8 +88,13 @@ export async function reconcileStaleWork(): Promise<void> {
 
 // ─── Low-level helpers ───────────────────────────────────────────────────────
 
-/** Non-streaming OpenRouter completion. Returns the assistant text. */
-async function completeChat(model: string, system: string, user: string): Promise<string> {
+/**
+ * Non-streaming OpenRouter completion. Returns the assistant text. `maxTokens`
+ * defaults to a small budget (planning/review emit short JSON), but callers that
+ * produce the operator-facing deliverable (final synthesis) pass a larger budget
+ * so a 10/10 answer isn't truncated.
+ */
+async function completeChat(model: string, system: string, user: string, maxTokens = 800): Promise<string> {
   const startedAt = new Date();
   let r: Response;
   try {
@@ -97,7 +108,7 @@ async function completeChat(model: string, system: string, user: string): Promis
           { role: "user", content: user },
         ],
         stream: false,
-        max_tokens: 800,
+        max_tokens: maxTokens,
       }),
     });
   } catch (err) {
@@ -115,7 +126,7 @@ async function completeChat(model: string, system: string, user: string): Promis
             { role: "system", content: system },
             { role: "user", content: user },
           ],
-          800,
+          maxTokens,
         );
         traceLlmRun({ name: "completeChat", model: "buddy-fallback", input: { system, user }, output: out, startedAt });
         return out;
@@ -163,7 +174,7 @@ async function completeChatTurn(
   messages: ChatMessage[],
   tools: Array<Record<string, unknown>>,
 ): Promise<AssistantMessage> {
-  const body: Record<string, unknown> = { model, messages, stream: false, max_tokens: 1024 };
+  const body: Record<string, unknown> = { model, messages, stream: false, max_tokens: 2048 };
   if (tools.length) {
     body["tools"] = tools;
     body["tool_choice"] = "auto";
@@ -192,7 +203,7 @@ async function completeChatTurn(
           role: m.role,
           content: typeof (m as { content?: unknown }).content === "string" ? (m as { content: string }).content : "",
         }));
-        const out = await buddyComplete(textMessages, 1024);
+        const out = await buddyComplete(textMessages, 2048);
         return { role: "assistant", content: out };
       } catch (e) {
         logger.warn({ e }, "Buddy fallback failed after OpenRouter error (tool turn)");
@@ -731,7 +742,9 @@ Otherwise respond with ONLY a JSON array (no prose, no code fences) of up to 2 f
         .join("\n\n")}\n\nWrite the final answer for the operator now.`;
       let finalAnswer = "";
       try {
-        finalAnswer = (await completeChat(model, synthSystem, synthUser)).trim();
+        // Generous budget: this is the operator-facing deliverable, so it must
+        // not be truncated the way an 800-token planning call would be.
+        finalAnswer = (await completeChat(model, synthSystem, synthUser, 4000)).trim();
       } catch (e) {
         logger.error({ e }, "final synthesis failed");
       }
