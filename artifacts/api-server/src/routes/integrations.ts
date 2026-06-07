@@ -1,13 +1,24 @@
 /**
- * OPENCLAW OMEGA — Integration status.
+ * OPENCLAW OMEGA — Integration status + Composio connection management.
  *
- * Reports which third-party integrations are configured on the server. Returns
- * ONLY booleans + metadata — never any key value — so it is safe to surface in
- * the dashboard.
+ * GET /api/integrations is public-safe (booleans only, no key values).
+ *
+ * The /api/integrations/composio/* endpoints drive connecting external apps
+ * (Gmail, Slack, GitHub, …) into Composio so the agent swarm can act on them.
+ * They are operator-gated (requireOperator) because they initiate OAuth and
+ * expose which accounts are connected.
  */
 
 import { Router } from "express";
-import { integrationStatus } from "../lib/integrations";
+import {
+  integrationStatus,
+  composioConfigured,
+  composioListToolkits,
+  composioListConnections,
+  composioConnect,
+  composioConnectionStatus,
+} from "../lib/integrations";
+import { requireOperator } from "../lib/auth";
 
 const router = Router();
 
@@ -19,6 +30,69 @@ router.get("/integrations", (_req, res) => {
     configuredCount: items.filter((i) => i.configured).length,
     total: items.length,
   });
+});
+
+// ─── Composio connection management ──────────────────────────────────────────
+
+function guardComposio(res: import("express").Response): boolean {
+  if (!composioConfigured()) {
+    res.status(400).json({ error: "Composio is not configured — set COMPOSIO_API_KEY." });
+    return false;
+  }
+  return true;
+}
+
+// GET /api/integrations/composio/toolkits?search=gmail — list connectable apps
+router.get("/integrations/composio/toolkits", requireOperator, async (req, res) => {
+  if (!guardComposio(res)) return;
+  try {
+    const search = typeof req.query["search"] === "string" ? req.query["search"] : undefined;
+    res.json({ toolkits: await composioListToolkits(search) });
+  } catch (err) {
+    req.log.error({ err }, "composio: list toolkits failed");
+    res.status(502).json({ error: String(err instanceof Error ? err.message : err) });
+  }
+});
+
+// GET /api/integrations/composio/connections — list connected accounts + status
+router.get("/integrations/composio/connections", requireOperator, async (req, res) => {
+  if (!guardComposio(res)) return;
+  try {
+    res.json({ connections: await composioListConnections() });
+  } catch (err) {
+    req.log.error({ err }, "composio: list connections failed");
+    res.status(502).json({ error: String(err instanceof Error ? err.message : err) });
+  }
+});
+
+// POST /api/integrations/composio/connect  { toolkit, userId? }
+// Finds-or-creates the app's auth config and initiates a connection. Returns the
+// OAuth authorize URL the operator opens to approve access.
+router.post("/integrations/composio/connect", requireOperator, async (req, res) => {
+  if (!guardComposio(res)) return;
+  const { toolkit, userId } = (req.body ?? {}) as { toolkit?: string; userId?: string };
+  if (!toolkit?.trim()) {
+    res.status(400).json({ error: "toolkit is required (e.g. 'gmail', 'slack', 'github')." });
+    return;
+  }
+  try {
+    const result = await composioConnect(toolkit.trim(), userId?.trim() || "operator");
+    res.status(201).json(result);
+  } catch (err) {
+    req.log.error({ err, toolkit }, "composio: connect failed");
+    res.status(502).json({ error: String(err instanceof Error ? err.message : err) });
+  }
+});
+
+// GET /api/integrations/composio/connections/:id — poll a connection's status
+router.get("/integrations/composio/connections/:id", requireOperator, async (req, res) => {
+  if (!guardComposio(res)) return;
+  try {
+    res.json(await composioConnectionStatus(String(req.params.id)));
+  } catch (err) {
+    req.log.error({ err }, "composio: connection status failed");
+    res.status(502).json({ error: String(err instanceof Error ? err.message : err) });
+  }
 });
 
 export default router;

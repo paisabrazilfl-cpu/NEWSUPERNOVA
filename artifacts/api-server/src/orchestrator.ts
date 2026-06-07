@@ -33,6 +33,7 @@ import {
   buddyConfigured,
   buddyComplete,
   ANTI_HALLUCINATION_DIRECTIVE,
+  EXECUTION_DOCTRINE,
 } from "./routes/ai";
 import { isSwarmPaused } from "./routes/swarm";
 import {
@@ -49,8 +50,14 @@ type Agent = typeof agentsTable.$inferSelect;
 
 const ABBY_COLOR = "#00e5ff";
 
-/** Max autonomous reasoning/tool steps per CLAW directive (cost guardrail). */
-const MAX_AGENT_STEPS = 6;
+/**
+ * Max autonomous reasoning/tool steps per CLAW directive. Bounded for cost, but
+ * set high enough for genuine deep research inside a single directive (broad
+ * search → several scrapes → cross-checking multiple independent sources →
+ * synthesis) so the exhaustive standard in EXECUTION_DOCTRINE is actually
+ * reachable rather than truncated mid-investigation.
+ */
+const MAX_AGENT_STEPS = 10;
 
 /**
  * Crash/restart recovery. Execution is in-process and fire-and-forget, so a
@@ -81,8 +88,13 @@ export async function reconcileStaleWork(): Promise<void> {
 
 // ─── Low-level helpers ───────────────────────────────────────────────────────
 
-/** Non-streaming OpenRouter completion. Returns the assistant text. */
-async function completeChat(model: string, system: string, user: string): Promise<string> {
+/**
+ * Non-streaming OpenRouter completion. Returns the assistant text. `maxTokens`
+ * defaults to a small budget (planning/review emit short JSON), but callers that
+ * produce the operator-facing deliverable (final synthesis) pass a larger budget
+ * so a 10/10 answer isn't truncated.
+ */
+async function completeChat(model: string, system: string, user: string, maxTokens = 800): Promise<string> {
   const startedAt = new Date();
   let r: Response;
   try {
@@ -96,7 +108,7 @@ async function completeChat(model: string, system: string, user: string): Promis
           { role: "user", content: user },
         ],
         stream: false,
-        max_tokens: 800,
+        max_tokens: maxTokens,
       }),
     });
   } catch (err) {
@@ -114,7 +126,7 @@ async function completeChat(model: string, system: string, user: string): Promis
             { role: "system", content: system },
             { role: "user", content: user },
           ],
-          800,
+          maxTokens,
         );
         traceLlmRun({ name: "completeChat", model: "buddy-fallback", input: { system, user }, output: out, startedAt });
         return out;
@@ -162,7 +174,7 @@ async function completeChatTurn(
   messages: ChatMessage[],
   tools: Array<Record<string, unknown>>,
 ): Promise<AssistantMessage> {
-  const body: Record<string, unknown> = { model, messages, stream: false, max_tokens: 1024 };
+  const body: Record<string, unknown> = { model, messages, stream: false, max_tokens: 2048 };
   if (tools.length) {
     body["tools"] = tools;
     body["tool_choice"] = "auto";
@@ -191,7 +203,7 @@ async function completeChatTurn(
           role: m.role,
           content: typeof (m as { content?: unknown }).content === "string" ? (m as { content: string }).content : "",
         }));
-        const out = await buddyComplete(textMessages, 1024);
+        const out = await buddyComplete(textMessages, 2048);
         return { role: "assistant", content: out };
       } catch (e) {
         logger.warn({ e }, "Buddy fallback failed after OpenRouter error (tool turn)");
@@ -343,7 +355,7 @@ export async function executeAgentCommand(opts: {
     const toolGuide = toolNames.length
       ? `\n\nYou are an autonomous tool-using agent. Call tools to gather real data and perform real work instead of guessing — chain multiple calls when needed, and avoid repeating a call that already returned (it wastes time and budget). When the directive is fully satisfied, stop calling tools and reply with your final concrete result (no preamble).${buildCapabilityCard(agent.id)}`
       : "";
-    const system = persona + toolGuide + ANTI_HALLUCINATION_DIRECTIVE;
+    const system = persona + toolGuide + EXECUTION_DOCTRINE + ANTI_HALLUCINATION_DIRECTIVE;
 
     const messages: ChatMessage[] = [
       { role: "system", content: system },
@@ -617,14 +629,17 @@ export async function orchestrateGoal(opts: {
     const roster = claws
       .map((c) => `${c.id}=${c.name} (${c.role ?? "agent"})`)
       .join(", ");
-    const planSystem = AGENT_PERSONAS[ABBY_ID] ?? "You are ABBY, the swarm orchestrator.";
+    const planSystem = (AGENT_PERSONAS[ABBY_ID] ?? "You are ABBY, the swarm orchestrator.") + EXECUTION_DOCTRINE;
     const planUser = `Operator goal: "${goal}"
 
 Available CLAWs you command: ${roster}.
 
-Decompose this goal into concrete, actionable directives — ONE per CLAW that is genuinely relevant (skip CLAWs that add nothing). For web/competitor/scraping work, route to the browser CLAW and INCLUDE a concrete https:// URL inside the directive so it can actually fetch live data.
+Decompose this goal into precise, exhaustive, granular directives — ONE per CLAW that is genuinely relevant (skip CLAWs that add nothing). Together the directives must cover EVERY part of the goal; leave nothing implied. Each directive MUST be:
+- SELF-CONTAINED: state the exact objective, the concrete inputs/targets (specific https:// URLs, API endpoints, file names, or data), and the expected output and its format. Assume the CLAW sees ONLY this directive — no other context.
+- GRANULAR & CONCLUSIVE: spell out the steps and the DEFINITION OF DONE — what the finished deliverable must contain for that part of the goal to count as fully met (a 10/10, shippable result, not a draft or outline).
+- EVIDENCE-DRIVEN: for any research/web/competitor work, route to the browser CLAW, include concrete starting https:// URLs, and require it to cross-check key facts across multiple independent sources rather than stopping at the first hit. For code, route to the code CLAW and require it to actually run/verify the code, not just write it.
 
-Respond with ONLY a JSON array (no prose, no code fences) of objects shaped: {"agentId": <number>, "directive": "<single actionable instruction>"}. Maximum 5 directives.`;
+Respond with ONLY a JSON array (no prose, no code fences) of objects shaped: {"agentId": <number>, "directive": "<single, fully-specified instruction>"}. Maximum 5 directives.`;
 
     const model = resolveModel(ABBY_ID, abby?.model, undefined);
     const planRaw = await completeChat(model, planSystem, planUser);
@@ -679,8 +694,10 @@ Respond with ONLY a JSON array (no prose, no code fences) of objects shaped: {"a
 Round 1 CLAW results:
 ${results.map((r) => `- ${r.name}: ${r.result.slice(0, 500)}`).join("\n")}
 
-Is the goal now FULLY satisfied? If yes, respond with exactly: []
-If not, respond with ONLY a JSON array (no prose) of up to 2 follow-up directives to finish it, shaped {"agentId": <number>, "directive": "<instruction>"}. Available CLAWs: ${roster}.`;
+First, internally assess which parts of the goal are VERIFIED by the real tool output above versus still missing, unverified, or only assumed — judge only on evidence actually present in the results, never on work no result shows. Do this reasoning silently; do not write it out.
+
+Then, if every part of the goal is verified and complete, respond with exactly: []
+Otherwise respond with ONLY a JSON array (no prose, no code fences) of up to 2 follow-up directives that close the remaining gap, each shaped {"agentId": <number>, "directive": "<instruction>"}. Available CLAWs: ${roster}.`;
       let followups: Directive[] = [];
       try {
         const reviewRaw = await completeChat(model, planSystem, reviewUser);
@@ -717,14 +734,17 @@ If not, respond with ONLY a JSON array (no prose) of up to 2 follow-up directive
       await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, ABBY_ID));
       const synthSystem =
         (AGENT_PERSONAS[ABBY_ID] ?? "You are ABBY, the swarm orchestrator.") +
-        "\n\nYou are now writing the FINAL ANSWER to the operator's goal, using ONLY the CLAW results below. Answer the goal directly and completely, formatted cleanly (markdown — lists, tables, code blocks as useful). Do NOT describe orchestration, rounds, commits, or internal status — just deliver the result. If the results don't fully satisfy the goal, give what was found and state plainly what is missing." +
+        "\n\nYou are now writing the FINAL ANSWER to the operator's goal, using ONLY the CLAW results below. Answer the goal directly and completely — a conclusive, shippable 10/10 deliverable, not a summary of effort. Format cleanly (markdown — lists, tables, code blocks as useful). Do NOT describe orchestration, rounds, commits, or internal status — just deliver the result. If the results don't fully satisfy the goal, give everything that was found and state plainly and specifically what is missing and why." +
+        EXECUTION_DOCTRINE +
         ANTI_HALLUCINATION_DIRECTIVE;
       const synthUser = `Operator goal: "${goal}"\n\nCLAW results:\n${results
         .map((r) => `### ${r.name}\n${r.result.slice(0, 1800)}`)
         .join("\n\n")}\n\nWrite the final answer for the operator now.`;
       let finalAnswer = "";
       try {
-        finalAnswer = (await completeChat(model, synthSystem, synthUser)).trim();
+        // Generous budget: this is the operator-facing deliverable, so it must
+        // not be truncated the way an 800-token planning call would be.
+        finalAnswer = (await completeChat(model, synthSystem, synthUser, 4000)).trim();
       } catch (e) {
         logger.error({ e }, "final synthesis failed");
       }

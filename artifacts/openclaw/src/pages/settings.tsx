@@ -218,6 +218,9 @@ function VaultPanel() {
           {/* Official social integrations */}
           <SocialIntegrations />
 
+          {/* Composio — connect SaaS apps (Gmail, Slack, GitHub, …) */}
+          <ComposioIntegrations />
+
           {/* Security notice */}
           <div className="flex gap-3 rounded-lg border border-[#bf00ff]/30 bg-[#bf00ff]/5 p-4">
             <ShieldCheck className="w-5 h-5 text-[#bf00ff] shrink-0 mt-0.5" />
@@ -547,6 +550,204 @@ function SocialIntegrations() {
             </div>
           ))}
         </div>
+      )}
+    </div>
+  );
+}
+
+// Popular Composio toolkits offered as one-click connect chips. Any other app
+// can be connected by typing its slug.
+const POPULAR_TOOLKITS = ["gmail", "slack", "github", "notion", "googlecalendar", "googlesheets", "linear", "discord"];
+
+interface ComposioConnection {
+  id: string;
+  toolkit: string;
+  status: string;
+}
+
+// Authenticated fetch to an operator-gated endpoint. credentials:"include" sends
+// the httpOnly session cookie (same-origin in prod, cross-origin in dev).
+async function authedFetch(path: string, init?: RequestInit): Promise<Response> {
+  return fetch(resolveApiUrl(path), { ...init, credentials: "include" });
+}
+
+function ComposioIntegrations() {
+  const [slug, setSlug] = useState("");
+  const [connecting, setConnecting] = useState<string | null>(null);
+
+  const { data, isLoading, isError, error, refetch, isFetching } = useQuery<{ connections: ComposioConnection[] }>({
+    queryKey: ["composio-connections"],
+    retry: false,
+    queryFn: async () => {
+      const r = await authedFetch("/api/integrations/composio/connections");
+      if (!r.ok) {
+        const body = (await r.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error || `HTTP ${r.status}`);
+      }
+      return r.json();
+    },
+  });
+
+  const notConfigured = isError && /not configured/i.test(error instanceof Error ? error.message : "");
+  const connections = data?.connections ?? [];
+  const statusFor = (toolkit: string) =>
+    connections.find((c) => c.toolkit.toLowerCase() === toolkit.toLowerCase())?.status ?? null;
+
+  const connect = async (toolkit: string) => {
+    const t = toolkit.trim().toLowerCase();
+    if (!t) return;
+    setConnecting(t);
+    try {
+      const r = await authedFetch("/api/integrations/composio/connect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ toolkit: t }),
+      });
+      const body = (await r.json().catch(() => ({}))) as { error?: string; redirectUrl?: string | null; status?: string };
+      if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
+      if (body.redirectUrl) {
+        window.open(body.redirectUrl, "_blank", "noopener,noreferrer");
+        toast.success(`Authorize ${t} in the new tab, then hit Refresh.`);
+      } else {
+        toast.success(`${t}: ${body.status ?? "initiated"}`);
+      }
+      setSlug("");
+      setTimeout(() => refetch(), 1500);
+    } catch (e) {
+      toast.error(`Connect failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setConnecting(null);
+    }
+  };
+
+  const StatusBadge = ({ status }: { status: string | null }) => {
+    if (status === "ACTIVE")
+      return (
+        <span className="inline-flex items-center gap-1 text-[10px] font-mono uppercase tracking-wider text-[#00cc88] bg-[#00cc88]/10 border border-[#00cc88]/40 rounded px-1.5 py-0.5">
+          <Check className="w-3 h-3" /> Connected
+        </span>
+      );
+    if (status)
+      return (
+        <span className="text-[10px] font-mono uppercase tracking-wider text-[#f59e0b] bg-[#f59e0b]/10 border border-[#f59e0b]/40 rounded px-1.5 py-0.5">
+          {status === "INITIATED" ? "Awaiting approval" : status}
+        </span>
+      );
+    return null;
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-3">
+        <div className="w-10 h-10 bg-muted rounded-lg flex items-center justify-center border border-muted-border shrink-0">
+          <Plug className="w-5 h-5 text-[#bf00ff]" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <h2 className="text-lg font-bold tracking-tight text-foreground">CONNECT APPS (COMPOSIO)</h2>
+          <p className="text-sm text-muted-foreground">
+            Authorize SaaS apps so agents can act on them with{" "}
+            <code className="px-1 py-0.5 rounded bg-muted text-[#bf00ff] font-mono text-xs">composio_action</code>.
+          </p>
+        </div>
+        <button
+          onClick={() => refetch()}
+          disabled={isFetching || notConfigured}
+          title="Refresh connection status"
+          className="flex items-center gap-1.5 text-xs font-mono uppercase tracking-wider text-muted-foreground hover:text-[#bf00ff] border border-muted-border hover:border-[#bf00ff]/50 rounded-md px-3 py-2 transition-colors disabled:opacity-50 shrink-0"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${isFetching ? "animate-spin" : ""}`} />
+          Refresh
+        </button>
+      </div>
+
+      {notConfigured ? (
+        <div className="flex gap-3 rounded-lg border border-muted-border bg-card/50 p-4 text-sm text-muted-foreground">
+          <ShieldAlert className="w-5 h-5 text-muted-foreground shrink-0 mt-0.5" />
+          <span>
+            Composio isn't configured. Add <code className="px-1 py-0.5 rounded bg-muted text-foreground font-mono text-xs">COMPOSIO_API_KEY</code>{" "}
+            (Settings → vault or the server env), then refresh.
+          </span>
+        </div>
+      ) : (
+        <>
+          <div className="flex gap-3 rounded-lg border border-[#bf00ff]/30 bg-[#bf00ff]/5 p-4">
+            <ShieldCheck className="w-5 h-5 text-[#bf00ff] shrink-0 mt-0.5" />
+            <div className="text-sm text-muted-foreground leading-relaxed">
+              <span className="font-semibold text-foreground">Connect</span> opens the app's OAuth screen in a new
+              tab. Approve access there, then <span className="font-semibold text-foreground">Refresh</span> — the
+              status flips to Connected. Tokens are held by Composio and never exposed to the agents.
+            </div>
+          </div>
+
+          {/* Quick-connect chips */}
+          <div className="flex flex-wrap gap-2">
+            {POPULAR_TOOLKITS.map((t) => {
+              const status = statusFor(t);
+              return (
+                <button
+                  key={t}
+                  onClick={() => connect(t)}
+                  disabled={connecting === t || status === "ACTIVE"}
+                  className={cn(
+                    "flex items-center gap-1.5 text-xs font-mono rounded-md px-3 py-1.5 border transition-colors disabled:opacity-60",
+                    status === "ACTIVE"
+                      ? "text-[#00cc88] border-[#00cc88]/40 bg-[#00cc88]/10"
+                      : "text-foreground border-muted-border hover:border-[#bf00ff]/50 hover:text-[#bf00ff]",
+                  )}
+                >
+                  {status === "ACTIVE" ? <Check className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
+                  {t}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Any-app connect by slug */}
+          <div className="flex gap-2">
+            <input
+              value={slug}
+              onChange={(e) => setSlug(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && connect(slug)}
+              placeholder="other app slug, e.g. airtable, hubspot, jira"
+              className="flex-1 bg-background border border-muted-border rounded-md px-3 py-2 text-sm text-foreground font-mono focus:outline-none focus:border-[#bf00ff] transition-colors"
+            />
+            <button
+              onClick={() => connect(slug)}
+              disabled={!slug.trim() || connecting === slug.trim().toLowerCase()}
+              className="flex items-center gap-1.5 bg-[#bf00ff]/10 hover:bg-[#bf00ff]/20 border border-[#bf00ff]/50 text-[#bf00ff] rounded-md px-4 py-2 text-sm font-semibold uppercase tracking-wider transition-colors disabled:opacity-50 shrink-0"
+            >
+              <ExternalLink className="w-4 h-4" />
+              Connect
+            </button>
+          </div>
+
+          {/* Existing connections */}
+          {isLoading ? (
+            <div className="text-sm text-muted-foreground font-mono opacity-50">Loading connections…</div>
+          ) : connections.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-muted-border p-6 text-center text-sm text-muted-foreground font-mono opacity-60">
+              No connected apps yet. Pick one above to connect.
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {connections.map((c) => (
+                <div
+                  key={c.id}
+                  className="flex items-center gap-4 rounded-lg border border-card-border bg-card px-4 py-3"
+                >
+                  <Plug className="w-4 h-4 text-[#bf00ff] shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold text-sm text-foreground">{c.toolkit}</span>
+                      <StatusBadge status={c.status} />
+                    </div>
+                    <p className="text-xs text-muted-foreground font-mono truncate mt-0.5">{c.id}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
       )}
     </div>
   );
