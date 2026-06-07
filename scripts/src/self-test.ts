@@ -76,6 +76,8 @@ async function main() {
     await endpoint("self-check", "/api/self-check", (s, b) => s === 200 && b.includes('"verdict"'));
     const ui = sh("pnpm", ["--filter", "@workspace/scripts", "run", "ui-smoke"]);
     gates.push({ name: "ui-smoke (playwright)", status: ui.code === 0 ? "PASS" : "FAIL", detail: (ui.out.match(/\d+\/\d+ routes OK/) ?? ["see log"])[0] });
+    const resp = sh("pnpm", ["--filter", "@workspace/scripts", "run", "responsive-check"]);
+    gates.push({ name: "responsive (3 viewports)", status: resp.code === 0 ? "PASS" : "FAIL", detail: resp.out.includes("no horizontal overflow") ? "no overflow mobile/tablet/desktop" : "overflow detected" });
   } else {
     for (const n of ["health", "integrations", "channels", "cron", "openai-models", "ui-smoke (playwright)"])
       gates.push({ name: n, status: "NOT RUN", detail: "BASE_URL not set (no running server)" });

@@ -357,7 +357,7 @@ export default function ChatPage() {
                 rows={1}
                 disabled={activeId == null}
                 aria-label="Message"
-                placeholder={ai.streaming ? "Waiting for the response…" : "Message the swarm…  (Enter to send, Shift+Enter for a new line)"}
+                placeholder={ai.streaming ? "Waiting for the response…" : "Message the swarm…"}
                 className="flex-1 min-w-0 resize-none bg-transparent py-2 text-[15px] leading-relaxed focus:outline-none placeholder:text-muted-foreground/60 max-h-[200px]"
               />
               <button

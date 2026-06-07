@@ -7,6 +7,7 @@
     "hello": "tsx ./src/hello.ts",
     "render:set-env": "tsx ./src/render-set-env.ts",
     "ui-smoke": "tsx ./src/ui-smoke.ts",
+    "responsive-check": "tsx ./src/responsive-check.ts",
     "self-test": "tsx ./src/self-test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
