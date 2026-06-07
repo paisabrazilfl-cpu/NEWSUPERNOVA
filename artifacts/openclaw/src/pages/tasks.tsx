@@ -3,7 +3,7 @@ import { LayoutGrid, Clock, PlayCircle, CheckCircle2, XCircle, PauseCircle } fro
 import { cn } from "@/lib/utils";
 
 export default function Tasks() {
-  const { data: tasks = [], isLoading } = useListTasks();
+  const { data: tasks = [], isLoading, isError, refetch } = useListTasks();
 
   const getStatusIcon = (status: string) => {
     switch(status) {
@@ -57,6 +57,15 @@ export default function Tasks() {
                 <tr>
                   <td colSpan={5} className="p-8 text-center text-muted-foreground animate-pulse">
                     Scanning queue...
+                  </td>
+                </tr>
+              ) : isError ? (
+                <tr>
+                  <td colSpan={5} className="p-8 text-center text-muted-foreground">
+                    <div className="flex flex-col items-center gap-2">
+                      <span>Couldn't load the task queue.</span>
+                      <button onClick={() => refetch()} className="text-xs underline text-foreground hover:text-primary">Retry</button>
+                    </div>
                   </td>
                 </tr>
               ) : tasks.length === 0 ? (

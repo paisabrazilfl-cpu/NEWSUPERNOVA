@@ -1,9 +1,9 @@
 import { useListAgents } from "@workspace/api-client-react";
 import { AgentStatusDot } from "@/components/ui/agent-status-dot";
-import { Terminal, Shield, Cpu, Activity, Info } from "lucide-react";
+import { Terminal, Cpu, Activity, AlertTriangle, RefreshCw } from "lucide-react";
 
 export default function Agents() {
-  const { data: agents = [], isLoading } = useListAgents();
+  const { data: agents = [], isLoading, isError, refetch } = useListAgents();
 
   return (
     <div className="flex-1 flex flex-col h-full bg-background overflow-hidden relative">
@@ -25,6 +25,20 @@ export default function Agents() {
             {[1, 2, 3].map(i => (
               <div key={i} className="h-64 bg-card/50 rounded-xl border border-card-border animate-pulse"></div>
             ))}
+          </div>
+        ) : isError ? (
+          <div className="flex flex-col items-center justify-center py-20 gap-3 text-center">
+            <AlertTriangle className="w-8 h-8 text-destructive" />
+            <div className="text-sm text-muted-foreground">Couldn't load the agent roster.</div>
+            <button onClick={() => refetch()} className="flex items-center gap-2 px-4 py-1.5 rounded-lg border border-card-border text-sm text-foreground hover:border-primary/40 transition-all">
+              <RefreshCw className="w-4 h-4" /> Retry
+            </button>
+          </div>
+        ) : agents.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-20 gap-3 text-center">
+            <Terminal className="w-8 h-8 text-muted-foreground/40" />
+            <div className="text-sm text-muted-foreground">No agents found.</div>
+            <div className="text-xs text-muted-foreground/60 max-w-sm">The swarm seeds six CLAW agents on first run. If none appear, the server may still be starting up.</div>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">

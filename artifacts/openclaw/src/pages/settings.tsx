@@ -29,6 +29,7 @@ import {
 } from "@workspace/api-client-react";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
 
 export default function Settings() {
   const { data: auth, isLoading: authLoading } = useGetAuthStatus();
@@ -132,7 +133,12 @@ function VaultPanel() {
     queryClient.invalidateQueries({ queryKey: getListVaultSecretsQueryKey() });
 
   const setSecret = useSetVaultSecret({ mutation: { onSuccess: invalidate } });
-  const deleteSecret = useDeleteVaultSecret({ mutation: { onSuccess: invalidate } });
+  const deleteSecret = useDeleteVaultSecret({
+    mutation: {
+      onSuccess: () => { invalidate(); toast.success("Secret deleted."); },
+      onError: () => toast.error("Couldn't delete secret."),
+    },
+  });
   const logout = useLogout({
     mutation: {
       onSuccess: () => {
@@ -168,6 +174,7 @@ function VaultPanel() {
           setName("");
           setValue("");
           setDescription("");
+          toast.success("Secret encrypted & stored.");
         },
         onError: () => setError("Failed to store secret. Check the server logs."),
       },
