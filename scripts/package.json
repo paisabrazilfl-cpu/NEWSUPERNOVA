@@ -9,9 +9,14 @@
     "ui-smoke": "tsx ./src/ui-smoke.ts",
     "responsive-check": "tsx ./src/responsive-check.ts",
     "visual-audit": "tsx ./src/visual-audit.ts",
+    "vault:backup": "tsx ./src/vault-backup.ts backup",
+    "vault:restore": "tsx ./src/vault-backup.ts restore",
     "agentic-test": "tsx ./src/agentic-test.ts",
     "self-test": "tsx ./src/self-test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@workspace/db": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "catalog:",

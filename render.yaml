@@ -19,6 +19,12 @@ services:
         value: 10000
       - key: BASE_PATH
         value: /
+      # ⚠️ CRITICAL — SESSION_SECRET is the key that decrypts the in-app vault
+      #    (AES-256-GCM). If this value EVER changes, every stored secret becomes
+      #    PERMANENTLY unreadable. `generateValue: true` sets it once and keeps it
+      #    across deploys — do NOT regenerate it, edit it, or recreate the service
+      #    without first copying the current value. Keep an off-site copy of it,
+      #    and back up the vault: `pnpm --filter @workspace/scripts vault:backup`.
       - key: SESSION_SECRET
         generateValue: true
       - key: OPERATOR_PASSWORD
@@ -87,9 +93,14 @@ services:
       - key: SANDBOX_GITHUB_TOKEN
         sync: false
 
+# ⚠️ Keep `plan` IN SYNC with the Render dashboard. A blueprint re-sync applies
+#    the value below, so if it says `free` while the dashboard is on a paid plan,
+#    a sync could try to downgrade — and Render DELETES free Postgres after ~30
+#    days. Set this to your actual paid plan slug. Back up regardless:
+#    `pnpm --filter @workspace/scripts vault:backup` (encrypted, off-database).
 databases:
   - name: bos-aura-db
-    plan: free
+    plan: free   # TODO: set to the paid plan slug shown in the Render dashboard
     region: oregon
     databaseName: openclaw_db_te42
     user: openclaw_db_te42_user
