@@ -38,6 +38,16 @@ branch is created, it gets its own dated section here.
   `n8n_trigger:`, `firecrawl:`, `exec:`…) with real natural-language goals the
   swarm actually executes; fixed the misleading command-tab placeholder.
 
+### UI/UX Phase 0 — make it honest + stop the bleeding
+- **0a. Fix live 402**: OpenRouter failures (e.g. out-of-credits) in `/ai/chat` and
+  `/ai/complete` now fall back to Buddy AI instead of surfacing a raw error;
+  default `max_tokens` lowered; clearer error hint.
+- **0b. Real cron UI**: `cron.tsx` was 100% hardcoded mock data — now wired to the
+  live `/api/cron` endpoints (list/create/toggle/trigger/delete) with loading,
+  empty, error states and toast feedback. It drives the real scheduler.
+- **0c.** Removed the dead HITL "Authorize/Deny" buttons (no backend; they did nothing).
+- **0d.** Surfaced `/api/integrations` as a real status panel in Settings.
+
 ### Notes
 - The GO/HOLD/ABORT policy/approval gate was prototyped and then **removed at the
   operator's request** — no risk-tiered governance ships.

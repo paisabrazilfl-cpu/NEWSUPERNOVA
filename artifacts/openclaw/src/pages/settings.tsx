@@ -25,8 +25,10 @@ import {
   getListSocialPlatformsQueryKey,
   useLogin,
   useLogout,
+  resolveApiUrl,
 } from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, useQuery } from "@tanstack/react-query";
+import { cn } from "@/lib/utils";
 
 export default function Settings() {
   const { data: auth, isLoading: authLoading } = useGetAuthStatus();
@@ -203,6 +205,9 @@ function VaultPanel() {
 
       <div className="flex-1 overflow-y-auto p-8 relative z-10">
         <div className="max-w-3xl mx-auto space-y-8">
+          {/* Third-party integration status */}
+          <IntegrationsStatus />
+
           {/* Official social integrations */}
           <SocialIntegrations />
 
@@ -351,6 +356,96 @@ function VaultPanel() {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+interface IntegrationItem {
+  key: string;
+  name: string;
+  category: string;
+  configured: boolean;
+  envVar: string;
+}
+
+function IntegrationsStatus() {
+  const { data, isLoading, isError, refetch } = useQuery<{
+    integrations: IntegrationItem[];
+    configuredCount: number;
+    total: number;
+  }>({
+    queryKey: ["integrations-status"],
+    queryFn: async () => {
+      const r = await fetch(resolveApiUrl("/api/integrations"));
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r.json();
+    },
+  });
+
+  const items = data?.integrations ?? [];
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-3">
+        <div className="w-10 h-10 bg-muted rounded-lg flex items-center justify-center border border-muted-border shrink-0">
+          <Plug className="w-5 h-5 text-[#00e5ff]" />
+        </div>
+        <div className="flex-1">
+          <h2 className="text-lg font-bold tracking-tight text-foreground">Integrations</h2>
+          <p className="text-xs text-muted-foreground">
+            Which third-party providers are configured on the server.
+            {data && (
+              <span className="ml-1 font-mono text-foreground/70">{data.configuredCount}/{data.total} active</span>
+            )}
+          </p>
+        </div>
+        <button
+          onClick={() => refetch()}
+          title="Refresh"
+          className="w-9 h-9 rounded-md border border-muted-border text-muted-foreground hover:text-foreground hover:border-card-border/80 transition-colors flex items-center justify-center"
+        >
+          <RefreshCw className="w-4 h-4" />
+        </button>
+      </div>
+
+      {isLoading ? (
+        <div className="text-sm text-muted-foreground font-mono opacity-50">Loading integration status…</div>
+      ) : isError ? (
+        <div className="flex items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm">
+          <ShieldAlert className="w-5 h-5 text-destructive shrink-0" />
+          <span className="text-muted-foreground">Couldn't reach the integrations endpoint.</span>
+          <button onClick={() => refetch()} className="ml-auto text-xs underline text-foreground hover:text-primary">Retry</button>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          {items.map((it) => (
+            <div
+              key={it.key}
+              className="flex items-center gap-3 rounded-lg border border-card-border bg-card/50 px-3 py-2.5"
+              title={`Set via ${it.envVar}`}
+            >
+              <span
+                className={cn(
+                  "w-2.5 h-2.5 rounded-full shrink-0 shadow-[0_0_8px_currentColor]",
+                  it.configured ? "bg-green-400 text-green-400" : "bg-zinc-600 text-transparent shadow-none",
+                )}
+              />
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-medium text-foreground truncate">{it.name}</div>
+                <div className="text-[10px] uppercase tracking-wider text-muted-foreground/60">{it.category}</div>
+              </div>
+              <span
+                className={cn(
+                  "text-[10px] font-mono font-bold uppercase tracking-wider shrink-0",
+                  it.configured ? "text-green-400" : "text-muted-foreground/40",
+                )}
+              >
+                {it.configured ? "On" : "Off"}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

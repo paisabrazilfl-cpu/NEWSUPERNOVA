@@ -28104,7 +28104,7 @@ var require_pino = __commonJS({
     function pinoBundlerAbsolutePath(p) {
       try {
         const path2 = __require("path");
-        const outputDir = "/home/runner/work/BOS-AURA/BOS-AURA/artifacts/api-server/dist";
+        const outputDir = "/home/user/BOS-AURA/artifacts/api-server/dist";
         return path2.resolve(outputDir, p.replace(/^\.\//, ""));
       } catch (e) {
         const f = new Function("p", "return new URL(p, import.meta.url).pathname");
@@ -59187,6 +59187,35 @@ router7.post("/ai/chat", async (req, res) => {
 `);
   };
   let fullResponse = "";
+  const finishWith = async (text2, usedModel, via) => {
+    if (text2.trim()) {
+      await db.insert(messagesTable).values({
+        channelId,
+        agentId: agent.id,
+        agentName: agent.name,
+        agentColor: agent.color,
+        content: text2.trim(),
+        messageType: "agent",
+        metadata: JSON.stringify({ model: usedModel, generatedBy: via })
+      });
+    }
+    sendEvent({ done: true, agentId: agent.id, agentName: agent.name, model: usedModel });
+    res.end();
+  };
+  const tryBuddyFallback = async (reason) => {
+    if (!buddyConfigured()) return false;
+    try {
+      const text2 = await buddyComplete(chatMessages, 700);
+      if (!text2.trim() || text2 === "(no response)") return false;
+      sendEvent({ token: text2 });
+      req.log.warn({ reason }, "AI chat fell back to Buddy");
+      await finishWith(text2, process.env["BUDDY_MODEL"] ?? "bos-omega", "buddy-fallback");
+      return true;
+    } catch (e) {
+      req.log.error({ e }, "Buddy fallback failed in AI chat");
+      return false;
+    }
+  };
   try {
     const orRes = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
       method: "POST",
@@ -59195,13 +59224,15 @@ router7.post("/ai/chat", async (req, res) => {
         model,
         stream: true,
         messages: chatMessages,
-        max_tokens: 1024
+        max_tokens: 700
       })
     });
     if (!orRes.ok) {
       const errText = await orRes.text();
       req.log.error({ status: orRes.status, errText }, "OpenRouter error");
-      sendEvent({ error: `OpenRouter error ${orRes.status}: ${errText.slice(0, 200)}` });
+      if (await tryBuddyFallback(`openrouter ${orRes.status}`)) return;
+      const hint = orRes.status === 402 ? "OpenRouter is out of credits. Add credits, or configure BUDDY_API_KEY/BUDDY_BASE_URL for automatic fallback." : `OpenRouter error ${orRes.status}: ${errText.slice(0, 200)}`;
+      sendEvent({ error: hint });
       sendEvent({ done: true });
       res.end();
       return;
@@ -59209,6 +59240,7 @@ router7.post("/ai/chat", async (req, res) => {
     const decoder = new TextDecoder();
     const reader = orRes.body?.getReader();
     if (!reader) {
+      if (await tryBuddyFallback("no response body")) return;
       sendEvent({ error: "No response body from OpenRouter" });
       sendEvent({ done: true });
       res.end();
@@ -59273,19 +59305,31 @@ router7.post("/ai/complete", async (req, res) => {
   }
   const model = resolveModel(resolvedAgentId, agent?.model, overrideModel);
   const systemPrompt = resolvedAgentId ? AGENT_PERSONAS[resolvedAgentId] ?? "" : "";
+  const messages = [
+    ...systemPrompt ? [{ role: "system", content: systemPrompt }] : [],
+    { role: "user", content: message }
+  ];
   try {
     const r = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
       method: "POST",
       headers: openrouterHeaders(),
-      body: JSON.stringify({
-        model,
-        messages: [
-          ...systemPrompt ? [{ role: "system", content: systemPrompt }] : [],
-          { role: "user", content: message }
-        ],
-        max_tokens: 512
-      })
+      body: JSON.stringify({ model, messages, max_tokens: 512 })
     });
+    if (!r.ok) {
+      if (buddyConfigured()) {
+        try {
+          const content2 = await buddyComplete(messages, 512);
+          res.json({ content: content2, model: process.env["BUDDY_MODEL"] ?? "bos-omega", agentId: resolvedAgentId, via: "buddy-fallback" });
+          return;
+        } catch (e) {
+          req.log.error({ e }, "Buddy fallback failed in AI complete");
+        }
+      }
+      const errText = (await r.text()).slice(0, 200);
+      const hint = r.status === 402 ? "OpenRouter is out of credits. Add credits or configure Buddy fallback (BUDDY_API_KEY/BUDDY_BASE_URL)." : `OpenRouter error ${r.status}: ${errText}`;
+      res.status(502).json({ error: hint });
+      return;
+    }
     const data = await r.json();
     const content = data.choices?.[0]?.message?.content ?? "";
     res.json({ content, model, agentId: resolvedAgentId });

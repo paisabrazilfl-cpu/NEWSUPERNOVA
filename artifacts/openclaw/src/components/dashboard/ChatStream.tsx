@@ -141,17 +141,6 @@ export function ChatStream({ channelId }: ChatStreamProps) {
                     )}
                     
                     <div className="whitespace-pre-wrap break-words">{msg.content}</div>
-                    
-                    {msg.messageType === 'hitl_request' && (
-                      <div className="flex gap-3 mt-4">
-                        <button className="px-4 py-1.5 bg-accent text-accent-foreground font-bold text-xs uppercase tracking-widest rounded shadow-[0_0_10px_var(--color-accent)] hover:scale-105 transition-transform">
-                          Authorize
-                        </button>
-                        <button className="px-4 py-1.5 bg-background border border-accent/50 text-accent font-bold text-xs uppercase tracking-widest rounded hover:bg-accent/10 transition-colors">
-                          Deny
-                        </button>
-                      </div>
-                    )}
                   </div>
                 </div>
               </div>
