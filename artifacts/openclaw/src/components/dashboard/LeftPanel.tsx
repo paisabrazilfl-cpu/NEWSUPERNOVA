@@ -9,9 +9,12 @@ interface LeftPanelProps {
   setActiveChannelId: (id: number) => void;
   setViewMode: (mode: "canvas" | "chat" | "browser") => void;
   viewMode: "canvas" | "chat" | "browser";
+  /** Mobile drawer state. On md+ the panel is always inline. */
+  open?: boolean;
+  onClose?: () => void;
 }
 
-export function LeftPanel({ activeChannelId, setActiveChannelId, setViewMode, viewMode }: LeftPanelProps) {
+export function LeftPanel({ activeChannelId, setActiveChannelId, setViewMode, viewMode, open = false, onClose }: LeftPanelProps) {
   const { data: channels = [] } = useListChannels();
   const { data: agents = [] } = useListAgents();
 
@@ -32,12 +35,22 @@ export function LeftPanel({ activeChannelId, setActiveChannelId, setViewMode, vi
   };
 
   return (
-    <div className="w-[280px] bg-card/80 border-r border-card-border flex flex-col h-full flex-shrink-0 z-10 backdrop-blur-md">
+    <>
+      {/* Mobile backdrop */}
+      {open && <div className="md:hidden fixed inset-0 bg-black/50 z-30" onClick={onClose} aria-hidden="true" />}
+      <div
+        className={cn(
+          "w-[280px] max-w-[85%] bg-card/95 md:bg-card/80 border-r border-card-border flex flex-col h-full z-40 backdrop-blur-md",
+          "md:static md:translate-x-0 md:z-10 md:flex-shrink-0 md:max-w-none",
+          "fixed inset-y-0 left-0 transition-transform duration-200",
+          open ? "translate-x-0" : "-translate-x-full md:translate-x-0",
+        )}
+      >
       {/* View Toggle */}
       <div className="p-3 border-b border-card-border">
         <div className="flex bg-background border border-card-border p-1 rounded-lg gap-0.5">
           <button
-            onClick={() => setViewMode("canvas")}
+            onClick={() => { setViewMode("canvas"); onClose?.(); }}
             className={cn(
               "flex-1 text-[10px] font-bold px-2 py-1.5 rounded-md transition-all",
               viewMode === "canvas" ? "bg-primary/20 text-primary" : "text-muted-foreground hover:text-foreground"
@@ -47,7 +60,7 @@ export function LeftPanel({ activeChannelId, setActiveChannelId, setViewMode, vi
             SWARM
           </button>
           <button
-            onClick={() => setViewMode("chat")}
+            onClick={() => { setViewMode("chat"); onClose?.(); }}
             className={cn(
               "flex-1 text-[10px] font-bold px-2 py-1.5 rounded-md transition-all",
               viewMode === "chat" ? "bg-primary/20 text-primary" : "text-muted-foreground hover:text-foreground"
@@ -57,7 +70,7 @@ export function LeftPanel({ activeChannelId, setActiveChannelId, setViewMode, vi
             CHAT
           </button>
           <button
-            onClick={() => setViewMode("browser")}
+            onClick={() => { setViewMode("browser"); onClose?.(); }}
             className={cn(
               "flex items-center gap-1 text-[10px] font-bold px-2 py-1.5 rounded-md transition-all",
               viewMode === "browser"
@@ -82,11 +95,12 @@ export function LeftPanel({ activeChannelId, setActiveChannelId, setViewMode, vi
                 onClick={() => {
                   setActiveChannelId(channel.id);
                   setViewMode("chat");
+                  onClose?.();
                 }}
                 className={cn(
                   "w-full flex items-center gap-3 px-2 py-1.5 rounded-md text-sm transition-all text-left",
                   activeChannelId === channel.id && viewMode === "chat"
-                    ? "bg-primary/10 text-primary" 
+                    ? "bg-primary/10 text-primary"
                     : "text-muted-foreground hover:bg-card hover:text-foreground"
                 )}
                 data-testid={`channel-item-${channel.id}`}
@@ -135,6 +149,7 @@ export function LeftPanel({ activeChannelId, setActiveChannelId, setViewMode, vi
           </div>
         </div>
       </div>
-    </div>
+      </div>
+    </>
   );
 }
