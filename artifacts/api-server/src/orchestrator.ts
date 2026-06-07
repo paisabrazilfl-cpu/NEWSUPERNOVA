@@ -33,6 +33,7 @@ import {
   buddyConfigured,
   buddyComplete,
   ANTI_HALLUCINATION_DIRECTIVE,
+  EXECUTION_DOCTRINE,
 } from "./routes/ai";
 import { isSwarmPaused } from "./routes/swarm";
 import {
@@ -343,7 +344,7 @@ export async function executeAgentCommand(opts: {
     const toolGuide = toolNames.length
       ? `\n\nYou are an autonomous tool-using agent. Call tools to gather real data and perform real work instead of guessing — chain multiple calls when needed, and avoid repeating a call that already returned (it wastes time and budget). When the directive is fully satisfied, stop calling tools and reply with your final concrete result (no preamble).${buildCapabilityCard(agent.id)}`
       : "";
-    const system = persona + toolGuide + ANTI_HALLUCINATION_DIRECTIVE;
+    const system = persona + toolGuide + EXECUTION_DOCTRINE + ANTI_HALLUCINATION_DIRECTIVE;
 
     const messages: ChatMessage[] = [
       { role: "system", content: system },
@@ -617,14 +618,17 @@ export async function orchestrateGoal(opts: {
     const roster = claws
       .map((c) => `${c.id}=${c.name} (${c.role ?? "agent"})`)
       .join(", ");
-    const planSystem = AGENT_PERSONAS[ABBY_ID] ?? "You are ABBY, the swarm orchestrator.";
+    const planSystem = (AGENT_PERSONAS[ABBY_ID] ?? "You are ABBY, the swarm orchestrator.") + EXECUTION_DOCTRINE;
     const planUser = `Operator goal: "${goal}"
 
 Available CLAWs you command: ${roster}.
 
-Decompose this goal into concrete, actionable directives — ONE per CLAW that is genuinely relevant (skip CLAWs that add nothing). For web/competitor/scraping work, route to the browser CLAW and INCLUDE a concrete https:// URL inside the directive so it can actually fetch live data.
+Decompose this goal into precise, exhaustive, granular directives — ONE per CLAW that is genuinely relevant (skip CLAWs that add nothing). Together the directives must cover EVERY part of the goal; leave nothing implied. Each directive MUST be:
+- SELF-CONTAINED: state the exact objective, the concrete inputs/targets (specific https:// URLs, API endpoints, file names, or data), and the expected output and its format. Assume the CLAW sees ONLY this directive — no other context.
+- GRANULAR & CONCLUSIVE: spell out the steps and the DEFINITION OF DONE — what the finished deliverable must contain for that part of the goal to count as fully met (a 10/10, shippable result, not a draft or outline).
+- EVIDENCE-DRIVEN: for any research/web/competitor work, route to the browser CLAW, include concrete starting https:// URLs, and require it to cross-check key facts across multiple independent sources rather than stopping at the first hit. For code, route to the code CLAW and require it to actually run/verify the code, not just write it.
 
-Respond with ONLY a JSON array (no prose, no code fences) of objects shaped: {"agentId": <number>, "directive": "<single actionable instruction>"}. Maximum 5 directives.`;
+Respond with ONLY a JSON array (no prose, no code fences) of objects shaped: {"agentId": <number>, "directive": "<single, fully-specified instruction>"}. Maximum 5 directives.`;
 
     const model = resolveModel(ABBY_ID, abby?.model, undefined);
     const planRaw = await completeChat(model, planSystem, planUser);
@@ -719,7 +723,8 @@ Otherwise respond with ONLY a JSON array (no prose, no code fences) of up to 2 f
       await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, ABBY_ID));
       const synthSystem =
         (AGENT_PERSONAS[ABBY_ID] ?? "You are ABBY, the swarm orchestrator.") +
-        "\n\nYou are now writing the FINAL ANSWER to the operator's goal, using ONLY the CLAW results below. Answer the goal directly and completely, formatted cleanly (markdown — lists, tables, code blocks as useful). Do NOT describe orchestration, rounds, commits, or internal status — just deliver the result. If the results don't fully satisfy the goal, give what was found and state plainly what is missing." +
+        "\n\nYou are now writing the FINAL ANSWER to the operator's goal, using ONLY the CLAW results below. Answer the goal directly and completely — a conclusive, shippable 10/10 deliverable, not a summary of effort. Format cleanly (markdown — lists, tables, code blocks as useful). Do NOT describe orchestration, rounds, commits, or internal status — just deliver the result. If the results don't fully satisfy the goal, give everything that was found and state plainly and specifically what is missing and why." +
+        EXECUTION_DOCTRINE +
         ANTI_HALLUCINATION_DIRECTIVE;
       const synthUser = `Operator goal: "${goal}"\n\nCLAW results:\n${results
         .map((r) => `### ${r.name}\n${r.result.slice(0, 1800)}`)
