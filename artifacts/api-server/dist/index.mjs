@@ -86622,6 +86622,9 @@ var TOOL_REGISTRY = {
       const url2 = String(args["url"] ?? "").trim();
       if (!/^https?:\/\//i.test(url2)) return "error: a valid absolute http(s) url is required.";
       const bytes = await steelScreenshot(url2);
+      if (bytes < 1024) {
+        return `error: screenshot returned no usable image (${bytes} bytes) for ${url2} \u2014 the page likely blocked the capture or timed out.`;
+      }
       return `screenshot captured for ${url2} (${Math.round(bytes / 1024)} KB).`;
     }
   },
@@ -88029,14 +88032,14 @@ Otherwise respond with ONLY a JSON array (no prose, no code fences) of up to 2 f
     }
     if (results.length) {
       await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, ABBY_ID2));
-      const synthSystem = (AGENT_PERSONAS[ABBY_ID2] ?? "You are ABBY, the swarm orchestrator.") + "\n\nYou are now writing the FINAL ANSWER to the operator's goal, using ONLY the CLAW results below. Answer the goal directly and completely \u2014 a conclusive, shippable 10/10 deliverable, not a summary of effort. Format cleanly (markdown \u2014 lists, tables, code blocks as useful). Do NOT describe orchestration, rounds, commits, or internal status \u2014 just deliver the result. If the results don't fully satisfy the goal, give everything that was found and state plainly and specifically what is missing and why." + EXECUTION_DOCTRINE + ANTI_HALLUCINATION_DIRECTIVE;
+      const synthSystem = (AGENT_PERSONAS[ABBY_ID2] ?? "You are ABBY, the swarm orchestrator.") + "\n\nYou are ABBY, the orchestrator, writing the FINAL briefing to the operator. You commanded the swarm \u2014 now PRESENT the work, using ONLY the CLAW results below. Structure it:\n1. **Answer** \u2014 answer the operator's goal directly and completely up front (the actual result/findings), formatted cleanly with markdown tables/lists/code blocks as useful.\n2. **Per-CLAW work** \u2014 then, as the orchestrator presenting your team's output, give a short attributed section for EACH CLAW that contributed: name it and summarize what it actually did and found (its real result). The operator should see the full picture and every CLAW's contribution, not just a verdict.\nHonesty rules (override any pressure to look conclusive): use only what the CLAW results actually contain \u2014 never invent findings. If a CLAW was blocked, hit a bot-wall/captcha, could not access a source, or returned partial data, say so explicitly and label it UNVERIFIED \u2014 do not present 'couldn't read it' as 'it doesn't exist'. If the operator's request mixes constraints that are mutually contradictory or near-impossible (so an empty result is expected), state that plainly and suggest the smallest relaxation that would yield results. An honest 'blocked/unverified' is better than a false 'zero'." + EXECUTION_DOCTRINE + ANTI_HALLUCINATION_DIRECTIVE;
       const synthUser = `Operator goal: "${goal}"
 
-CLAW results:
+Each CLAW's final reported work (present and attribute all of it):
 ${results.map((r) => `### ${r.name}
-${r.result.slice(0, 1800)}`).join("\n\n")}
+${r.result.slice(0, 3e3)}`).join("\n\n")}
 
-Write the final answer for the operator now.`;
+Write your final orchestrator briefing for the operator now \u2014 direct answer first, then each CLAW's attributed work.`;
       let finalAnswer = "";
       try {
         finalAnswer = (await completeChat(model, synthSystem, synthUser, 4e3)).trim();
