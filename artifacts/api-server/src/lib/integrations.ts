@@ -354,6 +354,156 @@ export async function composioExecute(input: {
   }
 }
 
+// ─── Composio connection management (connect apps via OAuth) ─────────────────
+// The execution path above can only act on accounts that are ALREADY connected.
+// These helpers drive the connection itself: list available apps, find-or-create
+// a Composio-managed auth config for an app, initiate a connection (returns the
+// OAuth authorize URL the operator approves), and read connection status. This
+// turns "wire it up by hand in the Composio dashboard" into a one-click flow.
+
+function composioBase(): string {
+  return (process.env["COMPOSIO_BASE_URL"] ?? "https://backend.composio.dev/api/v3.1").replace(/\/$/, "");
+}
+
+/** Authenticated call to the Composio management API. Returns parsed JSON or throws. */
+async function composioApi(method: string, path: string, body?: unknown): Promise<Record<string, unknown>> {
+  const key = process.env["COMPOSIO_API_KEY"];
+  if (!key) throw new Error("COMPOSIO_API_KEY is not set");
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 25000);
+  try {
+    const r = await fetch(`${composioBase()}${path.startsWith("/") ? path : `/${path}`}`, {
+      method,
+      headers: { "x-api-key": key, "Content-Type": "application/json" },
+      body: body == null ? undefined : JSON.stringify(body),
+      signal: ctrl.signal,
+    });
+    const text = await r.text();
+    let data: unknown;
+    try {
+      data = text ? JSON.parse(text) : {};
+    } catch {
+      data = { raw: text };
+    }
+    if (!r.ok) {
+      const msg = (data as { error?: { message?: string }; message?: string })?.error?.message
+        ?? (data as { message?: string })?.message
+        ?? text.slice(0, 200);
+      throw new Error(`Composio ${r.status}: ${msg}`);
+    }
+    return (data as Record<string, unknown>) ?? {};
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export interface ComposioToolkit {
+  slug: string;
+  name: string;
+  logo?: string;
+  authSchemes: string[];
+  composioManagedAuthSchemes: string[];
+  noAuth: boolean;
+}
+
+/** List available toolkits (apps), optionally filtered by a search string. */
+export async function composioListToolkits(search?: string, limit = 50): Promise<ComposioToolkit[]> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (search) params.set("search", search);
+  const data = await composioApi("GET", `/toolkits?${params.toString()}`);
+  const items = (data["items"] as Array<Record<string, unknown>>) ?? [];
+  return items.map((t) => {
+    const meta = (t["meta"] as Record<string, unknown>) ?? {};
+    return {
+      slug: String(t["slug"] ?? ""),
+      name: String(t["name"] ?? t["slug"] ?? ""),
+      logo: meta["logo"] != null ? String(meta["logo"]) : undefined,
+      authSchemes: (t["auth_schemes"] as string[]) ?? [],
+      composioManagedAuthSchemes: (t["composio_managed_auth_schemes"] as string[]) ?? [],
+      noAuth: Boolean(t["no_auth"]),
+    };
+  });
+}
+
+export interface ComposioConnection {
+  id: string;
+  toolkit: string;
+  status: string;
+}
+
+/** List the operator's connected accounts (id, app, status). */
+export async function composioListConnections(): Promise<ComposioConnection[]> {
+  const data = await composioApi("GET", "/connected_accounts");
+  const items = (data["items"] as Array<Record<string, unknown>>) ?? [];
+  return items.map((c) => ({
+    id: String(c["id"] ?? ""),
+    toolkit: String((c["toolkit"] as Record<string, unknown>)?.["slug"] ?? c["toolkit"] ?? ""),
+    status: String(c["status"] ?? "UNKNOWN"),
+  }));
+}
+
+/** Find an existing enabled auth config for a toolkit, else create a Composio-managed one. */
+async function findOrCreateAuthConfig(toolkitSlug: string): Promise<string> {
+  const existing = await composioApi("GET", "/auth_configs");
+  const items = (existing["items"] as Array<Record<string, unknown>>) ?? [];
+  const match = items.find(
+    (a) => String((a["toolkit"] as Record<string, unknown>)?.["slug"] ?? "").toLowerCase() === toolkitSlug.toLowerCase()
+      && String(a["status"] ?? "ENABLED") !== "DISABLED",
+  );
+  if (match?.["id"]) return String(match["id"]);
+
+  const created = await composioApi("POST", "/auth_configs", {
+    toolkit: { slug: toolkitSlug },
+    auth_config: { type: "use_composio_managed_auth" },
+  });
+  const id = (created["auth_config"] as Record<string, unknown>)?.["id"] ?? created["id"];
+  if (!id) throw new Error("auth config created but no id was returned");
+  return String(id);
+}
+
+export interface ComposioConnectResult {
+  connectionId: string;
+  status: string;
+  redirectUrl: string | null;
+  authConfigId: string;
+  toolkit: string;
+}
+
+/**
+ * Connect an app end to end: find-or-create the toolkit's auth config, then
+ * initiate a connection for `userId`. Returns the OAuth authorize URL the
+ * operator visits to approve (null for no-auth/API-key apps that complete
+ * without a redirect).
+ */
+export async function composioConnect(toolkitSlug: string, userId = "operator"): Promise<ComposioConnectResult> {
+  const slug = toolkitSlug.trim().toLowerCase();
+  if (!slug) throw new Error("toolkit slug is required");
+  const authConfigId = await findOrCreateAuthConfig(slug);
+  const conn = await composioApi("POST", "/connected_accounts", {
+    auth_config: { id: authConfigId },
+    connection: { user_id: userId },
+  });
+  const connectionData = (conn["connectionData"] as Record<string, unknown>) ?? {};
+  return {
+    connectionId: String(conn["id"] ?? ""),
+    status: String(conn["status"] ?? "INITIATED"),
+    redirectUrl:
+      (conn["redirect_url"] as string) ?? (conn["redirectUrl"] as string) ?? (connectionData["redirectUrl"] as string) ?? null,
+    authConfigId,
+    toolkit: slug,
+  };
+}
+
+/** Read a single connection's current status (INITIATED → ACTIVE once approved). */
+export async function composioConnectionStatus(connectionId: string): Promise<{ id: string; status: string; toolkit: string }> {
+  const c = await composioApi("GET", `/connected_accounts/${encodeURIComponent(connectionId)}`);
+  return {
+    id: String(c["id"] ?? connectionId),
+    status: String(c["status"] ?? "UNKNOWN"),
+    toolkit: String((c["toolkit"] as Record<string, unknown>)?.["slug"] ?? c["toolkit"] ?? ""),
+  };
+}
+
 // ─── Status snapshot ─────────────────────────────────────────────────────────
 // A non-secret view of which integrations are configured, for the dashboard /
 // health checks. Only booleans are exposed — never the key values themselves.
