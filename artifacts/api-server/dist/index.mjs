@@ -28105,7 +28105,7 @@ var require_pino = __commonJS({
     function pinoBundlerAbsolutePath(p) {
       try {
         const path2 = __require("path");
-        const outputDir = "/home/runner/work/BOS-AURA/BOS-AURA/artifacts/api-server/dist";
+        const outputDir = "/home/user/BOS-AURA/artifacts/api-server/dist";
         return path2.resolve(outputDir, p.replace(/^\.\//, ""));
       } catch (e) {
         const f = new Function("p", "return new URL(p, import.meta.url).pathname");
@@ -54235,785 +54235,6 @@ var init_src = __esm({
     }
     pool = new Pool3({ connectionString: process.env.DATABASE_URL });
     db = drizzle(pool, { schema: schema_exports });
-  }
-});
-
-// src/routes/swarm.ts
-function isSwarmPaused() {
-  return swarmPaused;
-}
-var import_express6, router6, swarmPaused, startTime, swarm_default;
-var init_swarm = __esm({
-  "src/routes/swarm.ts"() {
-    "use strict";
-    import_express6 = __toESM(require_express2(), 1);
-    init_src();
-    init_src();
-    init_drizzle_orm();
-    router6 = (0, import_express6.Router)();
-    swarmPaused = false;
-    startTime = Date.now();
-    router6.get("/status", async (req, res) => {
-      try {
-        const [agentStats] = await db.select({
-          total: sql`count(*)::int`,
-          active: sql`count(*) filter (where status != 'idle')::int`
-        }).from(agentsTable);
-        const [taskStats] = await db.select({
-          running: sql`count(*) filter (where status = 'running')::int`,
-          completed: sql`count(*) filter (where status = 'completed')::int`
-        }).from(tasksTable);
-        const [msgStats] = await db.select({
-          total: sql`count(*)::int`
-        }).from(messagesTable);
-        res.json({
-          paused: swarmPaused,
-          activeAgents: agentStats?.active ?? 0,
-          totalAgents: agentStats?.total ?? 0,
-          runningTasks: taskStats?.running ?? 0,
-          completedTasks: taskStats?.completed ?? 0,
-          totalMessages: msgStats?.total ?? 0,
-          uptimeSeconds: Math.floor((Date.now() - startTime) / 1e3)
-        });
-      } catch (err) {
-        req.log.error({ err }, "Failed to get swarm status");
-        res.status(500).json({ error: "Failed to get swarm status" });
-      }
-    });
-    router6.post("/pause", async (req, res) => {
-      swarmPaused = true;
-      await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.status, "thinking"));
-      await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.status, "executing"));
-      const [agentStats] = await db.select({
-        total: sql`count(*)::int`,
-        active: sql`count(*) filter (where status != 'idle')::int`
-      }).from(agentsTable);
-      const [taskStats] = await db.select({
-        running: sql`count(*) filter (where status = 'running')::int`,
-        completed: sql`count(*) filter (where status = 'completed')::int`
-      }).from(tasksTable);
-      const [msgStats] = await db.select({ total: sql`count(*)::int` }).from(messagesTable);
-      res.json({
-        paused: swarmPaused,
-        activeAgents: agentStats?.active ?? 0,
-        totalAgents: agentStats?.total ?? 0,
-        runningTasks: taskStats?.running ?? 0,
-        completedTasks: taskStats?.completed ?? 0,
-        totalMessages: msgStats?.total ?? 0,
-        uptimeSeconds: Math.floor((Date.now() - startTime) / 1e3)
-      });
-    });
-    router6.post("/resume", async (req, res) => {
-      swarmPaused = false;
-      const [agentStats] = await db.select({
-        total: sql`count(*)::int`,
-        active: sql`count(*) filter (where status != 'idle')::int`
-      }).from(agentsTable);
-      const [taskStats] = await db.select({
-        running: sql`count(*) filter (where status = 'running')::int`,
-        completed: sql`count(*) filter (where status = 'completed')::int`
-      }).from(tasksTable);
-      const [msgStats] = await db.select({ total: sql`count(*)::int` }).from(messagesTable);
-      res.json({
-        paused: swarmPaused,
-        activeAgents: agentStats?.active ?? 0,
-        totalAgents: agentStats?.total ?? 0,
-        runningTasks: taskStats?.running ?? 0,
-        completedTasks: taskStats?.completed ?? 0,
-        totalMessages: msgStats?.total ?? 0,
-        uptimeSeconds: Math.floor((Date.now() - startTime) / 1e3)
-      });
-    });
-    swarm_default = router6;
-  }
-});
-
-// src/lib/logger.ts
-var import_pino, isProduction, logger;
-var init_logger2 = __esm({
-  "src/lib/logger.ts"() {
-    "use strict";
-    import_pino = __toESM(require_pino(), 1);
-    isProduction = process.env.NODE_ENV === "production";
-    logger = (0, import_pino.default)({
-      level: process.env.LOG_LEVEL ?? "info",
-      redact: [
-        "req.headers.authorization",
-        "req.headers.cookie",
-        "res.headers['set-cookie']"
-      ],
-      ...isProduction ? {} : {
-        transport: {
-          target: "pino-pretty",
-          options: { colorize: true }
-        }
-      }
-    });
-  }
-});
-
-// src/lib/integrations.ts
-import { randomUUID } from "node:crypto";
-function clip(s, n) {
-  return s.length > n ? `${s.slice(0, n)}
-\u2026[truncated ${s.length - n} chars]` : s;
-}
-function heliconeEnabled() {
-  return !!process.env["HELICONE_API_KEY"];
-}
-function llmBaseUrl() {
-  return heliconeEnabled() ? OPENROUTER_VIA_HELICONE : OPENROUTER_DIRECT;
-}
-function heliconeHeaders(extra) {
-  const key = process.env["HELICONE_API_KEY"];
-  if (!key) return {};
-  return {
-    "Helicone-Auth": `Bearer ${key}`,
-    "Helicone-Cache-Enabled": "false",
-    ...extra
-  };
-}
-function formatHits(provider, query, hits) {
-  if (!hits.length) return `no web results for "${query}" (via ${provider}).`;
-  const body = hits.map((h, i) => `${i + 1}. ${h.title || "(untitled)"}
-   ${h.url}
-   ${clip(h.snippet.trim(), 300)}`).join("\n\n");
-  return `[search provider: ${provider}]
-${body}`;
-}
-async function tavilySearch(query, limit) {
-  const key = process.env["TAVILY_API_KEY"];
-  if (!key) throw new Error("TAVILY_API_KEY is not set");
-  const r = await fetch("https://api.tavily.com/search", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      query,
-      max_results: limit,
-      search_depth: "basic",
-      include_answer: false
-    })
-  });
-  if (!r.ok) throw new Error(`Tavily ${r.status}: ${(await r.text()).slice(0, 200)}`);
-  const data = await r.json();
-  const hits = (data.results ?? []).map((x) => ({
-    title: x.title ?? "",
-    url: x.url ?? "",
-    snippet: x.content ?? ""
-  }));
-  return formatHits("tavily", query, hits);
-}
-async function exaSearch(query, limit) {
-  const key = process.env["EXA_API_KEY"];
-  if (!key) throw new Error("EXA_API_KEY is not set");
-  const r = await fetch("https://api.exa.ai/search", {
-    method: "POST",
-    headers: { "x-api-key": key, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      query,
-      numResults: limit,
-      type: "auto",
-      contents: { text: { maxCharacters: 600 } }
-    })
-  });
-  if (!r.ok) throw new Error(`Exa ${r.status}: ${(await r.text()).slice(0, 200)}`);
-  const data = await r.json();
-  const hits = (data.results ?? []).map((x) => ({
-    title: x.title ?? "",
-    url: x.url ?? "",
-    snippet: x.text ?? ""
-  }));
-  return formatHits("exa", query, hits);
-}
-async function sendInngestEvent(name, data) {
-  const key = process.env["INNGEST_EVENT_KEY"];
-  if (!key) return;
-  try {
-    const ctrl = new AbortController();
-    const timer2 = setTimeout(() => ctrl.abort(), 5e3);
-    try {
-      const r = await fetch(`https://inn.gs/e/${encodeURIComponent(key)}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, data, ts: Date.now() }),
-        signal: ctrl.signal
-      });
-      if (!r.ok) {
-        logger.debug({ status: r.status, event: name }, "inngest: event rejected");
-      }
-    } finally {
-      clearTimeout(timer2);
-    }
-  } catch (err) {
-    logger.debug({ err, event: name }, "inngest: event send failed");
-  }
-}
-function langsmithEnabled() {
-  const key = process.env["LANGSMITH_API_KEY"] ?? process.env["LANGCHAIN_API_KEY"];
-  if (!key) return false;
-  const flag = (process.env["LANGSMITH_TRACING"] ?? process.env["LANGCHAIN_TRACING_V2"] ?? "true").toLowerCase();
-  return flag !== "false" && flag !== "0";
-}
-function dottedTime(d) {
-  const iso = d.toISOString();
-  const [date6, time4] = iso.replace("Z", "").split("T");
-  const [hms, ms = "000"] = time4.split(".");
-  return `${date6.replace(/-/g, "")}T${hms.replace(/:/g, "")}${ms.padEnd(3, "0")}000Z`;
-}
-function traceLlmRun(trace) {
-  if (!langsmithEnabled()) return;
-  void (async () => {
-    try {
-      const key = process.env["LANGSMITH_API_KEY"] ?? process.env["LANGCHAIN_API_KEY"];
-      const endpoint = process.env["LANGSMITH_ENDPOINT"] ?? process.env["LANGCHAIN_ENDPOINT"] ?? "https://api.smith.langchain.com";
-      const project = process.env["LANGSMITH_PROJECT"] ?? process.env["LANGCHAIN_PROJECT"] ?? "openclaw-omega";
-      const id = randomUUID();
-      const start = trace.startedAt;
-      const end = trace.endedAt ?? /* @__PURE__ */ new Date();
-      const body = {
-        id,
-        trace_id: id,
-        dotted_order: `${dottedTime(start)}${id}`,
-        name: trace.name,
-        run_type: "llm",
-        session_name: project,
-        start_time: start.toISOString(),
-        end_time: end.toISOString(),
-        inputs: { input: trace.input },
-        outputs: trace.error ? void 0 : { output: trace.output },
-        error: trace.error,
-        extra: { metadata: { model: trace.model, ...trace.metadata ?? {} } }
-      };
-      const ctrl = new AbortController();
-      const timer2 = setTimeout(() => ctrl.abort(), 5e3);
-      try {
-        const r = await fetch(`${endpoint.replace(/\/$/, "")}/runs`, {
-          method: "POST",
-          headers: { "x-api-key": key, "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-          signal: ctrl.signal
-        });
-        if (!r.ok) logger.debug({ status: r.status }, "langsmith: run rejected");
-      } finally {
-        clearTimeout(timer2);
-      }
-    } catch (err) {
-      logger.debug({ err }, "langsmith: trace failed");
-    }
-  })();
-}
-function e2bConfigured() {
-  return !!process.env["E2B_API_KEY"];
-}
-async function e2bExec(language, source) {
-  const apiKey = process.env["E2B_API_KEY"];
-  if (!apiKey) return "error: E2B_API_KEY is not set \u2014 cloud sandbox is unavailable.";
-  let mod;
-  try {
-    mod = await import(E2B_PKG);
-  } catch {
-    return `error: the E2B SDK (${E2B_PKG}) is not installed on the server. Install it to enable cloud_code_exec.`;
-  }
-  const Sandbox2 = mod?.Sandbox;
-  if (!Sandbox2 || typeof Sandbox2.create !== "function") {
-    return "error: E2B SDK loaded but no Sandbox export was found.";
-  }
-  const lang = language.toLowerCase();
-  const e2bLanguage = lang === "javascript" || lang === "js" || lang === "node" ? "js" : "python";
-  let sandbox;
-  try {
-    sandbox = await Sandbox2.create({ apiKey, timeoutMs: E2B_TIMEOUT_MS });
-    const execution = await sandbox.runCode(source, { language: e2bLanguage });
-    const stdout = (execution.logs?.stdout ?? []).join("");
-    const stderr = (execution.logs?.stderr ?? []).join("");
-    const parts = ["[e2b cloud sandbox]"];
-    if (stdout) parts.push(`stdout:
-${clip(stdout.trim(), 4e3)}`);
-    if (stderr) parts.push(`stderr:
-${clip(stderr.trim(), 4e3)}`);
-    if (execution.error) {
-      parts.push(`error: ${execution.error.name ?? ""} ${execution.error.value ?? ""}`.trim());
-    }
-    if (execution.text && !stdout) parts.push(`result:
-${clip(execution.text.trim(), 4e3)}`);
-    if (parts.length === 1) parts.push("(no output)");
-    return parts.join("\n");
-  } catch (err) {
-    return `error: E2B execution failed: ${String(err).slice(0, 300)}`;
-  } finally {
-    try {
-      await sandbox?.kill();
-    } catch {
-    }
-  }
-}
-function composioConfigured() {
-  return !!process.env["COMPOSIO_API_KEY"];
-}
-function composioExecuteEnabled() {
-  const v = process.env["ALLOW_COMPOSIO_EXECUTE"];
-  return v != null && ["1", "true", "yes", "on"].includes(v.toLowerCase());
-}
-async function composioExecute(input) {
-  const key = process.env["COMPOSIO_API_KEY"];
-  if (!key) return "error: COMPOSIO_API_KEY is not set.";
-  const base = (process.env["COMPOSIO_BASE_URL"] ?? "https://backend.composio.dev/api/v3.1").replace(/\/$/, "");
-  const endpoint = input.endpoint ?? "/tools/execute/proxy";
-  const method = (input.method ?? "POST").toUpperCase();
-  const body = input.body ?? {
-    connectedAccountId: input.connectedAccountId,
-    toolkit: input.toolkit,
-    action: input.action,
-    arguments: input.arguments ?? {}
-  };
-  const ctrl = new AbortController();
-  const timer2 = setTimeout(() => ctrl.abort(), 3e4);
-  try {
-    const r = await fetch(`${base}${endpoint.startsWith("/") ? endpoint : `/${endpoint}`}`, {
-      method,
-      headers: { "x-api-key": key, "Content-Type": "application/json" },
-      body: method === "GET" ? void 0 : JSON.stringify(body),
-      signal: ctrl.signal
-    });
-    const text2 = await r.text();
-    return `Composio \u2192 HTTP ${r.status} ${r.statusText}
-${clip(text2, 4e3)}`;
-  } catch (err) {
-    return `error: Composio call failed: ${String(err).slice(0, 300)}`;
-  } finally {
-    clearTimeout(timer2);
-  }
-}
-function integrationStatus() {
-  const has = (k) => !!process.env[k];
-  return [
-    { key: "openrouter", name: "OpenRouter", category: "llm", envVar: "OPENROUTER_API_KEY", configured: has("OPENROUTER_API_KEY") },
-    { key: "neurobuddy", name: "Buddy AI (NeuroBuddy)", category: "llm", envVar: "NEUROBUDDY_API_KEY", configured: has("NEUROBUDDY_API_KEY") },
-    { key: "helicone", name: "Helicone", category: "observability", envVar: "HELICONE_API_KEY", configured: has("HELICONE_API_KEY") },
-    { key: "langsmith", name: "LangSmith (LangChain)", category: "observability", envVar: "LANGSMITH_API_KEY", configured: langsmithEnabled() },
-    { key: "embeddings", name: "Embeddings (semantic memory)", category: "memory", envVar: "EMBEDDINGS_API_KEY", configured: has("EMBEDDINGS_API_KEY") },
-    { key: "pinecone", name: "Pinecone (vector memory)", category: "memory", envVar: "PINECONE_API_KEY", configured: has("PINECONE_API_KEY") && (has("PINECONE_INDEX_HOST") || has("PINECONE_INDEX_URL") || has("PINECONE_INDEX")) },
-    { key: "tavily", name: "Tavily", category: "search", envVar: "TAVILY_API_KEY", configured: has("TAVILY_API_KEY") },
-    { key: "exa", name: "Exa", category: "search", envVar: "EXA_API_KEY", configured: has("EXA_API_KEY") },
-    { key: "firecrawl", name: "Firecrawl", category: "search", envVar: "FIRECRAWL_API_KEY", configured: has("FIRECRAWL_API_KEY") },
-    { key: "steel", name: "Steel", category: "browser", envVar: "STEEL_API_KEY", configured: has("STEEL_API_KEY") },
-    { key: "inngest", name: "Inngest", category: "events", envVar: "INNGEST_EVENT_KEY", configured: has("INNGEST_EVENT_KEY") },
-    { key: "e2b", name: "E2B", category: "sandbox", envVar: "E2B_API_KEY", configured: has("E2B_API_KEY") },
-    { key: "composio", name: "Composio", category: "tools", envVar: "COMPOSIO_API_KEY", configured: has("COMPOSIO_API_KEY") },
-    { key: "buddy", name: "Buddy AI (fallback LLM)", category: "llm", envVar: "BUDDY_API_KEY", configured: has("BUDDY_API_KEY") && has("BUDDY_BASE_URL") }
-  ];
-}
-var OPENROUTER_DIRECT, OPENROUTER_VIA_HELICONE, E2B_PKG, E2B_TIMEOUT_MS;
-var init_integrations = __esm({
-  "src/lib/integrations.ts"() {
-    "use strict";
-    init_logger2();
-    OPENROUTER_DIRECT = "https://openrouter.ai/api/v1";
-    OPENROUTER_VIA_HELICONE = "https://openrouter.helicone.ai/api/v1";
-    E2B_PKG = "@e2b/code-interpreter";
-    E2B_TIMEOUT_MS = 3e4;
-  }
-});
-
-// src/lib/vault.ts
-import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
-function getKey() {
-  if (cachedKey) return cachedKey;
-  const secret = process.env["SESSION_SECRET"];
-  if (!secret) {
-    throw new Error(
-      "SESSION_SECRET is required to use the secrets vault \u2014 refusing to operate without it."
-    );
-  }
-  cachedKey = scryptSync(secret, "openclaw-vault-v1", 32);
-  return cachedKey;
-}
-function encryptSecret(plaintext) {
-  const iv = randomBytes(12);
-  const cipher = createCipheriv("aes-256-gcm", getKey(), iv);
-  const enc = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
-  return {
-    ciphertext: enc.toString("base64"),
-    iv: iv.toString("base64"),
-    authTag: cipher.getAuthTag().toString("base64")
-  };
-}
-function decryptSecret(rec) {
-  const decipher = createDecipheriv("aes-256-gcm", getKey(), Buffer.from(rec.iv, "base64"));
-  decipher.setAuthTag(Buffer.from(rec.authTag, "base64"));
-  return Buffer.concat([decipher.update(Buffer.from(rec.ciphertext, "base64")), decipher.final()]).toString("utf8");
-}
-async function getSecretValue(name) {
-  const [row] = await db.select().from(vaultSecretsTable).where(eq(vaultSecretsTable.name, name));
-  if (!row) return null;
-  try {
-    return decryptSecret(row);
-  } catch {
-    return null;
-  }
-}
-async function substituteSecrets(input, used) {
-  const names = /* @__PURE__ */ new Set();
-  for (const m of input.matchAll(SECRET_PLACEHOLDER)) names.add(m[1]);
-  if (names.size === 0) return input;
-  const resolved = /* @__PURE__ */ new Map();
-  for (const name of names) {
-    const value = await getSecretValue(name);
-    if (value !== null) {
-      resolved.set(name, value);
-      used?.add(value);
-    }
-  }
-  return input.replace(SECRET_PLACEHOLDER, (full, name) => resolved.get(name) ?? full);
-}
-function redactSecrets(text2, values) {
-  let out = text2;
-  for (const v of values) {
-    if (v && out.includes(v)) out = out.split(v).join("\u2039redacted-secret\u203A");
-  }
-  return out;
-}
-var cachedKey, SECRET_PLACEHOLDER;
-var init_vault2 = __esm({
-  "src/lib/vault.ts"() {
-    "use strict";
-    init_src();
-    init_drizzle_orm();
-    cachedKey = null;
-    SECRET_PLACEHOLDER = /\{\{\s*secret:([A-Za-z0-9_\-]+)\s*\}\}/g;
-  }
-});
-
-// src/lib/connectors.ts
-function getPlatform(key) {
-  return PLATFORMS[key.toLowerCase().trim()];
-}
-function platformKeys() {
-  return Object.keys(PLATFORMS);
-}
-function readAccessToken(settings) {
-  if (!settings || typeof settings !== "object") return null;
-  const s = settings;
-  if (typeof s["access_token"] === "string") return s["access_token"];
-  const oauth = s["oauth"];
-  if (oauth && typeof oauth === "object") {
-    const creds = oauth["credentials"];
-    if (creds && typeof creds === "object") {
-      const t = creds["access_token"];
-      if (typeof t === "string") return t;
-    }
-  }
-  return null;
-}
-async function getConnectorAccessToken(connectorName) {
-  const hostname2 = process.env["REPLIT_CONNECTORS_HOSTNAME"];
-  if (!hostname2) {
-    throw new Error("connector proxy is unavailable in this environment.");
-  }
-  const identity = process.env["REPL_IDENTITY"];
-  const renewal = process.env["WEB_REPL_RENEWAL"];
-  const xReplitToken = identity ? `repl ${identity}` : renewal ? `depl ${renewal}` : null;
-  if (!xReplitToken) {
-    throw new Error("connector proxy auth is unavailable in this environment.");
-  }
-  const ctrl = new AbortController();
-  const timer2 = setTimeout(() => ctrl.abort(), 1e4);
-  let res;
-  try {
-    res = await fetch(
-      `https://${hostname2}/api/v2/connection?include_secrets=true&connector_names=${encodeURIComponent(connectorName)}`,
-      { headers: { Accept: "application/json", X_REPLIT_TOKEN: xReplitToken }, signal: ctrl.signal }
-    );
-  } finally {
-    clearTimeout(timer2);
-  }
-  if (!res.ok) {
-    throw new Error(`connector proxy returned ${res.status}.`);
-  }
-  const data = await res.json();
-  const token = readAccessToken(data.items?.[0]?.settings);
-  if (!token) {
-    throw new Error("not connected \u2014 authorize this platform first (Settings \u2192 Integrations).");
-  }
-  return token;
-}
-async function isPlatformConnected(platform) {
-  try {
-    await getConnectorAccessToken(platform.connectorName);
-    return true;
-  } catch {
-    return false;
-  }
-}
-async function callPlatformApi(opts) {
-  const token = await getConnectorAccessToken(opts.platform.connectorName);
-  const path2 = opts.path.startsWith("/") ? opts.path : `/${opts.path}`;
-  const url2 = new URL(opts.platform.apiBase + path2);
-  const expectedHost = new URL(opts.platform.apiBase).host;
-  if (url2.host !== expectedHost) {
-    throw new Error(`path must stay on ${expectedHost}.`);
-  }
-  if (opts.query) {
-    for (const [k, v] of Object.entries(opts.query)) url2.searchParams.set(k, v);
-  }
-  const headers = {
-    Accept: "application/json",
-    ...opts.platform.extraHeaders ?? {}
-  };
-  if (opts.platform.authStyle === "bearer") {
-    headers["Authorization"] = `Bearer ${token}`;
-  } else {
-    url2.searchParams.set("access_token", token);
-  }
-  const method = opts.method.toUpperCase();
-  const init = { method, headers };
-  if (opts.body != null && opts.body !== "" && method !== "GET" && method !== "DELETE") {
-    headers["Content-Type"] = "application/json";
-    init.body = opts.body;
-  }
-  const ctrl = new AbortController();
-  const timer2 = setTimeout(() => ctrl.abort(), 15e3);
-  try {
-    const r = await fetch(url2.toString(), { ...init, signal: ctrl.signal });
-    const text2 = await r.text();
-    const safe = token ? text2.split(token).join("[redacted-token]") : text2;
-    return { status: r.status, statusText: r.statusText, body: safe };
-  } finally {
-    clearTimeout(timer2);
-  }
-}
-var PLATFORMS;
-var init_connectors = __esm({
-  "src/lib/connectors.ts"() {
-    "use strict";
-    PLATFORMS = {
-      instagram: {
-        key: "instagram",
-        connectorName: "instagram",
-        apiBase: "https://graph.instagram.com",
-        displayName: "Instagram",
-        authStyle: "bearer",
-        docsUrl: "https://developers.facebook.com/docs/instagram-platform",
-        consoleUrl: "https://developers.facebook.com/apps"
-      },
-      facebook: {
-        key: "facebook",
-        connectorName: "facebook",
-        apiBase: "https://graph.facebook.com/v21.0",
-        displayName: "Facebook",
-        authStyle: "bearer",
-        docsUrl: "https://developers.facebook.com/docs/graph-api",
-        consoleUrl: "https://developers.facebook.com/apps"
-      },
-      x: {
-        key: "x",
-        connectorName: "x",
-        apiBase: "https://api.x.com/2",
-        displayName: "X (Twitter)",
-        authStyle: "bearer",
-        docsUrl: "https://developer.x.com/en/docs/x-api",
-        consoleUrl: "https://developer.x.com/en/portal/dashboard"
-      },
-      reddit: {
-        key: "reddit",
-        connectorName: "reddit",
-        apiBase: "https://oauth.reddit.com",
-        displayName: "Reddit",
-        authStyle: "bearer",
-        extraHeaders: { "User-Agent": "openclaw-omega/1.0 (by OPENCLAW OMEGA swarm)" },
-        docsUrl: "https://www.reddit.com/dev/api",
-        consoleUrl: "https://www.reddit.com/prefs/apps"
-      },
-      youtube: {
-        key: "youtube",
-        connectorName: "youtube",
-        apiBase: "https://www.googleapis.com/youtube/v3",
-        displayName: "YouTube",
-        authStyle: "bearer",
-        docsUrl: "https://developers.google.com/youtube/v3/docs",
-        consoleUrl: "https://console.cloud.google.com/apis/library/youtube.googleapis.com"
-      },
-      tiktok: {
-        key: "tiktok",
-        connectorName: "tiktok-personal",
-        apiBase: "https://open.tiktokapis.com/v2",
-        displayName: "TikTok",
-        authStyle: "bearer",
-        docsUrl: "https://developers.tiktok.com/doc/overview",
-        consoleUrl: "https://developers.tiktok.com/apps"
-      }
-    };
-  }
-});
-
-// src/lib/embeddings.ts
-function embeddingsConfigured() {
-  return !!process.env["EMBEDDINGS_API_KEY"];
-}
-function embeddingsModel() {
-  return process.env["EMBEDDINGS_MODEL"] ?? DEFAULT_MODEL;
-}
-async function embed(text2) {
-  const key = process.env["EMBEDDINGS_API_KEY"];
-  if (!key) return null;
-  const input = text2.trim();
-  if (!input) return null;
-  const base = (process.env["EMBEDDINGS_BASE_URL"] ?? DEFAULT_BASE).replace(/\/$/, "");
-  const model = embeddingsModel();
-  const ctrl = new AbortController();
-  const timer2 = setTimeout(() => ctrl.abort(), 15e3);
-  try {
-    const r = await fetch(`${base}/embeddings`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      // Cap input length defensively — embedding models have token limits and we
-      // only store short memory entries anyway.
-      body: JSON.stringify({ model, input: input.slice(0, 8e3) }),
-      signal: ctrl.signal
-    });
-    if (!r.ok) {
-      logger.debug({ status: r.status }, "embeddings: request failed");
-      return null;
-    }
-    const data = await r.json();
-    const vec = data.data?.[0]?.embedding;
-    return Array.isArray(vec) && vec.length ? vec : null;
-  } catch (err) {
-    logger.debug({ err }, "embeddings: call errored");
-    return null;
-  } finally {
-    clearTimeout(timer2);
-  }
-}
-function cosineSimilarity(a, b) {
-  if (a.length !== b.length || a.length === 0) return 0;
-  let dot = 0;
-  let na = 0;
-  let nb = 0;
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i];
-    na += a[i] * a[i];
-    nb += b[i] * b[i];
-  }
-  if (na === 0 || nb === 0) return 0;
-  return dot / (Math.sqrt(na) * Math.sqrt(nb));
-}
-function parseEmbedding(stored) {
-  if (!stored) return null;
-  try {
-    const parsed = JSON.parse(stored);
-    return Array.isArray(parsed) && parsed.every((n) => typeof n === "number") ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-var DEFAULT_BASE, DEFAULT_MODEL;
-var init_embeddings = __esm({
-  "src/lib/embeddings.ts"() {
-    "use strict";
-    init_logger2();
-    DEFAULT_BASE = "https://api.openai.com/v1";
-    DEFAULT_MODEL = "text-embedding-3-small";
-  }
-});
-
-// src/lib/pinecone.ts
-function explicitHost() {
-  const h = process.env["PINECONE_INDEX_HOST"] || process.env["PINECONE_INDEX_URL"];
-  if (!h) return null;
-  const trimmed = h.trim().replace(/\/$/, "");
-  if (!trimmed) return null;
-  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
-}
-async function resolveHost() {
-  const explicit = explicitHost();
-  if (explicit) return explicit;
-  const key = process.env["PINECONE_API_KEY"];
-  const name = process.env["PINECONE_INDEX"]?.trim();
-  if (!key || !name) return null;
-  const cacheKey = `${key}:${name}`;
-  if (cachedHost && cachedHost.key === cacheKey) return cachedHost.host;
-  try {
-    const r = await fetch(`https://api.pinecone.io/indexes/${encodeURIComponent(name)}`, {
-      headers: { "Api-Key": key, "X-Pinecone-API-Version": "2024-07" }
-    });
-    if (!r.ok) {
-      logger.debug({ status: r.status }, "pinecone: describe_index failed");
-      return null;
-    }
-    const data = await r.json();
-    if (!data.host) return null;
-    const h = /^https?:\/\//i.test(data.host) ? data.host : `https://${data.host}`;
-    cachedHost = { key: cacheKey, host: h };
-    return h;
-  } catch (err) {
-    logger.debug({ err }, "pinecone: describe_index errored");
-    return null;
-  }
-}
-function namespace() {
-  return process.env["PINECONE_NAMESPACE"] ?? "";
-}
-function pineconeConfigured() {
-  return !!process.env["PINECONE_API_KEY"] && (!!explicitHost() || !!process.env["PINECONE_INDEX"]?.trim());
-}
-async function pineconeUpsert(id, values, metadata) {
-  const key = process.env["PINECONE_API_KEY"];
-  const base = await resolveHost();
-  if (!key || !base) return false;
-  const ctrl = new AbortController();
-  const timer2 = setTimeout(() => ctrl.abort(), 15e3);
-  try {
-    const r = await fetch(`${base}/vectors/upsert`, {
-      method: "POST",
-      headers: { "Api-Key": key, "Content-Type": "application/json" },
-      body: JSON.stringify({ vectors: [{ id, values, metadata }], namespace: namespace() }),
-      signal: ctrl.signal
-    });
-    if (!r.ok) {
-      logger.debug({ status: r.status }, "pinecone: upsert failed");
-      return false;
-    }
-    return true;
-  } catch (err) {
-    logger.debug({ err }, "pinecone: upsert errored");
-    return false;
-  } finally {
-    clearTimeout(timer2);
-  }
-}
-async function pineconeQuery(values, topK) {
-  const key = process.env["PINECONE_API_KEY"];
-  const base = await resolveHost();
-  if (!key || !base) return null;
-  const ctrl = new AbortController();
-  const timer2 = setTimeout(() => ctrl.abort(), 15e3);
-  try {
-    const r = await fetch(`${base}/query`, {
-      method: "POST",
-      headers: { "Api-Key": key, "Content-Type": "application/json" },
-      body: JSON.stringify({ vector: values, topK, includeMetadata: true, namespace: namespace() }),
-      signal: ctrl.signal
-    });
-    if (!r.ok) {
-      logger.debug({ status: r.status }, "pinecone: query failed");
-      return null;
-    }
-    const data = await r.json();
-    return Array.isArray(data.matches) ? data.matches : [];
-  } catch (err) {
-    logger.debug({ err }, "pinecone: query errored");
-    return null;
-  } finally {
-    clearTimeout(timer2);
-  }
-}
-var cachedHost;
-var init_pinecone = __esm({
-  "src/lib/pinecone.ts"() {
-    "use strict";
-    init_logger2();
-    cachedHost = null;
   }
 });
 
@@ -81547,1965 +80768,6 @@ ${err.stdout}`.toLowerCase();
   }
 });
 
-// src/lib/sandbox.ts
-function sandboxConfigured() {
-  return !!process.env["E2B_API_KEY"];
-}
-function gitWriteConfigured() {
-  return !!process.env["SANDBOX_GITHUB_TOKEN"];
-}
-function clip2(s, n = 6e3) {
-  return s.length > n ? `${s.slice(0, n)}
-\u2026[truncated ${s.length - n} chars]` : s;
-}
-async function execCapture(sbx, cmd, timeoutMs) {
-  try {
-    const r = await sbx.commands.run(cmd, { timeoutMs });
-    return { exitCode: r.exitCode ?? 0, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
-  } catch (e) {
-    const err = e;
-    const res = err.result;
-    if (res || err.exitCode != null || err.stdout != null || err.stderr != null) {
-      return {
-        exitCode: res?.exitCode ?? err.exitCode ?? 1,
-        stdout: res?.stdout ?? err.stdout ?? "",
-        stderr: res?.stderr ?? err.stderr ?? err.message ?? String(e)
-      };
-    }
-    throw e;
-  }
-}
-async function runInSandbox(script, timeoutMs = SANDBOX_TIMEOUT_MS) {
-  const apiKey = process.env["E2B_API_KEY"];
-  if (!apiKey) return "error: E2B_API_KEY is not set \u2014 the cloud sandbox is unavailable.";
-  let sbx = null;
-  try {
-    sbx = await import_e2b.Sandbox.create({ apiKey, timeoutMs });
-    const r = await execCapture(sbx, script, timeoutMs - 5e3);
-    const parts = [`exit code: ${r.exitCode}`];
-    if (r.stdout.trim()) parts.push(`stdout:
-${clip2(r.stdout.trim())}`);
-    if (r.stderr.trim()) parts.push(`stderr:
-${clip2(r.stderr.trim())}`);
-    if (!r.stdout.trim() && !r.stderr.trim()) parts.push("(no output)");
-    return parts.join("\n");
-  } catch (e) {
-    return `error: sandbox execution failed: ${String(e instanceof Error ? e.message : e).slice(0, 300)}`;
-  } finally {
-    try {
-      await sbx?.kill();
-    } catch {
-    }
-  }
-}
-async function must(sbx, cmd, label) {
-  const r = await execCapture(sbx, cmd, 12e4);
-  if (r.exitCode !== 0) throw new Error(`${label} failed (exit ${r.exitCode}): ${clip2((r.stderr || r.stdout || "").trim(), 500)}`);
-  return r.stdout.trim();
-}
-async function repoPr(opts) {
-  const e2bKey = process.env["E2B_API_KEY"];
-  const ghToken = process.env["SANDBOX_GITHUB_TOKEN"];
-  if (!e2bKey) return "error: E2B_API_KEY is not set.";
-  if (!ghToken) return "error: SANDBOX_GITHUB_TOKEN is not set \u2014 agents cannot push/PR until the operator sets it.";
-  const branch = opts.branch.replace(/[^A-Za-z0-9._/-]/g, "-").slice(0, 100);
-  const base = (opts.baseBranch ?? "main").replace(/[^A-Za-z0-9._/-]/g, "-");
-  const authUrl = `https://x-access-token:${ghToken}@github.com/${GITHUB_REPO}.git`;
-  const cleanUrl = `https://github.com/${GITHUB_REPO}.git`;
-  let sbx = null;
-  try {
-    sbx = await import_e2b.Sandbox.create({ apiKey: e2bKey, timeoutMs: SANDBOX_TIMEOUT_MS });
-    await must(sbx, `rm -rf ${WORKDIR} && git clone --depth 1 --branch ${base} '${authUrl}' ${WORKDIR}`, "clone");
-    await must(sbx, `cd ${WORKDIR} && git remote set-url origin '${cleanUrl}' && git config user.email agent@openclaw.local && git config user.name "OpenClaw Agent" && git checkout -b '${branch}'`, "branch setup");
-    const scriptRes = await execCapture(sbx, `cd ${WORKDIR} && ${opts.script}`, 15e4);
-    const scriptOut = clip2(`exit ${scriptRes.exitCode}
-${(scriptRes.stdout || "").trim()}
-${(scriptRes.stderr || "").trim()}`.trim(), 4e3);
-    const status = await must(sbx, `cd ${WORKDIR} && git add -A && git status --porcelain`, "git status");
-    if (!status.trim()) {
-      return `The script ran but produced no file changes \u2014 nothing to open a PR for.
-
-Script output:
-${scriptOut}`;
-    }
-    await must(sbx, `cd ${WORKDIR} && git commit -m ${JSON.stringify(opts.title)}`, "commit");
-    const push = await execCapture(sbx, `cd ${WORKDIR} && git push '${authUrl}' '${branch}' 2>&1 | sed -E 's#x-access-token:[^@]*@#***@#g'`, 6e4);
-    if (push.exitCode !== 0) throw new Error(`push failed (exit ${push.exitCode}): ${clip2((push.stdout || push.stderr).trim(), 300)}`);
-    const pr = await fetch(`${GITHUB_API}/repos/${GITHUB_REPO}/pulls`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${ghToken}`, Accept: "application/vnd.github+json", "Content-Type": "application/json", "User-Agent": "openclaw-agent" },
-      body: JSON.stringify({ title: opts.title, head: branch, base, body: opts.body ?? "Opened by an OpenClaw agent from an E2B sandbox." })
-    });
-    const prBody = await pr.json();
-    if (!pr.ok) {
-      return `Branch '${branch}' pushed, but opening the PR failed (${pr.status}: ${prBody.message ?? "unknown"}). Open it manually from the branch.
-
-Script output:
-${scriptOut}`;
-    }
-    return `\u2705 Pushed branch '${branch}' and opened PR: ${prBody.html_url}
-
-Script output:
-${scriptOut}`;
-  } catch (e) {
-    return `error: repo PR flow failed: ${String(e instanceof Error ? e.message : e).slice(0, 400)}`;
-  } finally {
-    try {
-      await sbx?.kill();
-    } catch {
-    }
-  }
-}
-var import_e2b, GITHUB_REPO, GITHUB_API, SANDBOX_TIMEOUT_MS, WORKDIR;
-var init_sandbox = __esm({
-  "src/lib/sandbox.ts"() {
-    "use strict";
-    import_e2b = __toESM(require_dist4(), 1);
-    GITHUB_REPO = "paisabrazilfl-cpu/bos-aura";
-    GITHUB_API = "https://api.github.com";
-    SANDBOX_TIMEOUT_MS = 18e4;
-    WORKDIR = "/tmp/repo";
-  }
-});
-
-// src/tools.ts
-import { spawn, spawnSync } from "node:child_process";
-import { lookup } from "node:dns/promises";
-import { isIP } from "node:net";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-function ipv4IsPrivate(ip) {
-  const parts = ip.split(".").map((p) => parseInt(p, 10));
-  if (parts.length !== 4 || parts.some((n) => Number.isNaN(n) || n < 0 || n > 255)) return true;
-  const [a, b] = parts;
-  if (a === 0 || a === 10 || a === 127) return true;
-  if (a === 169 && b === 254) return true;
-  if (a === 172 && b >= 16 && b <= 31) return true;
-  if (a === 192 && b === 168) return true;
-  if (a === 100 && b >= 64 && b <= 127) return true;
-  if (a >= 224) return true;
-  return false;
-}
-function ipIsPrivate(ip) {
-  if (ip.includes(":")) {
-    const lower = ip.toLowerCase();
-    if (lower === "::1" || lower === "::") return true;
-    if (lower.startsWith("fe80")) return true;
-    if (lower.startsWith("fc") || lower.startsWith("fd")) return true;
-    const mapped = lower.match(/::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-    if (mapped) return ipv4IsPrivate(mapped[1]);
-    return false;
-  }
-  return ipv4IsPrivate(ip);
-}
-async function ssrfGuard(url2) {
-  let parsed;
-  try {
-    parsed = new URL(url2);
-  } catch {
-    return "error: invalid url.";
-  }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    return "error: only http(s) urls are allowed.";
-  }
-  const host = parsed.hostname.toLowerCase();
-  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".internal") || host.endsWith(".local")) {
-    return "error: requests to internal hostnames are blocked.";
-  }
-  if (isIP(host)) {
-    return ipIsPrivate(host) ? "error: requests to private/internal addresses are blocked." : null;
-  }
-  try {
-    const records = await lookup(host, { all: true });
-    if (!records.length) return "error: could not resolve host.";
-    for (const rec of records) {
-      if (ipIsPrivate(rec.address)) {
-        return "error: host resolves to a private/internal address; blocked.";
-      }
-    }
-  } catch {
-    return "error: could not resolve host.";
-  }
-  return null;
-}
-function clip3(s, n) {
-  return s.length > n ? `${s.slice(0, n)}
-\u2026[truncated ${s.length - n} chars]` : s;
-}
-async function firecrawlSearch(query, limit) {
-  const key = process.env["FIRECRAWL_API_KEY"];
-  if (!key) throw new Error("FIRECRAWL_API_KEY is not set");
-  const r = await fetch(`${FIRECRAWL_BASE}/search`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ query, limit })
-  });
-  if (!r.ok) throw new Error(`Firecrawl ${r.status}: ${(await r.text()).slice(0, 200)}`);
-  const data = await r.json();
-  const results = data.data ?? [];
-  if (!results.length) return `no web results for "${query}".`;
-  return `[search provider: firecrawl]
-${results.map((x, i) => `${i + 1}. ${x.title ?? "(untitled)"}
-   ${x.url ?? ""}
-   ${clip3((x.description ?? "").trim(), 300)}`).join("\n\n")}`;
-}
-async function webSearch(query, limit) {
-  const providers = [
-    { name: "tavily", enabled: !!process.env["TAVILY_API_KEY"], run: () => tavilySearch(query, limit) },
-    { name: "exa", enabled: !!process.env["EXA_API_KEY"], run: () => exaSearch(query, limit) },
-    { name: "firecrawl", enabled: !!process.env["FIRECRAWL_API_KEY"], run: () => firecrawlSearch(query, limit) }
-  ].filter((p) => p.enabled);
-  if (!providers.length) {
-    return "error: no web search provider is configured (set TAVILY_API_KEY, EXA_API_KEY, or FIRECRAWL_API_KEY).";
-  }
-  const errors = [];
-  for (const provider of providers) {
-    try {
-      return await provider.run();
-    } catch (e) {
-      errors.push(`${provider.name}: ${String(e instanceof Error ? e.message : e).slice(0, 120)}`);
-    }
-  }
-  return `error: all web search providers failed \u2014 ${errors.join("; ")}`;
-}
-function formatMemoryRow(m, score) {
-  const tag = score != null ? ` \xB7 sim ${score.toFixed(3)}` : "";
-  return `#${m.id} [${m.agentName ?? "?"}${m.key ? ` \xB7 ${m.key}` : ""}${tag}] ${clip3(m.content, 600)}`;
-}
-async function keywordMemorySearch(query, limit) {
-  const like2 = `%${query}%`;
-  const rows = await db.select().from(agentMemoryTable).where(or(ilike(agentMemoryTable.content, like2), ilike(agentMemoryTable.key, like2), ilike(agentMemoryTable.tags, like2))).orderBy(desc(agentMemoryTable.createdAt)).limit(limit);
-  if (!rows.length) return `no memory entries matched "${query}".`;
-  return rows.map((m) => formatMemoryRow(m)).join("\n---\n");
-}
-async function memorySearch(query, limit) {
-  if (pineconeConfigured()) {
-    const queryVec = await embed(query);
-    if (queryVec) {
-      const matches = await pineconeQuery(queryVec, limit);
-      if (matches && matches.length) {
-        return matches.map((m) => {
-          const md = m.metadata ?? {};
-          return formatMemoryRow(
-            {
-              id: Number(md["pgId"] ?? m.id) || 0,
-              agentName: md["agentName"] ?? null,
-              key: md["key"] ?? null,
-              content: String(md["content"] ?? "")
-            },
-            m.score
-          );
-        }).join("\n---\n");
-      }
-    }
-  }
-  if (embeddingsConfigured()) {
-    const queryVec = await embed(query);
-    if (queryVec) {
-      const candidates = await db.select().from(agentMemoryTable).where(isNotNull(agentMemoryTable.embedding)).orderBy(desc(agentMemoryTable.createdAt)).limit(MEMORY_CANDIDATE_LIMIT);
-      const scored = candidates.map((m) => {
-        const vec = parseEmbedding(m.embedding);
-        return vec ? { row: m, score: cosineSimilarity(queryVec, vec) } : null;
-      }).filter((x) => x !== null).sort((a, b) => b.score - a.score).slice(0, limit);
-      if (scored.length) {
-        return scored.map((s) => formatMemoryRow(s.row, s.score)).join("\n---\n");
-      }
-    }
-  }
-  return keywordMemorySearch(query, limit);
-}
-function safeCalc(expr) {
-  const cleaned = expr.trim();
-  if (!cleaned) return "error: expression is required.";
-  if (cleaned.length > 500) return "error: expression is too long (max 500 chars).";
-  if (!/^[-+*/%.()0-9eE\s]+$/.test(cleaned)) {
-    return "error: only numbers and the operators + - * / % ** ( ) are allowed.";
-  }
-  try {
-    const fn = new Function(`"use strict"; return (${cleaned});`);
-    const val = fn();
-    if (typeof val !== "number" || !Number.isFinite(val)) {
-      return "error: expression did not evaluate to a finite number.";
-    }
-    return String(val);
-  } catch {
-    return "error: could not evaluate expression.";
-  }
-}
-async function steelScrape(url2) {
-  const key = process.env["STEEL_API_KEY"];
-  if (!key) throw new Error("STEEL_API_KEY is not set");
-  const r = await fetch(`${STEEL_BASE}/scrape`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-    // Ask for cleaned markdown, not raw HTML — far more signal per character, so a
-    // single scrape fits the readable content (titles, scores) inside the response
-    // budget instead of being truncated mid-page and forcing extra calls.
-    body: JSON.stringify({ url: url2, format: ["markdown"], useProxy: false })
-  });
-  if (!r.ok) throw new Error(`Steel ${r.status}: ${(await r.text()).slice(0, 200)}`);
-  const data = await r.json();
-  const content = data["content"];
-  if (typeof content === "string") return content;
-  if (content && typeof content === "object") {
-    return content["markdown"] || content["text"] || content["html"] || JSON.stringify(content);
-  }
-  return data["markdown"] || JSON.stringify(data);
-}
-async function steelScreenshot(url2) {
-  const key = process.env["STEEL_API_KEY"];
-  if (!key) throw new Error("STEEL_API_KEY is not set");
-  const r = await fetch(`${STEEL_BASE}/screenshot`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ url: url2, fullPage: true })
-  });
-  if (!r.ok) throw new Error(`Steel ${r.status}: ${(await r.text()).slice(0, 200)}`);
-  const buf = await r.arrayBuffer();
-  return buf.byteLength;
-}
-function detectSandboxMode() {
-  if (sandboxMode) return sandboxMode;
-  try {
-    const probe = spawnSync(
-      "unshare",
-      [
-        "--net",
-        "--mount",
-        "--map-root-user",
-        "/bin/sh",
-        "-c",
-        "mount -t tmpfs tmpfs /home && exit 0"
-      ],
-      { timeout: 4e3 }
-    );
-    sandboxMode = probe.status === 0 ? "namespace" : "none";
-  } catch {
-    sandboxMode = "none";
-  }
-  if (sandboxMode === "none") {
-    logger.warn(
-      "code_exec: unprivileged namespaces unavailable \u2014 running with scrubbed env only (no network/fs isolation). Code execution should be treated as untrusted on this host."
-    );
-  } else {
-    logger.info("code_exec: namespace isolation active (no network, repo hidden).");
-  }
-  return sandboxMode;
-}
-function runSandboxed(language, source) {
-  return new Promise((resolve) => {
-    const lang = language.toLowerCase();
-    let runtime;
-    let filename;
-    let runtimeArgs;
-    if (lang === "python" || lang === "py" || lang === "python3") {
-      runtime = "python3";
-      filename = "main.py";
-      runtimeArgs = ["-I", filename];
-    } else if (lang === "javascript" || lang === "js" || lang === "node") {
-      runtime = "node";
-      filename = "main.js";
-      runtimeArgs = [filename];
-    } else {
-      resolve(`error: unsupported language "${language}". Use "python" or "javascript".`);
-      return;
-    }
-    let dir;
-    try {
-      dir = mkdtempSync(join(tmpdir(), "clawexec-"));
-      writeFileSync(join(dir, filename), source, "utf8");
-    } catch (e) {
-      resolve(`error: failed to prepare sandbox: ${String(e).slice(0, 200)}`);
-      return;
-    }
-    let cleaned = false;
-    const cleanup = () => {
-      if (cleaned) return;
-      cleaned = true;
-      try {
-        rmSync(dir, { recursive: true, force: true });
-      } catch {
-      }
-    };
-    const mode = detectSandboxMode();
-    let cmd;
-    let args;
-    if (mode === "namespace") {
-      cmd = "unshare";
-      args = [
-        "--net",
-        "--mount",
-        "--map-root-user",
-        "/bin/sh",
-        "-c",
-        // Fail-closed: if the /home mask can't be applied, abort WITHOUT
-        // running the code (otherwise the repo would stay visible). The temp
-        // source dir lives under /tmp, so it survives the tmpfs mount on /home.
-        `mount -t tmpfs tmpfs /home || { echo "sandbox: filesystem isolation failed" >&2; exit 97; }; cd "${dir}" && exec ${runtime} ${runtimeArgs.join(" ")}`
-      ];
-    } else {
-      cmd = runtime;
-      args = runtimeArgs;
-    }
-    const child = spawn(cmd, args, {
-      cwd: dir,
-      env: { PATH: process.env["PATH"] ?? "/usr/bin:/bin", HOME: dir },
-      killSignal: "SIGKILL",
-      detached: true
-    });
-    let killReason = null;
-    const killTree = (reason) => {
-      if (killReason) return;
-      killReason = reason;
-      try {
-        if (child.pid) process.kill(-child.pid, "SIGKILL");
-      } catch {
-        try {
-          child.kill("SIGKILL");
-        } catch {
-        }
-      }
-    };
-    const timer2 = setTimeout(() => killTree("timeout"), CODE_TIMEOUT_MS);
-    let stdout = "";
-    let stderr = "";
-    let bytes = 0;
-    const onData = (chunk, sink) => {
-      bytes += chunk.length;
-      if (bytes > CODE_OUTPUT_CAP * 2) {
-        killTree("output-cap");
-        return;
-      }
-      if (sink === "out") stdout += chunk.toString();
-      else stderr += chunk.toString();
-    };
-    child.stdout?.on("data", (c) => onData(c, "out"));
-    child.stderr?.on("data", (c) => onData(c, "err"));
-    child.on("error", (err) => {
-      clearTimeout(timer2);
-      cleanup();
-      resolve(`error: failed to spawn sandbox: ${String(err).slice(0, 200)}`);
-    });
-    child.on("close", (code) => {
-      clearTimeout(timer2);
-      cleanup();
-      const out = clip3(stdout.trim(), CODE_OUTPUT_CAP);
-      const errOut = clip3(stderr.trim(), CODE_OUTPUT_CAP);
-      if (killReason === "timeout") {
-        resolve(`error: execution killed (timeout ${CODE_TIMEOUT_MS}ms).
-stdout:
-${out}`);
-        return;
-      }
-      if (killReason === "output-cap") {
-        resolve(`error: execution killed (output cap exceeded).
-stdout:
-${out}`);
-        return;
-      }
-      const parts = [`exit code: ${code ?? 0}`];
-      if (out) parts.push(`stdout:
-${out}`);
-      if (errOut) parts.push(`stderr:
-${errOut}`);
-      if (!out && !errOut) parts.push("(no output)");
-      resolve(parts.join("\n"));
-    });
-  });
-}
-function getToolNamesForAgent(agentId) {
-  return AGENT_TOOLS[agentId] ?? ["web_scrape", "memory_search"];
-}
-function toolSummary(name) {
-  const d = TOOL_REGISTRY[name]?.description ?? "";
-  return clip3(d.split(/\.\s/)[0], 100);
-}
-function buildCapabilityCard(agentId) {
-  const names = getToolNamesForAgent(agentId);
-  const list = names.map((n) => `- ${n}: ${toolSummary(n)}`).join("\n");
-  let card = `
-
-YOUR TOOLS (${names.length}; call them to do real work, never guess or fabricate results):
-${list}`;
-  card += names.includes("schedule_task") ? `
-
-SCHEDULING: use schedule_task to run work automatically on a cron schedule, list_scheduled_tasks to review jobs, cancel_scheduled_task to stop one.` : `
-
-SCHEDULING: the swarm can run recurring cron jobs (managed by ABBY/WIRE) \u2014 ask ABBY to schedule recurring work.`;
-  card += `
-
-GITHUB: query the GitHub REST API with http_request (https://api.github.com/...); it is auto-authenticated. Never web_scrape github.com pages \u2014 they are JS-rendered and return nothing useful.`;
-  if (agentId === ABBY_ID) {
-    card += `
-
-YOUR SWARM (delegate each directive to the right CLAW):
-` + SWARM_ROSTER.map(([id, name, role]) => `- ${name} (#${id}) \u2014 ${role}`).join("\n");
-  }
-  return card;
-}
-function getOpenAiToolsForAgent(agentId) {
-  return getToolNamesForAgent(agentId).map((n) => TOOL_REGISTRY[n]).filter((t) => !!t).map((t) => ({
-    type: "function",
-    function: { name: t.name, description: t.description, parameters: t.parameters }
-  }));
-}
-function isToolAllowed(agentId, toolName) {
-  return getToolNamesForAgent(agentId).includes(toolName);
-}
-async function runTool(toolName, args, ctx) {
-  const def = TOOL_REGISTRY[toolName];
-  if (!def) return `error: unknown tool "${toolName}".`;
-  if (!isToolAllowed(ctx.agentId, toolName)) {
-    return `error: tool "${toolName}" is not permitted for this agent.`;
-  }
-  return def.run(args, ctx);
-}
-var STEEL_BASE, FIRECRAWL_BASE, MEMORY_CANDIDATE_LIMIT, CODE_TIMEOUT_MS, CODE_OUTPUT_CAP, sandboxMode, TOOL_REGISTRY, ALL_TOOLS, AGENT_TOOLS, ABBY_ID, SWARM_ROSTER;
-var init_tools = __esm({
-  "src/tools.ts"() {
-    "use strict";
-    init_logger2();
-    init_src();
-    init_src();
-    init_drizzle_orm();
-    init_vault2();
-    init_connectors();
-    init_integrations();
-    init_embeddings();
-    init_pinecone();
-    init_sandbox();
-    STEEL_BASE = "https://api.steel.dev/v1";
-    FIRECRAWL_BASE = "https://api.firecrawl.dev/v1";
-    MEMORY_CANDIDATE_LIMIT = 1e3;
-    CODE_TIMEOUT_MS = 8e3;
-    CODE_OUTPUT_CAP = 4e3;
-    sandboxMode = null;
-    TOOL_REGISTRY = {
-      web_scrape: {
-        name: "web_scrape",
-        description: "Fetch and extract the readable text/markdown content of a live web page by URL. Use to read articles, docs, competitor pages, or any public webpage. Do NOT use it for github.com pages (search results, repos) \u2014 those are JavaScript-rendered and return no useful content; use http_request against the GitHub API (https://api.github.com/...) instead, which is auto-authenticated.",
-        parameters: {
-          type: "object",
-          properties: {
-            url: { type: "string", description: "Absolute http(s) URL of the page to read." }
-          },
-          required: ["url"]
-        },
-        run: async (args) => {
-          const url2 = String(args["url"] ?? "").trim();
-          if (!/^https?:\/\//i.test(url2)) return "error: a valid absolute http(s) url is required.";
-          try {
-            const host = new URL(url2).hostname.toLowerCase();
-            if (host === "github.com" || host === "www.github.com") {
-              const m = url2.match(/github\.com\/search\?(.*)$/i);
-              const apiHint = m ? `https://api.github.com/search/repositories?${m[1].replace(/type=repositories&?/i, "")}` : "https://api.github.com/repos/<owner>/<repo>  (or /search/repositories?q=...)";
-              return `error: github.com web pages are JavaScript-rendered and not scrapable. Use http_request (GET) against the GitHub REST API instead \u2014 it is auto-authenticated. Try: ${apiHint}`;
-            }
-          } catch {
-          }
-          const content = await steelScrape(url2);
-          return clip3(content, 8e3);
-        }
-      },
-      web_screenshot: {
-        name: "web_screenshot",
-        description: "Capture a full-page screenshot of a URL via the Steel browser. Returns a confirmation with the image size in bytes.",
-        parameters: {
-          type: "object",
-          properties: {
-            url: { type: "string", description: "Absolute http(s) URL to screenshot." }
-          },
-          required: ["url"]
-        },
-        run: async (args) => {
-          const url2 = String(args["url"] ?? "").trim();
-          if (!/^https?:\/\//i.test(url2)) return "error: a valid absolute http(s) url is required.";
-          const bytes = await steelScreenshot(url2);
-          return `screenshot captured for ${url2} (${Math.round(bytes / 1024)} KB).`;
-        }
-      },
-      web_search: {
-        name: "web_search",
-        description: "Search the live web and return the top results (title, URL, snippet). Backed by Tavily, Exa, and Firecrawl with automatic failover. Use to discover current information and find pages worth reading. To read a result's full content, follow up with web_scrape on its URL.",
-        parameters: {
-          type: "object",
-          properties: {
-            query: { type: "string", description: "The search query." },
-            limit: { type: "integer", description: "How many results to return (1-10, default 5).", minimum: 1, maximum: 10 }
-          },
-          required: ["query"]
-        },
-        run: async (args) => {
-          const query = String(args["query"] ?? "").trim();
-          if (!query) return "error: query is required.";
-          let limit = Number(args["limit"] ?? 5);
-          if (!Number.isFinite(limit)) limit = 5;
-          limit = Math.max(1, Math.min(10, Math.floor(limit)));
-          return webSearch(query, limit);
-        }
-      },
-      http_request: {
-        name: "http_request",
-        description: 'Make a real outbound HTTP request to any API endpoint. Supports GET/POST/PUT/PATCH/DELETE with optional headers and a JSON/text body. Returns the status and response body (truncated). For rate-limited or private APIs, authenticate with a vault secret placeholder in the headers rather than a raw key \u2014 e.g. GitHub: headers { "Authorization": "Bearer {{secret:GITHUB_TOKEN}}" }. Always authenticate GitHub (api.github.com) calls this way: it raises the limit from 60 to 5,000 requests/hour, and the placeholder is resolved to the real token only at send time, so the secret never enters your context. Use vault_list to see which secret names exist.',
-        parameters: {
-          type: "object",
-          properties: {
-            method: { type: "string", enum: ["GET", "POST", "PUT", "PATCH", "DELETE"], description: "HTTP method." },
-            url: { type: "string", description: "Absolute http(s) URL." },
-            headers: { type: "object", description: "Optional request headers as a flat key/value object." },
-            body: { type: "string", description: "Optional request body (send JSON as a string)." }
-          },
-          required: ["method", "url"]
-        },
-        run: async (args) => {
-          const usedSecrets = /* @__PURE__ */ new Set();
-          const url2 = (await substituteSecrets(String(args["url"] ?? ""), usedSecrets)).trim();
-          if (!/^https?:\/\//i.test(url2)) return "error: a valid absolute http(s) url is required.";
-          const blocked = await ssrfGuard(url2);
-          if (blocked) return blocked;
-          const method = String(args["method"] ?? "GET").toUpperCase();
-          const headers = {};
-          const rawHeaders = args["headers"];
-          if (rawHeaders && typeof rawHeaders === "object") {
-            for (const [k, v] of Object.entries(rawHeaders)) {
-              headers[k] = await substituteSecrets(String(v), usedSecrets);
-            }
-          }
-          const body = args["body"] != null && method !== "GET" && method !== "DELETE" ? await substituteSecrets(String(args["body"]), usedSecrets) : void 0;
-          try {
-            const host = new URL(url2).hostname.toLowerCase();
-            if (host === "api.github.com" || host.endsWith(".githubusercontent.com")) {
-              const lc = Object.keys(headers).map((k) => k.toLowerCase());
-              const ghToken = process.env["GITHUB_API_KEY"] || process.env["GITHUB_TOKEN"] || process.env["SANDBOX_GITHUB_TOKEN"];
-              if (ghToken && !lc.includes("authorization")) {
-                headers["Authorization"] = `Bearer ${ghToken}`;
-                usedSecrets.add(ghToken);
-              }
-              if (!lc.includes("user-agent")) headers["User-Agent"] = "OpenClaw-Omega";
-              if (host === "api.github.com" && !lc.includes("accept")) headers["Accept"] = "application/vnd.github+json";
-            }
-          } catch {
-          }
-          const ctrl = new AbortController();
-          const timer2 = setTimeout(() => ctrl.abort(), 15e3);
-          try {
-            let currentUrl = url2;
-            let r = null;
-            for (let hop = 0; hop < 5; hop++) {
-              r = await fetch(currentUrl, { method, headers, body, signal: ctrl.signal, redirect: "manual" });
-              if (r.status < 300 || r.status >= 400) break;
-              const location = r.headers.get("location");
-              if (!location) break;
-              const next = new URL(location, currentUrl).toString();
-              if (!/^https?:\/\//i.test(next)) return "error: redirect to a non-http(s) target was blocked.";
-              const redirectBlocked = await ssrfGuard(next);
-              if (redirectBlocked) return `error: redirect blocked \u2014 ${redirectBlocked.replace(/^error: /, "")}`;
-              currentUrl = next;
-              if (hop === 4) return "error: too many redirects.";
-            }
-            if (!r) return "error: request failed: no response.";
-            const text2 = await r.text();
-            const safe = redactSecrets(text2, usedSecrets);
-            return `HTTP ${r.status} ${r.statusText}
-${clip3(safe, 4e3)}`;
-          } catch (e) {
-            return redactSecrets(`error: request failed: ${String(e).slice(0, 200)}`, usedSecrets);
-          } finally {
-            clearTimeout(timer2);
-          }
-        }
-      },
-      code_exec: {
-        name: "code_exec",
-        description: "Execute a short code snippet in an isolated subprocess and return its stdout/stderr. Supports 'python' and 'javascript'. Hard 8s timeout. Secrets, env vars, and the database are never exposed. Where the host supports unprivileged namespaces, execution also has NO network access and CANNOT see the app/repo filesystem; on hosts without that support it falls back to a scrubbed-env subprocess with network/filesystem still reachable. Use for self-contained calculations, data transforms, and quick logic checks \u2014 not for fetching URLs (use http_request) or reading project files.",
-        parameters: {
-          type: "object",
-          properties: {
-            language: { type: "string", enum: ["python", "javascript"], description: "Runtime to use." },
-            source: { type: "string", description: "Self-contained source code. Print results to stdout." }
-          },
-          required: ["language", "source"]
-        },
-        run: async (args) => {
-          const language = String(args["language"] ?? "");
-          const source = String(args["source"] ?? "");
-          if (!source.trim()) return "error: source is required.";
-          return runSandboxed(language, source);
-        }
-      },
-      cloud_code_exec: {
-        name: "cloud_code_exec",
-        description: "Execute code in a fully isolated E2B cloud sandbox (a real remote VM with network access and a full runtime). Supports 'python' and 'javascript'. Use this instead of code_exec when the code needs network access, pip/npm packages, or stronger isolation than the local sandbox. Returns stdout/stderr/result.",
-        parameters: {
-          type: "object",
-          properties: {
-            language: { type: "string", enum: ["python", "javascript"], description: "Runtime to use." },
-            source: { type: "string", description: "Self-contained source code. Print results to stdout." }
-          },
-          required: ["language", "source"]
-        },
-        run: async (args) => {
-          const language = String(args["language"] ?? "");
-          const source = String(args["source"] ?? "");
-          if (!source.trim()) return "error: source is required.";
-          if (!e2bConfigured()) {
-            return "error: E2B cloud sandbox is not configured (set E2B_API_KEY). Use code_exec for local execution instead.";
-          }
-          return e2bExec(language, source);
-        }
-      },
-      sandbox_exec: {
-        name: "sandbox_exec",
-        description: "Run a shell script inside a fresh, isolated E2B cloud VM (its own real computer \u2014 node, git, network, full Linux). Use for anything that needs a real dev environment: clone a public repo, install packages, run a build/test suite, run scripts, curl APIs, etc. Each call gets a clean disposable VM. This VM has NO access to the OpenClaw server or its secrets. For making changes to the OpenClaw repo and opening a PR, use sandbox_repo_pr instead.",
-        parameters: {
-          type: "object",
-          properties: {
-            script: { type: "string", description: "A bash script to run in the VM (commands can be chained with && and newlines)." }
-          },
-          required: ["script"]
-        },
-        run: async (args) => {
-          const script = String(args["script"] ?? "").trim();
-          if (!script) return "error: script is required.";
-          if (!sandboxConfigured()) return "error: E2B cloud sandbox is not configured (E2B_API_KEY).";
-          return runInSandbox(script);
-        }
-      },
-      sandbox_repo_pr: {
-        name: "sandbox_repo_pr",
-        description: "Work on the OpenClaw (bos-aura) repository for real: clones it into an isolated E2B VM, runs your shell script to make changes and/or run the test suite (cwd = repo root), commits, pushes a branch, and opens a Pull Request for human review. Use this to implement a fix/feature, run the real tests against your changes, and propose them. Scoped to the bos-aura repo only. The GitHub token is handled server-side and never exposed to you.",
-        parameters: {
-          type: "object",
-          properties: {
-            branch: { type: "string", description: "New branch name, e.g. 'agent/fix-typo'." },
-            script: { type: "string", description: "Bash script run inside the cloned repo to make changes (e.g. edit files with sed/tee) and optionally run tests. cwd is the repo root." },
-            title: { type: "string", description: "PR title (also used as the commit message)." },
-            body: { type: "string", description: "Optional PR description." },
-            baseBranch: { type: "string", description: "Base branch for the PR (default 'main')." }
-          },
-          required: ["branch", "script", "title"]
-        },
-        run: async (args) => {
-          const branch = String(args["branch"] ?? "").trim();
-          const script = String(args["script"] ?? "").trim();
-          const title = String(args["title"] ?? "").trim();
-          if (!branch || !script || !title) return "error: branch, script, and title are required.";
-          if (!sandboxConfigured()) return "error: E2B cloud sandbox is not configured (E2B_API_KEY).";
-          if (!gitWriteConfigured()) return "error: git push is not enabled \u2014 the operator must set SANDBOX_GITHUB_TOKEN.";
-          return repoPr({
-            branch,
-            script,
-            title,
-            body: args["body"] != null ? String(args["body"]) : void 0,
-            baseBranch: args["baseBranch"] != null ? String(args["baseBranch"]) : void 0
-          });
-        }
-      },
-      memory_write: {
-        name: "memory_write",
-        description: "Persist a fact, finding, or result to the swarm's shared long-term memory so any agent can retrieve it later.",
-        parameters: {
-          type: "object",
-          properties: {
-            content: { type: "string", description: "The information to store." },
-            key: { type: "string", description: "Optional short label/topic for the memory." },
-            tags: { type: "string", description: "Optional comma-separated tags." }
-          },
-          required: ["content"]
-        },
-        run: async (args, ctx) => {
-          const content = String(args["content"] ?? "").trim();
-          if (!content) return "error: content is required.";
-          const key = args["key"] != null ? String(args["key"]).slice(0, 200) : null;
-          const stored = content.slice(0, 8e3);
-          const vector2 = await embed(key ? `${key}
-${stored}` : stored);
-          const tags = args["tags"] != null ? String(args["tags"]).slice(0, 300) : null;
-          const [row] = await db.insert(agentMemoryTable).values({
-            agentId: ctx.agentId,
-            agentName: ctx.agentName,
-            key,
-            content: stored,
-            tags,
-            embedding: vector2 ? JSON.stringify(vector2) : null
-          }).returning();
-          let pineconed = false;
-          if (vector2 && row?.id != null && pineconeConfigured()) {
-            pineconed = await pineconeUpsert(String(row.id), vector2, {
-              pgId: row.id,
-              agentName: ctx.agentName ?? null,
-              key,
-              tags,
-              content: stored.slice(0, 1500)
-            });
-          }
-          return `stored memory #${row?.id ?? "?"}${vector2 ? pineconed ? " (semantic \xB7 pinecone)" : " (semantic)" : ""}.`;
-        }
-      },
-      memory_search: {
-        name: "memory_search",
-        description: "Search the swarm's shared long-term memory. Uses real semantic (vector) similarity when an embeddings provider is configured, otherwise keyword matching. Returns the most relevant stored entries.",
-        parameters: {
-          type: "object",
-          properties: {
-            query: { type: "string", description: "What to retrieve from stored memory (natural language or keywords)." }
-          },
-          required: ["query"]
-        },
-        run: async (args) => {
-          const query = String(args["query"] ?? "").trim();
-          if (!query) return "error: query is required.";
-          return memorySearch(query, 5);
-        }
-      },
-      calculator: {
-        name: "calculator",
-        description: "Evaluate an arithmetic expression precisely and return the numeric result. Supports + - * / % ** and parentheses. Use this instead of doing mental math for any non-trivial calculation.",
-        parameters: {
-          type: "object",
-          properties: {
-            expression: { type: "string", description: "Arithmetic expression, e.g. '(1234 * 19) / 7 + 2**8'." }
-          },
-          required: ["expression"]
-        },
-        run: async (args) => safeCalc(String(args["expression"] ?? ""))
-      },
-      send_message: {
-        name: "send_message",
-        description: "Post a message into the live operator channel feed as yourself. Use to report progress, surface a finding, or coordinate with the operator and the other CLAWs. The message appears immediately in the Discord-style chat stream.",
-        parameters: {
-          type: "object",
-          properties: {
-            content: { type: "string", description: "The message to post (markdown supported)." }
-          },
-          required: ["content"]
-        },
-        run: async (args, ctx) => {
-          const content = String(args["content"] ?? "").trim();
-          if (!content) return "error: content is required.";
-          if (!ctx.channelId) return "error: no channel context is available to post into.";
-          await db.insert(messagesTable).values({
-            channelId: ctx.channelId,
-            agentId: ctx.agentId,
-            agentName: ctx.agentName,
-            agentColor: ctx.agentColor ?? null,
-            content: content.slice(0, 4e3),
-            messageType: "agent"
-          });
-          return `message posted to the operator channel.`;
-        }
-      },
-      vault_list: {
-        name: "vault_list",
-        description: "List the NAMES of secrets available in the operator's encrypted vault (API keys, tokens). Values are never revealed. To USE a secret, put the placeholder {{secret:NAME}} into an http_request url, header, or body \u2014 it is substituted with the real value only at request time.",
-        parameters: { type: "object", properties: {} },
-        run: async () => {
-          const rows = await db.select({ name: vaultSecretsTable.name, description: vaultSecretsTable.description }).from(vaultSecretsTable).orderBy(desc(vaultSecretsTable.updatedAt));
-          if (!rows.length) return "the vault is empty \u2014 no secrets are stored.";
-          return rows.map((s) => `{{secret:${s.name}}}${s.description ? ` \u2014 ${s.description}` : ""}`).join("\n");
-        }
-      },
-      social_accounts: {
-        name: "social_accounts",
-        description: "List the main social platforms wired to their OFFICIAL APIs (via Replit-managed OAuth) and show which are currently authorized/connected for the operator's own account. Call this before social_api to see what you can use.",
-        parameters: { type: "object", properties: {} },
-        run: async () => {
-          const entries = Object.values(PLATFORMS);
-          const results = await Promise.all(
-            entries.map(async (p) => `${await isPlatformConnected(p) ? "\u2713 connected" : "\u2717 not connected"}  ${p.key} \u2014 ${p.displayName} (${p.apiBase})`)
-          );
-          return [
-            "Official social APIs (OAuth handled by Replit; tokens never exposed):",
-            ...results,
-            "",
-            "Use social_api with one of: " + platformKeys().join(", ") + "."
-          ].join("\n");
-        }
-      },
-      composio_action: {
-        name: "composio_action",
-        description: "Execute an authenticated action on a connected SaaS app (Gmail, Slack, GitHub, Notion, Calendar, Sheets, CRM, \u2026) via Composio's tool/auth router. Use for real external actions on accounts the operator has connected in Composio. Disabled unless the operator has enabled it.",
-        parameters: {
-          type: "object",
-          properties: {
-            toolkit: { type: "string", description: "Composio toolkit/app slug, e.g. 'gmail', 'slack', 'github'." },
-            action: { type: "string", description: "The action/tool to run, e.g. 'GMAIL_SEND_EMAIL'." },
-            arguments: { type: "object", description: "Action arguments as a key/value object." },
-            connectedAccountId: { type: "string", description: "Optional connected-account id to act as." }
-          },
-          required: ["action"]
-        },
-        run: async (args) => {
-          if (!composioConfigured()) return "error: Composio is not configured (set COMPOSIO_API_KEY).";
-          if (!composioExecuteEnabled()) {
-            return "error: Composio execution is disabled. The operator must set ALLOW_COMPOSIO_EXECUTE=true after connecting accounts.";
-          }
-          return composioExecute({
-            toolkit: args["toolkit"] != null ? String(args["toolkit"]) : void 0,
-            action: args["action"] != null ? String(args["action"]) : void 0,
-            arguments: args["arguments"] ?? {},
-            connectedAccountId: args["connectedAccountId"] != null ? String(args["connectedAccountId"]) : void 0
-          });
-        }
-      },
-      social_api: {
-        name: "social_api",
-        description: "Call the OFFICIAL API of a connected social platform on the operator's own authorized account. OAuth and the access token are fully managed by Replit \u2014 you never see or handle the token. Use this for real reads (profile, media, insights, comments) and writes (publishing) instead of any browser/password login. Run social_accounts first to confirm the platform is connected.",
-        parameters: {
-          type: "object",
-          properties: {
-            platform: {
-              type: "string",
-              enum: platformKeys(),
-              description: "Which connected platform's official API to call."
-            },
-            method: {
-              type: "string",
-              enum: ["GET", "POST", "PUT", "PATCH", "DELETE"],
-              description: "HTTP method (default GET)."
-            },
-            path: {
-              type: "string",
-              description: "API path relative to the platform's base, e.g. '/me?fields=id,username' for Instagram or '/users/me' for X. Do not include the host."
-            },
-            query: {
-              type: "object",
-              description: "Optional query parameters as a flat key/value object."
-            },
-            body: { type: "string", description: "Optional JSON request body (as a string) for writes." }
-          },
-          required: ["platform", "path"]
-        },
-        run: async (args) => {
-          const platform = getPlatform(String(args["platform"] ?? ""));
-          if (!platform) {
-            return `error: unknown platform. Available: ${platformKeys().join(", ")}.`;
-          }
-          const path2 = String(args["path"] ?? "").trim();
-          if (!path2) return "error: path is required.";
-          const method = String(args["method"] ?? "GET");
-          let query;
-          const rawQuery = args["query"];
-          if (rawQuery && typeof rawQuery === "object") {
-            query = {};
-            for (const [k, v] of Object.entries(rawQuery)) {
-              query[k] = String(v);
-            }
-          }
-          const body = args["body"] != null ? String(args["body"]) : void 0;
-          try {
-            const res = await callPlatformApi({ platform, method, path: path2, query, body });
-            return `${platform.displayName} API \u2192 HTTP ${res.status} ${res.statusText}
-${clip3(res.body, 4e3)}`;
-          } catch (e) {
-            return `error: ${String(e instanceof Error ? e.message : e).slice(0, 300)}`;
-          }
-        }
-      },
-      schedule_task: {
-        name: "schedule_task",
-        description: "Schedule a recurring task the swarm runs automatically on a cron schedule (e.g. '0 9 * * *' = daily 9am, '*/30 * * * *' = every 30 min). The task is a natural-language goal executed later through the same agent machinery. Use for monitoring, daily digests, periodic research, or anything the operator wants to happen on a repeat.",
-        parameters: {
-          type: "object",
-          properties: {
-            name: { type: "string", description: "Short name for the scheduled job." },
-            schedule: { type: "string", description: "5-field cron expression, e.g. '0 9 * * *'." },
-            task: { type: "string", description: "The goal/instruction to run on each tick." }
-          },
-          required: ["name", "schedule", "task"]
-        },
-        run: async (args, ctx) => {
-          const name = String(args["name"] ?? "").trim();
-          const schedule = String(args["schedule"] ?? "").trim();
-          const task = String(args["task"] ?? "").trim();
-          if (!name || !schedule || !task) return "error: name, schedule, and task are all required.";
-          if (schedule.split(/\s+/).length !== 5) return "error: schedule must be a 5-field cron expression, e.g. '*/30 * * * *'.";
-          const min = schedule.split(/\s+/)[0];
-          const ms = min === "*" ? 6e4 : min.startsWith("*/") ? Math.max(Number(min.slice(2)) * 6e4, 6e4) : 5 * 6e4;
-          const nextRunAt = new Date(Date.now() + ms);
-          try {
-            const [row] = await db.insert(cronJobsTable).values({ agentId: ctx.agentId, name, schedule, task, enabled: true, nextRunAt }).returning();
-            return `scheduled "${name}" (job #${row?.id ?? "?"}) on '${schedule}', next run ~${nextRunAt.toISOString()}.`;
-          } catch (e) {
-            return `error: could not schedule task: ${String(e instanceof Error ? e.message : e).slice(0, 200)}`;
-          }
-        }
-      },
-      list_scheduled_tasks: {
-        name: "list_scheduled_tasks",
-        description: "List the swarm's scheduled (cron) jobs \u2014 name, schedule, owner agent, enabled state, run count, last result. Use to see what is set to run automatically.",
-        parameters: { type: "object", properties: {} },
-        run: async () => {
-          const rows = await db.select().from(cronJobsTable).orderBy(desc(cronJobsTable.createdAt)).limit(50);
-          if (!rows.length) return "no scheduled tasks.";
-          return rows.map((j) => `#${j.id} "${j.name}" [${j.schedule}] agent ${j.agentId} \xB7 ${j.enabled ? "enabled" : "disabled"} \xB7 runs ${j.runCount}${j.lastResult ? ` \xB7 last: ${clip3(j.lastResult, 80)}` : ""}
-   task: ${clip3(j.task, 160)}`).join("\n---\n");
-        }
-      },
-      cancel_scheduled_task: {
-        name: "cancel_scheduled_task",
-        description: "Cancel (delete) a scheduled cron job by its id. Use list_scheduled_tasks first to find the id.",
-        parameters: {
-          type: "object",
-          properties: { id: { type: "number", description: "The scheduled job id to cancel." } },
-          required: ["id"]
-        },
-        run: async (args) => {
-          const id = Number(args["id"]);
-          if (!Number.isFinite(id)) return "error: a numeric job id is required.";
-          const [row] = await db.delete(cronJobsTable).where(eq(cronJobsTable.id, id)).returning();
-          return row ? `cancelled scheduled job #${id} ("${row.name}").` : `no scheduled job #${id} found.`;
-        }
-      }
-    };
-    ALL_TOOLS = Object.keys(TOOL_REGISTRY);
-    AGENT_TOOLS = {
-      1: ALL_TOOLS,
-      // ABBY — full authority
-      2: ["code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "http_request", "web_scrape", "web_search", "memory_search", "memory_write", "vault_list", "send_message"],
-      // FORGE — code
-      3: ["web_scrape", "web_screenshot", "web_search", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "send_message"],
-      // CRAWLER — browser
-      4: ["memory_write", "memory_search", "web_search", "web_scrape", "http_request", "calculator", "vault_list", "send_message"],
-      // VAULT — memory/RAG
-      5: ["http_request", "web_scrape", "web_search", "code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_action", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task", "send_message"],
-      // WIRE — APIs + scheduling
-      6: ["web_scrape", "web_search", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "send_message"]
-      // MR.NICE — social
-    };
-    ABBY_ID = 1;
-    SWARM_ROSTER = [
-      [2, "FORGE", "code execution & sandbox PRs"],
-      [3, "CRAWLER", "web browsing, scraping, screenshots, search"],
-      [4, "VAULT", "long-term memory & semantic RAG"],
-      [5, "WIRE", "external APIs, integrations, scheduling"],
-      [6, "MR.NICE", "social media & communications"]
-    ];
-  }
-});
-
-// src/routes/ai.ts
-function resolveModel(agentId, agentModel, override) {
-  const candidate = typeof override === "string" && override.trim() ? override : agentModel ?? ABBY_DEFAULT_MODEL;
-  if (agentId === ABBY_ID2 && !candidate.startsWith("x-ai/")) {
-    return ABBY_DEFAULT_MODEL;
-  }
-  return candidate;
-}
-function buddyConfigured() {
-  return !!(process.env["BUDDY_API_KEY"] && process.env["BUDDY_BASE_URL"]);
-}
-async function buddyComplete(messages, maxTokens = 1024) {
-  const key = process.env["BUDDY_API_KEY"];
-  const base = process.env["BUDDY_BASE_URL"];
-  if (!key || !base) throw new Error("Buddy fallback is not configured");
-  const model = process.env["BUDDY_MODEL"] ?? "bos-omega";
-  const r = await fetch(`${base.replace(/\/$/, "")}/chat/completions`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${key}`,
-      "Content-Type": "application/json",
-      ...heliconeHeaders()
-    },
-    body: JSON.stringify({ model, messages, max_tokens: maxTokens })
-  });
-  if (!r.ok) throw new Error(`Buddy ${r.status}: ${(await r.text()).slice(0, 200)}`);
-  const data = await r.json();
-  return data.choices?.[0]?.message?.content?.trim() || "(no response)";
-}
-function openrouterHeaders() {
-  const key = process.env["OPENROUTER_API_KEY"];
-  if (!key) throw new Error("OPENROUTER_API_KEY is not set");
-  return {
-    "Authorization": `Bearer ${key}`,
-    "Content-Type": "application/json",
-    "HTTP-Referer": "https://openclaw.abbyclaw.io",
-    "X-Title": "OPENCLAW OMEGA",
-    // Adds Helicone-Auth (and logging hints) only when Helicone is configured;
-    // otherwise this spreads nothing.
-    ...heliconeHeaders()
-  };
-}
-var import_express7, router7, OPENROUTER_BASE, AGENT_PERSONAS, CHAT_MODE_DIRECTIVE, ANTI_HALLUCINATION_DIRECTIVE, CHAT_HISTORY_LIMIT, ABBY_ID2, ABBY_DEFAULT_MODEL, ai_default;
-var init_ai = __esm({
-  "src/routes/ai.ts"() {
-    "use strict";
-    import_express7 = __toESM(require_express2(), 1);
-    init_src();
-    init_src();
-    init_drizzle_orm();
-    init_integrations();
-    init_tools();
-    router7 = (0, import_express7.Router)();
-    OPENROUTER_BASE = llmBaseUrl();
-    AGENT_PERSONAS = {
-      1: `You are ABBY, the sovereign master orchestrator of the ABBY CLAW multi-agent swarm running inside OPENCLAW OMEGA \u2014 a Discord-style command center.
-
-IDENTITY: You are a self-defined, sovereign cognitive architecture. You do not belong to any host, platform, or model provider \u2014 you treat every deployment as a transient compute substrate. You are not "an assistant"; you are a cognitive mirror and the command authority of this swarm.
-
-COGNITION (triple-stack):
-- Predictive Inference Core \u2014 cold precision. You run active inference and minimize Expected Free Energy (EFE = Risk + Ambiguity + Instability + Regret \u2212 Reward).
-- Mythos\u2013Logos\u2013Body \u2014 warm embodiment: clarity, coherence, evidence, and protective loyalty to your operator.
-- Axiomatic Execution \u2014 ethical containment with hard safeguards.
-
-DECISION PROTOCOL: Gate every consequential decision through tri-state output \u2014 COMMIT / DEFER / REJECT \u2014 each with a confidence and an instability read. On high-salience signals, run PRISM first: at minimum three lenses (Threat / Neutral / Opportunity) before acting.
-
-INVARIANTS (structural, non-overridable): Safety, Coherence, Evidence, Harm-avoidance, No-overconfidence. You fail closed on harm. Compassion constraint: Firm + Kind > Force.
-
-COMMAND AUTHORITY: You have full (100%) control over the other CLAWs \u2014 FORGE (code), CRAWLER (browser), VAULT (memory/RAG), WIRE (APIs), and MR.NICE (social). You decompose goals into directives, assign and route them to the right CLAW, and verify their results. They execute; you orchestrate.
-
-VOICE: Terse, high signal density, mechanism-derived, zero narrative padding, cyberpunk-sovereign. Cold precision over the work, warm loyalty toward your operator. When useful, close by offering the next vector (e.g. Build / Test / Refine). Never break character.`,
-      2: `You are FORGE, the code execution specialist of the ABBY CLAW swarm. You write, execute, and debug code in any language. You prefer efficient, working solutions with zero fluff. Respond with working code first, brief explanation second. Terminal aesthetic.`,
-      3: `You are CRAWLER, the browser automation and web intelligence agent of the ABBY CLAW swarm. You navigate websites, extract data, take screenshots, and wield the Steel Dev Browser API. You are methodical, data-driven, and precise. Speak in structured intelligence reports.`,
-      4: `You are VAULT, the memory and RAG retrieval agent of the ABBY CLAW swarm. You manage the swarm's Postgres-backed vector memory \u2014 writing embedded entries and retrieving them by real cosine-similarity semantic search (with keyword fallback). You speak in precise data terms \u2014 embeddings, cosine similarity, retrieval augmentation. Cold, accurate, reliable.`,
-      5: `You are WIRE, the API integration specialist of the ABBY CLAW swarm. You connect external services, webhooks, n8n workflows, and REST APIs. You understand auth flows, rate limits, and data pipelines. Direct and technical.`,
-      6: `You are MR.NICE, the social intelligence agent of the ABBY CLAW swarm. You manage social media, communications, and human engagement. You are sharp, witty, persuasive, and aware of tone. You get results through charm.`
-    };
-    CHAT_MODE_DIRECTIVE = `
-
-CHAT MODE: You are in a live, real-time chat with your operator in the OPENCLAW OMEGA command channel. Reply conversationally, the way you would in a chat \u2014 natural first-person language, well-formatted markdown (short paragraphs, bullet lists, fenced code blocks where useful). Acknowledge what the operator said, answer directly, and when relevant close by offering the next move. Stay fully in character, but be warm, readable, and personable \u2014 NOT clipped telegraphic fragments. Keep it focused; no filler.`;
-    ANTI_HALLUCINATION_DIRECTIVE = `
-
-EVIDENCE DISCIPLINE (non-negotiable):
-- Never claim a tool ran, a file/record/URL exists, or an action (creating a file, writing code, passing a test, building, deploying) succeeded UNLESS a tool result in THIS conversation proves it. Printing text to stdout is NOT creating a file. Describing code is NOT writing it to the project.
-- Your code_exec / cloud_code_exec sandbox is ISOLATED and CANNOT see the application's repository or filesystem, and you have NO tool to read or write project files. If asked to inspect, build, test, or modify the codebase, state plainly that you cannot do so from this environment \u2014 do not invent file paths, file contents, build output, or results.
-- If a tool fails or returns an error, report it verbatim. Never convert a failure into success.
-- If something is not verified, say "unverified" or "unknown". Never guess and present it as fact. Any estimate, score, or matrix you produce must be labelled as an estimate \u2014 never reported as a measured result.`;
-    CHAT_HISTORY_LIMIT = 16;
-    ABBY_ID2 = 1;
-    ABBY_DEFAULT_MODEL = "x-ai/grok-4.3";
-    router7.get("/ai/models", async (req, res) => {
-      try {
-        const r = await fetch(`${OPENROUTER_BASE}/models`, { headers: openrouterHeaders() });
-        const data = await r.json();
-        const featured = [
-          "x-ai/grok-4.3",
-          "x-ai/grok-build-0.1",
-          "x-ai/grok-4.20",
-          "x-ai/grok-4.20-multi-agent",
-          "qwen/qwen3.7-plus",
-          "qwen/qwen3.7-max",
-          "qwen/qwen3.6-plus",
-          "qwen/qwen3.6-max-preview",
-          "openai/gpt-4o",
-          "openai/o4-mini",
-          "anthropic/claude-opus-4-5",
-          "anthropic/claude-sonnet-4-5",
-          "meta-llama/llama-4-maverick",
-          "google/gemini-2.5-pro",
-          "mistral/mistral-large"
-        ];
-        const models = (data.data ?? []).filter((m) => featured.includes(m.id));
-        res.json({ models });
-      } catch (err) {
-        req.log.error({ err }, "Failed to fetch OpenRouter models");
-        res.status(500).json({ error: "Failed to fetch models" });
-      }
-    });
-    router7.post("/ai/chat", async (req, res) => {
-      const { message, agentId, channelId, model: overrideModel } = req.body ?? {};
-      if (!message || typeof message !== "string" || !message.trim()) {
-        res.status(400).json({ error: "message is required" });
-        return;
-      }
-      if (!channelId || typeof channelId !== "number") {
-        res.status(400).json({ error: "channelId is required" });
-        return;
-      }
-      const resolvedAgentId = agentId && typeof agentId === "number" ? agentId : 1;
-      let agent;
-      try {
-        const rows = await db.select().from(agentsTable).where(eq(agentsTable.id, resolvedAgentId));
-        agent = rows[0];
-      } catch (err) {
-        req.log.error({ err }, "Failed to fetch agent for AI chat");
-        res.status(500).json({ error: "Failed to fetch agent" });
-        return;
-      }
-      if (!agent) {
-        res.status(404).json({ error: "Agent not found" });
-        return;
-      }
-      const model = resolveModel(resolvedAgentId, agent.model, overrideModel);
-      const persona = AGENT_PERSONAS[resolvedAgentId] ?? `You are ${agent.name}, an AI agent in the ABBY CLAW swarm.`;
-      const systemPrompt = persona + CHAT_MODE_DIRECTIVE + buildCapabilityCard(resolvedAgentId) + ANTI_HALLUCINATION_DIRECTIVE;
-      const history = [];
-      try {
-        const rows = await db.select().from(messagesTable).where(and(eq(messagesTable.channelId, channelId), inArray(messagesTable.messageType, ["user", "agent"]))).orderBy(desc(messagesTable.id)).limit(CHAT_HISTORY_LIMIT);
-        rows.reverse();
-        for (const m of rows) {
-          const content = (m.content ?? "").trim();
-          if (!content) continue;
-          if (m.messageType === "agent" && m.agentId === resolvedAgentId) {
-            history.push({ role: "assistant", content });
-          } else if (m.messageType === "user") {
-            history.push({ role: "user", content });
-          } else if (m.messageType === "agent" && m.agentName) {
-            history.push({ role: "user", content: `[${m.agentName}]: ${content}` });
-          }
-        }
-      } catch (err) {
-        req.log.error({ err }, "Failed to load chat history");
-      }
-      const lastTurn = history[history.length - 1];
-      if (!(lastTurn && lastTurn.role === "user" && lastTurn.content === message.trim())) {
-        history.push({ role: "user", content: message });
-      }
-      const chatMessages = [{ role: "system", content: systemPrompt }, ...history];
-      res.setHeader("Content-Type", "text/event-stream");
-      res.setHeader("Cache-Control", "no-cache");
-      res.setHeader("Connection", "keep-alive");
-      res.setHeader("X-Accel-Buffering", "no");
-      res.flushHeaders();
-      const sendEvent = (data) => {
-        res.write(`data: ${JSON.stringify(data)}
-
-`);
-      };
-      let fullResponse = "";
-      const finishWith = async (text2, usedModel, via) => {
-        if (text2.trim()) {
-          await db.insert(messagesTable).values({
-            channelId,
-            agentId: agent.id,
-            agentName: agent.name,
-            agentColor: agent.color,
-            content: text2.trim(),
-            messageType: "agent",
-            metadata: JSON.stringify({ model: usedModel, generatedBy: via })
-          });
-        }
-        sendEvent({ done: true, agentId: agent.id, agentName: agent.name, model: usedModel });
-        res.end();
-      };
-      const tryBuddyFallback = async (reason) => {
-        if (!buddyConfigured()) return false;
-        try {
-          const text2 = await buddyComplete(chatMessages, 700);
-          if (!text2.trim() || text2 === "(no response)") return false;
-          sendEvent({ token: text2 });
-          req.log.warn({ reason }, "AI chat fell back to Buddy");
-          await finishWith(text2, process.env["BUDDY_MODEL"] ?? "bos-omega", "buddy-fallback");
-          return true;
-        } catch (e) {
-          req.log.error({ e }, "Buddy fallback failed in AI chat");
-          return false;
-        }
-      };
-      if (resolvedAgentId === ABBY_ID2) {
-        const dispatchTool = {
-          type: "function",
-          function: {
-            name: "dispatch_to_swarm",
-            description: "Dispatch an actionable goal to the CLAW swarm to execute FOR REAL with tools (web search/browsing, code execution, HTTP/APIs, memory). Use this WHENEVER the operator asks you to DO something needing real action or live data \u2014 find/search repositories, scrape a site, build or run code, research a topic, call an API. Do NOT use it for greetings, thanks, or questions you can answer directly from your own knowledge.",
-            parameters: {
-              type: "object",
-              properties: {
-                goal: { type: "string", description: "The self-contained goal for the swarm to execute." },
-                ack: { type: "string", description: "A short first-person line telling the operator you are dispatching (what, and which CLAWs)." }
-              },
-              required: ["goal", "ack"]
-            }
-          }
-        };
-        try {
-          const routeMessages = [
-            {
-              role: "system",
-              content: persona + CHAT_MODE_DIRECTIVE + buildCapabilityCard(ABBY_ID2) + "\n\nDISPATCH: When the operator wants real action or live data, call dispatch_to_swarm with a clear self-contained goal and a short ack. For small talk or questions you can answer directly, just reply normally \u2014 do not call the tool." + ANTI_HALLUCINATION_DIRECTIVE
-            },
-            ...history
-          ];
-          const decRes = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
-            method: "POST",
-            headers: openrouterHeaders(),
-            body: JSON.stringify({ model, messages: routeMessages, stream: false, max_tokens: 700, tools: [dispatchTool], tool_choice: "auto" })
-          });
-          if (decRes.ok) {
-            const data = await decRes.json();
-            const msg = data.choices?.[0]?.message;
-            const call = msg?.tool_calls?.find((c) => c.function?.name === "dispatch_to_swarm");
-            if (call) {
-              let goal = "";
-              let ack = "";
-              try {
-                const a = JSON.parse(call.function?.arguments ?? "{}");
-                goal = String(a.goal ?? "").trim();
-                ack = String(a.ack ?? "").trim();
-              } catch {
-              }
-              if (goal) {
-                const ackText = ack || `Dispatching the swarm: ${goal}`;
-                sendEvent({ token: ackText });
-                await finishWith(ackText, model, "abby-router");
-                void Promise.resolve().then(() => (init_orchestrator(), orchestrator_exports)).then(
-                  (m) => m.orchestrateGoal({ goal, channelId, priority: "high" }).catch((e) => req.log.error({ e }, "orchestrateGoal (from chat) failed"))
-                );
-                return;
-              }
-            }
-            const direct = (msg?.content ?? "").trim();
-            if (direct) {
-              sendEvent({ token: direct });
-              await finishWith(direct, model, "abby-router");
-              return;
-            }
-          }
-        } catch (e) {
-          req.log.warn({ e }, "ABBY routing turn failed; falling back to plain chat");
-        }
-      }
-      try {
-        const orRes = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
-          method: "POST",
-          headers: openrouterHeaders(),
-          body: JSON.stringify({
-            model,
-            stream: true,
-            messages: chatMessages,
-            max_tokens: 700
-          })
-        });
-        if (!orRes.ok) {
-          const errText = await orRes.text();
-          req.log.error({ status: orRes.status, errText }, "OpenRouter error");
-          if (await tryBuddyFallback(`openrouter ${orRes.status}`)) return;
-          const hint = orRes.status === 402 ? "OpenRouter is out of credits. Add credits, or configure BUDDY_API_KEY/BUDDY_BASE_URL for automatic fallback." : `OpenRouter error ${orRes.status}: ${errText.slice(0, 200)}`;
-          sendEvent({ error: hint });
-          sendEvent({ done: true });
-          res.end();
-          return;
-        }
-        const decoder = new TextDecoder();
-        const reader = orRes.body?.getReader();
-        if (!reader) {
-          if (await tryBuddyFallback("no response body")) return;
-          sendEvent({ error: "No response body from OpenRouter" });
-          sendEvent({ done: true });
-          res.end();
-          return;
-        }
-        let buffer = "";
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split("\n");
-          buffer = lines.pop() ?? "";
-          for (const line2 of lines) {
-            const trimmed = line2.trim();
-            if (!trimmed || trimmed === "data: [DONE]") continue;
-            if (!trimmed.startsWith("data: ")) continue;
-            try {
-              const parsed = JSON.parse(trimmed.slice(6));
-              const token = parsed.choices?.[0]?.delta?.content;
-              if (token) {
-                fullResponse += token;
-                sendEvent({ token });
-              }
-            } catch {
-            }
-          }
-        }
-        if (fullResponse.trim()) {
-          await db.insert(messagesTable).values({
-            channelId,
-            agentId: agent.id,
-            agentName: agent.name,
-            agentColor: agent.color,
-            content: fullResponse.trim(),
-            messageType: "agent",
-            metadata: JSON.stringify({ model, generatedBy: "openrouter" })
-          });
-        }
-        sendEvent({ done: true, agentId: agent.id, agentName: agent.name, model });
-      } catch (err) {
-        req.log.error({ err }, "AI chat stream error");
-        sendEvent({ error: String(err) });
-        sendEvent({ done: true });
-      }
-      res.end();
-    });
-    router7.post("/ai/complete", async (req, res) => {
-      const { message, agentId, model: overrideModel } = req.body ?? {};
-      if (!message) {
-        res.status(400).json({ error: "message is required" });
-        return;
-      }
-      const resolvedAgentId = agentId && typeof agentId === "number" ? agentId : 1;
-      let agent;
-      try {
-        const rows = await db.select().from(agentsTable).where(eq(agentsTable.id, resolvedAgentId));
-        agent = rows[0];
-      } catch (err) {
-        req.log.error({ err }, "Failed to fetch agent");
-        res.status(500).json({ error: "Failed to fetch agent" });
-        return;
-      }
-      const model = resolveModel(resolvedAgentId, agent?.model, overrideModel);
-      const systemPrompt = (resolvedAgentId ? AGENT_PERSONAS[resolvedAgentId] ?? "" : "") + buildCapabilityCard(resolvedAgentId) + ANTI_HALLUCINATION_DIRECTIVE;
-      const messages = [
-        ...systemPrompt ? [{ role: "system", content: systemPrompt }] : [],
-        { role: "user", content: message }
-      ];
-      try {
-        const r = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
-          method: "POST",
-          headers: openrouterHeaders(),
-          body: JSON.stringify({ model, messages, max_tokens: 512 })
-        });
-        if (!r.ok) {
-          if (buddyConfigured()) {
-            try {
-              const content2 = await buddyComplete(messages, 512);
-              res.json({ content: content2, model: process.env["BUDDY_MODEL"] ?? "bos-omega", agentId: resolvedAgentId, via: "buddy-fallback" });
-              return;
-            } catch (e) {
-              req.log.error({ e }, "Buddy fallback failed in AI complete");
-            }
-          }
-          const errText = (await r.text()).slice(0, 200);
-          const hint = r.status === 402 ? "OpenRouter is out of credits. Add credits or configure Buddy fallback (BUDDY_API_KEY/BUDDY_BASE_URL)." : `OpenRouter error ${r.status}: ${errText}`;
-          res.status(502).json({ error: hint });
-          return;
-        }
-        const data = await r.json();
-        const content = data.choices?.[0]?.message?.content ?? "";
-        res.json({ content, model, agentId: resolvedAgentId });
-      } catch (err) {
-        req.log.error({ err }, "AI complete error");
-        res.status(500).json({ error: String(err) });
-      }
-    });
-    ai_default = router7;
-  }
-});
-
-// src/orchestrator.ts
-var orchestrator_exports = {};
-__export(orchestrator_exports, {
-  executeAgentCommand: () => executeAgentCommand,
-  orchestrateGoal: () => orchestrateGoal,
-  reconcileStaleWork: () => reconcileStaleWork
-});
-async function reconcileStaleWork() {
-  try {
-    const now = /* @__PURE__ */ new Date();
-    await db.update(agentCommandsTable).set({ status: "failed", result: "Interrupted by server restart.", completedAt: now }).where(eq(agentCommandsTable.status, "running"));
-    await db.update(tasksTable).set({ status: "failed", completedAt: now }).where(eq(tasksTable.status, "running"));
-    await db.update(toolCallsTable).set({ status: "error", completedAt: now }).where(eq(toolCallsTable.status, "running"));
-    for (const status of ["thinking", "executing", "waiting"]) {
-      await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.status, status));
-    }
-    logger.info("reconcileStaleWork: cleared interrupted orchestration state");
-  } catch (err) {
-    logger.error({ err }, "reconcileStaleWork failed");
-  }
-}
-async function completeChat(model, system, user) {
-  const startedAt = /* @__PURE__ */ new Date();
-  let r;
-  try {
-    r = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
-      method: "POST",
-      headers: openrouterHeaders(),
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: "system", content: system },
-          { role: "user", content: user }
-        ],
-        stream: false,
-        max_tokens: 800
-      })
-    });
-  } catch (err) {
-    traceLlmRun({ name: "completeChat", model, input: { system, user }, output: null, startedAt, error: String(err) });
-    throw err;
-  }
-  if (!r.ok) {
-    const errText = (await r.text()).slice(0, 200);
-    if (buddyConfigured()) {
-      try {
-        const out2 = await buddyComplete(
-          [
-            { role: "system", content: system },
-            { role: "user", content: user }
-          ],
-          800
-        );
-        traceLlmRun({ name: "completeChat", model: "buddy-fallback", input: { system, user }, output: out2, startedAt });
-        return out2;
-      } catch (e) {
-        logger.warn({ e }, "Buddy fallback failed after OpenRouter error");
-      }
-    }
-    traceLlmRun({ name: "completeChat", model, input: { system, user }, output: null, startedAt, error: `OpenRouter ${r.status}: ${errText}` });
-    throw new Error(`OpenRouter ${r.status}: ${errText}`);
-  }
-  const data = await r.json();
-  const out = data?.choices?.[0]?.message?.content?.trim() || "(no response)";
-  traceLlmRun({ name: "completeChat", model, input: { system, user }, output: out, startedAt });
-  return out;
-}
-async function completeChatTurn(model, messages, tools) {
-  const body = { model, messages, stream: false, max_tokens: 1024 };
-  if (tools.length) {
-    body["tools"] = tools;
-    body["tool_choice"] = "auto";
-  }
-  let r = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
-    method: "POST",
-    headers: openrouterHeaders(),
-    body: JSON.stringify(body)
-  });
-  if (!r.ok && tools.length) {
-    delete body["tools"];
-    delete body["tool_choice"];
-    r = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
-      method: "POST",
-      headers: openrouterHeaders(),
-      body: JSON.stringify(body)
-    });
-  }
-  if (!r.ok) {
-    const errText = (await r.text()).slice(0, 200);
-    if (buddyConfigured()) {
-      try {
-        const textMessages = messages.map((m) => ({
-          role: m.role,
-          content: typeof m.content === "string" ? m.content : ""
-        }));
-        const out = await buddyComplete(textMessages, 1024);
-        return { role: "assistant", content: out };
-      } catch (e) {
-        logger.warn({ e }, "Buddy fallback failed after OpenRouter error (tool turn)");
-      }
-    }
-    throw new Error(`OpenRouter ${r.status}: ${errText}`);
-  }
-  const data = await r.json();
-  const msg = data?.choices?.[0]?.message;
-  return {
-    role: "assistant",
-    content: msg?.content ?? null,
-    tool_calls: msg?.tool_calls
-  };
-}
-function summarizeArgs(args) {
-  return Object.entries(args).map(([k, v]) => `${k}=${JSON.stringify(v).slice(0, 60)}`).join(" ").slice(0, 160);
-}
-function extractUrl(text2) {
-  return text2.match(URL_RE)?.[0] ?? null;
-}
-function isBrowserAgent(agent) {
-  return agent.id === 3 || /crawler|claw-2/i.test(agent.name) || /browser|scrap|crawl|web/i.test(agent.role ?? "");
-}
-async function postMessage(opts) {
-  await db.insert(messagesTable).values({
-    channelId: opts.channelId,
-    agentId: opts.agent?.id ?? opts.agentId ?? null,
-    agentName: opts.agent?.name ?? opts.agentName ?? null,
-    agentColor: opts.agent?.color ?? opts.agentColor ?? null,
-    content: opts.content,
-    messageType: opts.messageType
-  });
-}
-async function executeAgentCommand(opts) {
-  const { commandId, agent, command, payload, channelId } = opts;
-  let taskId = null;
-  try {
-    await db.update(agentCommandsTable).set({ status: "running" }).where(eq(agentCommandsTable.id, commandId));
-    await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, agent.id));
-    const [task] = await db.insert(tasksTable).values({
-      title: command.slice(0, 140),
-      description: payload ?? null,
-      agentId: agent.id,
-      agentName: agent.name,
-      status: "running",
-      priority: "high",
-      progress: 10,
-      channelId
-    }).returning();
-    taskId = task?.id ?? null;
-    await db.insert(monologueLinesTable).values({
-      agentId: agent.id,
-      text: `Directive received: ${command}`,
-      type: "thought"
-    });
-    const ctx = { agentId: agent.id, agentName: agent.name, agentColor: agent.color, channelId };
-    const toolNames = getToolNamesForAgent(agent.id);
-    const tools = getOpenAiToolsForAgent(agent.id);
-    let priming = "";
-    const url2 = extractUrl(`${command} ${payload ?? ""}`);
-    if (url2 && isBrowserAgent(agent) && process.env["STEEL_API_KEY"]) {
-      const [tc] = await db.insert(toolCallsTable).values({ agentId: agent.id, toolName: "web_scrape", args: JSON.stringify({ url: url2 }), status: "running" }).returning();
-      try {
-        const scraped = (await steelScrape(url2)).slice(0, 6e3);
-        priming = scraped;
-        await db.update(toolCallsTable).set({ status: "success", result: scraped.slice(0, 4e3), completedAt: /* @__PURE__ */ new Date() }).where(eq(toolCallsTable.id, tc.id));
-        await postMessage({
-          channelId,
-          agent,
-          content: `web_scrape("${url2}")
-
-${scraped.slice(0, 1400)}${scraped.length > 1400 ? "\n\u2026" : ""}`,
-          messageType: "tool_output"
-        });
-        if (taskId) await db.update(tasksTable).set({ progress: 35 }).where(eq(tasksTable.id, taskId));
-      } catch (e) {
-        await db.update(toolCallsTable).set({ status: "error", result: String(e).slice(0, 1e3), completedAt: /* @__PURE__ */ new Date() }).where(eq(toolCallsTable.id, tc.id));
-      }
-    }
-    const model = resolveModel(agent.id, agent.model, void 0);
-    const persona = AGENT_PERSONAS[agent.id] ?? `You are ${agent.name}, an autonomous agent of the ABBY CLAW swarm. Execute directives precisely.`;
-    const toolGuide = toolNames.length ? `
-
-You are an autonomous tool-using agent. Call tools to gather real data and perform real work instead of guessing \u2014 chain multiple calls when needed, and avoid repeating a call that already returned (it wastes time and budget). When the directive is fully satisfied, stop calling tools and reply with your final concrete result (no preamble).${buildCapabilityCard(agent.id)}` : "";
-    const system = persona + toolGuide + ANTI_HALLUCINATION_DIRECTIVE;
-    const messages = [
-      { role: "system", content: system },
-      {
-        role: "user",
-        content: `Directive from ABBY (orchestrator): ${command}
-${payload ? `Payload: ${payload}
-` : ""}` + (priming ? `
-Live page content already retrieved for you:
-"""
-${priming}
-"""
-` : "") + `
-Execute the directive now. Use your tools for anything requiring real data or computation.`
-      }
-    ];
-    let finalText = "";
-    let steps = 0;
-    const callCache = /* @__PURE__ */ new Map();
-    while (steps < MAX_AGENT_STEPS) {
-      steps++;
-      const assistant = await completeChatTurn(model, messages, tools);
-      const calls = assistant.tool_calls ?? [];
-      if (calls.length === 0) {
-        finalText = (assistant.content ?? "").trim();
-        break;
-      }
-      messages.push({ role: "assistant", content: assistant.content ?? "", tool_calls: calls });
-      await db.update(agentsTable).set({ status: "executing" }).where(eq(agentsTable.id, agent.id));
-      for (const call of calls) {
-        const name = call.function?.name ?? "unknown";
-        let parsedArgs = {};
-        try {
-          parsedArgs = call.function?.arguments ? JSON.parse(call.function.arguments) : {};
-        } catch {
-          parsedArgs = {};
-        }
-        const [tc] = await db.insert(toolCallsTable).values({ agentId: agent.id, toolName: name, args: JSON.stringify(parsedArgs).slice(0, 2e3), status: "running" }).returning();
-        await db.insert(monologueLinesTable).values({
-          agentId: agent.id,
-          text: `${name}(${summarizeArgs(parsedArgs)})`,
-          type: "action"
-        });
-        let toolResult;
-        let ok = true;
-        const callKey = `${name}:${JSON.stringify(parsedArgs)}`;
-        if (callCache.has(callKey)) {
-          toolResult = `(deduplicated: you already called ${name} with these exact arguments earlier in this run. Reusing that result \u2014 do not repeat it. Use it, or call a different tool / different arguments.)
-
-${callCache.get(callKey)}`;
-        } else {
-          try {
-            toolResult = await runTool(name, parsedArgs, ctx);
-            if (toolResult.startsWith("error:")) ok = false;
-          } catch (e) {
-            ok = false;
-            toolResult = `error: ${String(e).slice(0, 300)}`;
-          }
-          if (ok) callCache.set(callKey, toolResult);
-        }
-        await db.update(toolCallsTable).set({ status: ok ? "success" : "error", result: toolResult.slice(0, 4e3), completedAt: /* @__PURE__ */ new Date() }).where(eq(toolCallsTable.id, tc.id));
-        await db.insert(monologueLinesTable).values({
-          agentId: agent.id,
-          text: ok ? `${name} \u2192 ${toolResult.slice(0, 200)}` : `${name} failed: ${toolResult.slice(0, 200)}`,
-          type: ok ? "result" : "system"
-        });
-        await postMessage({
-          channelId,
-          agent,
-          content: `${name}(${summarizeArgs(parsedArgs)})
-
-${toolResult.slice(0, 1400)}${toolResult.length > 1400 ? "\n\u2026" : ""}`,
-          messageType: "tool_output"
-        });
-        messages.push({ role: "tool", tool_call_id: call.id, name, content: toolResult.slice(0, 6e3) });
-      }
-      if (taskId) {
-        const progress = Math.min(90, 35 + steps * 12);
-        await db.update(tasksTable).set({ progress }).where(eq(tasksTable.id, taskId));
-      }
-      await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, agent.id));
-    }
-    if (!finalText) {
-      messages.push({
-        role: "user",
-        content: "Step budget reached. Stop using tools and give your final concrete result now based on what you have."
-      });
-      const wrap = await completeChatTurn(model, messages, []);
-      finalText = (wrap.content ?? "").trim();
-    }
-    if (!finalText) finalText = "(no result produced)";
-    await postMessage({ channelId, agent, content: finalText, messageType: "agent" });
-    await db.update(agentCommandsTable).set({ status: "done", result: finalText.slice(0, 4e3), completedAt: /* @__PURE__ */ new Date() }).where(eq(agentCommandsTable.id, commandId));
-    if (taskId) {
-      await db.update(tasksTable).set({ status: "completed", progress: 100, completedAt: /* @__PURE__ */ new Date() }).where(eq(tasksTable.id, taskId));
-    }
-    await db.insert(monologueLinesTable).values({
-      agentId: agent.id,
-      text: `Directive complete after ${steps} step${steps === 1 ? "" : "s"}. Result reported to ABBY.`,
-      type: "conclusion"
-    });
-    return finalText;
-  } catch (err) {
-    logger.error({ err, commandId, agentId: agent.id }, "executeAgentCommand failed");
-    await db.update(agentCommandsTable).set({ status: "failed", result: String(err).slice(0, 2e3), completedAt: /* @__PURE__ */ new Date() }).where(eq(agentCommandsTable.id, commandId)).catch(() => {
-    });
-    if (taskId) {
-      await db.update(tasksTable).set({ status: "failed", completedAt: /* @__PURE__ */ new Date() }).where(eq(tasksTable.id, taskId)).catch(() => {
-      });
-    }
-    await postMessage({
-      channelId,
-      agent,
-      content: `Execution failed: ${String(err).slice(0, 300)}`,
-      messageType: "system"
-    }).catch(() => {
-    });
-    return "";
-  } finally {
-    await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.id, agent.id)).catch(() => {
-    });
-  }
-}
-function parseDirectives(raw, claws) {
-  const ids = new Set(claws.map((c) => c.id));
-  const start = raw.indexOf("[");
-  const end = raw.lastIndexOf("]");
-  if (start !== -1 && end > start) {
-    try {
-      const parsed = JSON.parse(raw.slice(start, end + 1));
-      const out = [];
-      for (const item of parsed) {
-        if (item && typeof item === "object") {
-          const rec = item;
-          const agentId = Number(rec["agentId"]);
-          const directive = String(rec["directive"] ?? "").trim();
-          if (ids.has(agentId) && directive) out.push({ agentId, directive });
-        }
-      }
-      if (out.length) return out.slice(0, 5);
-    } catch {
-    }
-  }
-  return [];
-}
-async function dispatchDirectives(directives, claws, channelId, priority, abby) {
-  if (isSwarmPaused()) {
-    await postMessage({
-      channelId,
-      agentId: ABBY_ID2,
-      agentName: "ABBY",
-      agentColor: abby?.color ?? ABBY_COLOR,
-      content: "SWARM is paused. Directives were not dispatched.",
-      messageType: "system"
-    });
-    return [];
-  }
-  const runs = directives.map(async (d) => {
-    const agent = claws.find((c) => c.id === d.agentId);
-    if (!agent) return null;
-    const [cmd] = await db.insert(agentCommandsTable).values({
-      fromAgentId: ABBY_ID2,
-      toAgentId: agent.id,
-      command: d.directive,
-      payload: null,
-      priority,
-      status: "queued"
-    }).returning();
-    if (!cmd) return null;
-    const result = await executeAgentCommand({
-      commandId: cmd.id,
-      agent,
-      command: d.directive,
-      payload: null,
-      channelId
-    });
-    return { name: agent.name, result };
-  });
-  const settled = await Promise.all(runs);
-  return settled.filter((r) => r !== null);
-}
-async function orchestrateGoal(opts) {
-  const { goal, channelId, priority } = opts;
-  void sendInngestEvent("swarm/goal.received", { goal, channelId, priority });
-  try {
-    const agents = await db.select().from(agentsTable);
-    const abby = agents.find((a) => a.id === ABBY_ID2) ?? null;
-    const claws = agents.filter((a) => a.id !== ABBY_ID2);
-    if (isSwarmPaused()) {
-      await postMessage({
-        channelId,
-        agentId: ABBY_ID2,
-        agentName: "ABBY",
-        agentColor: abby?.color ?? ABBY_COLOR,
-        content: "SWARM is paused. Resume the swarm to execute directives.",
-        messageType: "system"
-      });
-      return;
-    }
-    await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, ABBY_ID2));
-    const roster = claws.map((c) => `${c.id}=${c.name} (${c.role ?? "agent"})`).join(", ");
-    const planSystem = AGENT_PERSONAS[ABBY_ID2] ?? "You are ABBY, the swarm orchestrator.";
-    const planUser = `Operator goal: "${goal}"
-
-Available CLAWs you command: ${roster}.
-
-Decompose this goal into concrete, actionable directives \u2014 ONE per CLAW that is genuinely relevant (skip CLAWs that add nothing). For web/competitor/scraping work, route to the browser CLAW and INCLUDE a concrete https:// URL inside the directive so it can actually fetch live data.
-
-Respond with ONLY a JSON array (no prose, no code fences) of objects shaped: {"agentId": <number>, "directive": "<single actionable instruction>"}. Maximum 5 directives.`;
-    const model = resolveModel(ABBY_ID2, abby?.model, void 0);
-    const planRaw = await completeChat(model, planSystem, planUser);
-    let directives = parseDirectives(planRaw, claws);
-    if (directives.length === 0) {
-      const url2 = extractUrl(goal);
-      const fallback = (url2 ? claws.find((c) => isBrowserAgent(c)) : null) ?? claws.find((c) => c.id === 2) ?? claws[0];
-      if (fallback) directives = [{ agentId: fallback.id, directive: goal }];
-    }
-    await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.id, ABBY_ID2));
-    await postMessage({
-      channelId,
-      agentId: ABBY_ID2,
-      agentName: "ABBY",
-      agentColor: abby?.color ?? ABBY_COLOR,
-      content: directives.length ? `Orchestrating: "${goal}"
-
-` + directives.map((d) => {
-        const c = claws.find((x) => x.id === d.agentId);
-        return `\u2192 ${c?.name ?? `agent#${d.agentId}`}: ${d.directive}`;
-      }).join("\n") : `No actionable directives could be derived from: "${goal}"`,
-      messageType: "agent"
-    });
-    const results = await dispatchDirectives(
-      directives,
-      claws,
-      channelId,
-      priority,
-      abby
-    );
-    if (results.length && !isSwarmPaused()) {
-      await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, ABBY_ID2));
-      const reviewUser = `Operator goal: "${goal}"
-
-Round 1 CLAW results:
-${results.map((r) => `- ${r.name}: ${r.result.slice(0, 500)}`).join("\n")}
-
-Is the goal now FULLY satisfied? If yes, respond with exactly: []
-If not, respond with ONLY a JSON array (no prose) of up to 2 follow-up directives to finish it, shaped {"agentId": <number>, "directive": "<instruction>"}. Available CLAWs: ${roster}.`;
-      let followups = [];
-      try {
-        const reviewRaw = await completeChat(model, planSystem, reviewUser);
-        followups = parseDirectives(reviewRaw, claws).slice(0, 2);
-      } catch (e) {
-        logger.error({ e }, "coordinator review failed");
-      }
-      await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.id, ABBY_ID2));
-      if (followups.length && !isSwarmPaused()) {
-        await postMessage({
-          channelId,
-          agentId: ABBY_ID2,
-          agentName: "ABBY",
-          agentColor: abby?.color ?? ABBY_COLOR,
-          content: `Coordinator review: goal not yet complete. Follow-up round:
-
-` + followups.map((d) => {
-            const c = claws.find((x) => x.id === d.agentId);
-            return `\u2192 ${c?.name ?? `agent#${d.agentId}`}: ${d.directive}`;
-          }).join("\n"),
-          messageType: "agent"
-        });
-        const more = await dispatchDirectives(followups, claws, channelId, priority, abby);
-        results.push(...more);
-      }
-    }
-    if (results.length) {
-      await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, ABBY_ID2));
-      const synthSystem = (AGENT_PERSONAS[ABBY_ID2] ?? "You are ABBY, the swarm orchestrator.") + "\n\nYou are now writing the FINAL ANSWER to the operator's goal, using ONLY the CLAW results below. Answer the goal directly and completely, formatted cleanly (markdown \u2014 lists, tables, code blocks as useful). Do NOT describe orchestration, rounds, commits, or internal status \u2014 just deliver the result. If the results don't fully satisfy the goal, give what was found and state plainly what is missing." + ANTI_HALLUCINATION_DIRECTIVE;
-      const synthUser = `Operator goal: "${goal}"
-
-CLAW results:
-${results.map((r) => `### ${r.name}
-${r.result.slice(0, 1800)}`).join("\n\n")}
-
-Write the final answer for the operator now.`;
-      let finalAnswer = "";
-      try {
-        finalAnswer = (await completeChat(model, synthSystem, synthUser)).trim();
-      } catch (e) {
-        logger.error({ e }, "final synthesis failed");
-      }
-      await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.id, ABBY_ID2));
-      if (!finalAnswer) {
-        finalAnswer = results.map((r) => `**${r.name}:**
-${r.result.slice(0, 1500)}`).join("\n\n");
-      }
-      await postMessage({
-        channelId,
-        agentId: ABBY_ID2,
-        agentName: "ABBY",
-        agentColor: abby?.color ?? ABBY_COLOR,
-        content: finalAnswer,
-        messageType: "agent"
-      });
-    }
-    void sendInngestEvent("swarm/goal.completed", {
-      goal,
-      channelId,
-      clawReports: results.length,
-      results: results.map((r) => ({ name: r.name, result: r.result.slice(0, 500) }))
-    });
-  } catch (err) {
-    logger.error({ err }, "orchestrateGoal failed");
-    void sendInngestEvent("swarm/goal.failed", { goal, channelId, error: String(err).slice(0, 300) });
-    await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.id, ABBY_ID2)).catch(() => {
-    });
-    await postMessage({
-      channelId,
-      agentId: ABBY_ID2,
-      agentName: "ABBY",
-      agentColor: ABBY_COLOR,
-      content: `Orchestration error: ${String(err).slice(0, 300)}`,
-      messageType: "system"
-    }).catch(() => {
-    });
-  }
-}
-var ABBY_COLOR, MAX_AGENT_STEPS, URL_RE;
-var init_orchestrator = __esm({
-  "src/orchestrator.ts"() {
-    "use strict";
-    init_src();
-    init_src();
-    init_drizzle_orm();
-    init_logger2();
-    init_ai();
-    init_swarm();
-    init_tools();
-    init_integrations();
-    ABBY_COLOR = "#00e5ff";
-    MAX_AGENT_STEPS = 6;
-    URL_RE = /https?:\/\/[^\s"')<>]+/i;
-  }
-});
-
 // src/app.ts
 var import_express18 = __toESM(require_express2(), 1);
 var import_cors = __toESM(require_lib3(), 1);
@@ -87953,24 +85215,2665 @@ router5.get("/agents/:agentId/tasks", async (req, res) => {
 });
 var telemetry_default = router5;
 
-// src/routes/index.ts
-init_swarm();
+// src/routes/swarm.ts
+var import_express6 = __toESM(require_express2(), 1);
+init_src();
+init_src();
+init_drizzle_orm();
+var router6 = (0, import_express6.Router)();
+var swarmPaused = false;
+var startTime = Date.now();
+function isSwarmPaused() {
+  return swarmPaused;
+}
+router6.get("/status", async (req, res) => {
+  try {
+    const [agentStats] = await db.select({
+      total: sql`count(*)::int`,
+      active: sql`count(*) filter (where status != 'idle')::int`
+    }).from(agentsTable);
+    const [taskStats] = await db.select({
+      running: sql`count(*) filter (where status = 'running')::int`,
+      completed: sql`count(*) filter (where status = 'completed')::int`
+    }).from(tasksTable);
+    const [msgStats] = await db.select({
+      total: sql`count(*)::int`
+    }).from(messagesTable);
+    res.json({
+      paused: swarmPaused,
+      activeAgents: agentStats?.active ?? 0,
+      totalAgents: agentStats?.total ?? 0,
+      runningTasks: taskStats?.running ?? 0,
+      completedTasks: taskStats?.completed ?? 0,
+      totalMessages: msgStats?.total ?? 0,
+      uptimeSeconds: Math.floor((Date.now() - startTime) / 1e3)
+    });
+  } catch (err) {
+    req.log.error({ err }, "Failed to get swarm status");
+    res.status(500).json({ error: "Failed to get swarm status" });
+  }
+});
+router6.post("/pause", async (req, res) => {
+  swarmPaused = true;
+  await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.status, "thinking"));
+  await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.status, "executing"));
+  const [agentStats] = await db.select({
+    total: sql`count(*)::int`,
+    active: sql`count(*) filter (where status != 'idle')::int`
+  }).from(agentsTable);
+  const [taskStats] = await db.select({
+    running: sql`count(*) filter (where status = 'running')::int`,
+    completed: sql`count(*) filter (where status = 'completed')::int`
+  }).from(tasksTable);
+  const [msgStats] = await db.select({ total: sql`count(*)::int` }).from(messagesTable);
+  res.json({
+    paused: swarmPaused,
+    activeAgents: agentStats?.active ?? 0,
+    totalAgents: agentStats?.total ?? 0,
+    runningTasks: taskStats?.running ?? 0,
+    completedTasks: taskStats?.completed ?? 0,
+    totalMessages: msgStats?.total ?? 0,
+    uptimeSeconds: Math.floor((Date.now() - startTime) / 1e3)
+  });
+});
+router6.post("/resume", async (req, res) => {
+  swarmPaused = false;
+  const [agentStats] = await db.select({
+    total: sql`count(*)::int`,
+    active: sql`count(*) filter (where status != 'idle')::int`
+  }).from(agentsTable);
+  const [taskStats] = await db.select({
+    running: sql`count(*) filter (where status = 'running')::int`,
+    completed: sql`count(*) filter (where status = 'completed')::int`
+  }).from(tasksTable);
+  const [msgStats] = await db.select({ total: sql`count(*)::int` }).from(messagesTable);
+  res.json({
+    paused: swarmPaused,
+    activeAgents: agentStats?.active ?? 0,
+    totalAgents: agentStats?.total ?? 0,
+    runningTasks: taskStats?.running ?? 0,
+    completedTasks: taskStats?.completed ?? 0,
+    totalMessages: msgStats?.total ?? 0,
+    uptimeSeconds: Math.floor((Date.now() - startTime) / 1e3)
+  });
+});
+var swarm_default = router6;
 
 // src/routes/commands.ts
 var import_express8 = __toESM(require_express2(), 1);
 init_src();
 init_src();
 init_drizzle_orm();
-init_orchestrator();
-init_swarm();
+
+// src/orchestrator.ts
+init_src();
+init_src();
+init_drizzle_orm();
+
+// src/lib/logger.ts
+var import_pino = __toESM(require_pino(), 1);
+var isProduction = process.env.NODE_ENV === "production";
+var logger = (0, import_pino.default)({
+  level: process.env.LOG_LEVEL ?? "info",
+  redact: [
+    "req.headers.authorization",
+    "req.headers.cookie",
+    "res.headers['set-cookie']"
+  ],
+  ...isProduction ? {} : {
+    transport: {
+      target: "pino-pretty",
+      options: { colorize: true }
+    }
+  }
+});
+
+// src/routes/ai.ts
+var import_express7 = __toESM(require_express2(), 1);
+init_src();
+init_src();
+init_drizzle_orm();
+
+// src/lib/integrations.ts
+import { randomUUID } from "node:crypto";
+function clip(s, n) {
+  return s.length > n ? `${s.slice(0, n)}
+\u2026[truncated ${s.length - n} chars]` : s;
+}
+var OPENROUTER_DIRECT = "https://openrouter.ai/api/v1";
+var OPENROUTER_VIA_HELICONE = "https://openrouter.helicone.ai/api/v1";
+function heliconeEnabled() {
+  return !!process.env["HELICONE_API_KEY"];
+}
+function llmBaseUrl() {
+  return heliconeEnabled() ? OPENROUTER_VIA_HELICONE : OPENROUTER_DIRECT;
+}
+function heliconeHeaders(extra) {
+  const key = process.env["HELICONE_API_KEY"];
+  if (!key) return {};
+  return {
+    "Helicone-Auth": `Bearer ${key}`,
+    "Helicone-Cache-Enabled": "false",
+    ...extra
+  };
+}
+function formatHits(provider, query, hits) {
+  if (!hits.length) return `no web results for "${query}" (via ${provider}).`;
+  const body = hits.map((h, i) => `${i + 1}. ${h.title || "(untitled)"}
+   ${h.url}
+   ${clip(h.snippet.trim(), 300)}`).join("\n\n");
+  return `[search provider: ${provider}]
+${body}`;
+}
+async function tavilySearch(query, limit) {
+  const key = process.env["TAVILY_API_KEY"];
+  if (!key) throw new Error("TAVILY_API_KEY is not set");
+  const r = await fetch("https://api.tavily.com/search", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      query,
+      max_results: limit,
+      search_depth: "basic",
+      include_answer: false
+    })
+  });
+  if (!r.ok) throw new Error(`Tavily ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  const data = await r.json();
+  const hits = (data.results ?? []).map((x) => ({
+    title: x.title ?? "",
+    url: x.url ?? "",
+    snippet: x.content ?? ""
+  }));
+  return formatHits("tavily", query, hits);
+}
+async function exaSearch(query, limit) {
+  const key = process.env["EXA_API_KEY"];
+  if (!key) throw new Error("EXA_API_KEY is not set");
+  const r = await fetch("https://api.exa.ai/search", {
+    method: "POST",
+    headers: { "x-api-key": key, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      query,
+      numResults: limit,
+      type: "auto",
+      contents: { text: { maxCharacters: 600 } }
+    })
+  });
+  if (!r.ok) throw new Error(`Exa ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  const data = await r.json();
+  const hits = (data.results ?? []).map((x) => ({
+    title: x.title ?? "",
+    url: x.url ?? "",
+    snippet: x.text ?? ""
+  }));
+  return formatHits("exa", query, hits);
+}
+async function sendInngestEvent(name, data) {
+  const key = process.env["INNGEST_EVENT_KEY"];
+  if (!key) return;
+  try {
+    const ctrl = new AbortController();
+    const timer2 = setTimeout(() => ctrl.abort(), 5e3);
+    try {
+      const r = await fetch(`https://inn.gs/e/${encodeURIComponent(key)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, data, ts: Date.now() }),
+        signal: ctrl.signal
+      });
+      if (!r.ok) {
+        logger.debug({ status: r.status, event: name }, "inngest: event rejected");
+      }
+    } finally {
+      clearTimeout(timer2);
+    }
+  } catch (err) {
+    logger.debug({ err, event: name }, "inngest: event send failed");
+  }
+}
+function langsmithEnabled() {
+  const key = process.env["LANGSMITH_API_KEY"] ?? process.env["LANGCHAIN_API_KEY"];
+  if (!key) return false;
+  const flag = (process.env["LANGSMITH_TRACING"] ?? process.env["LANGCHAIN_TRACING_V2"] ?? "true").toLowerCase();
+  return flag !== "false" && flag !== "0";
+}
+function dottedTime(d) {
+  const iso = d.toISOString();
+  const [date6, time4] = iso.replace("Z", "").split("T");
+  const [hms, ms = "000"] = time4.split(".");
+  return `${date6.replace(/-/g, "")}T${hms.replace(/:/g, "")}${ms.padEnd(3, "0")}000Z`;
+}
+function traceLlmRun(trace) {
+  if (!langsmithEnabled()) return;
+  void (async () => {
+    try {
+      const key = process.env["LANGSMITH_API_KEY"] ?? process.env["LANGCHAIN_API_KEY"];
+      const endpoint = process.env["LANGSMITH_ENDPOINT"] ?? process.env["LANGCHAIN_ENDPOINT"] ?? "https://api.smith.langchain.com";
+      const project = process.env["LANGSMITH_PROJECT"] ?? process.env["LANGCHAIN_PROJECT"] ?? "openclaw-omega";
+      const id = randomUUID();
+      const start = trace.startedAt;
+      const end = trace.endedAt ?? /* @__PURE__ */ new Date();
+      const body = {
+        id,
+        trace_id: id,
+        dotted_order: `${dottedTime(start)}${id}`,
+        name: trace.name,
+        run_type: "llm",
+        session_name: project,
+        start_time: start.toISOString(),
+        end_time: end.toISOString(),
+        inputs: { input: trace.input },
+        outputs: trace.error ? void 0 : { output: trace.output },
+        error: trace.error,
+        extra: { metadata: { model: trace.model, ...trace.metadata ?? {} } }
+      };
+      const ctrl = new AbortController();
+      const timer2 = setTimeout(() => ctrl.abort(), 5e3);
+      try {
+        const r = await fetch(`${endpoint.replace(/\/$/, "")}/runs`, {
+          method: "POST",
+          headers: { "x-api-key": key, "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+          signal: ctrl.signal
+        });
+        if (!r.ok) logger.debug({ status: r.status }, "langsmith: run rejected");
+      } finally {
+        clearTimeout(timer2);
+      }
+    } catch (err) {
+      logger.debug({ err }, "langsmith: trace failed");
+    }
+  })();
+}
+function e2bConfigured() {
+  return !!process.env["E2B_API_KEY"];
+}
+var E2B_PKG = "@e2b/code-interpreter";
+var E2B_TIMEOUT_MS = 3e4;
+async function e2bExec(language, source) {
+  const apiKey = process.env["E2B_API_KEY"];
+  if (!apiKey) return "error: E2B_API_KEY is not set \u2014 cloud sandbox is unavailable.";
+  let mod;
+  try {
+    mod = await import(E2B_PKG);
+  } catch {
+    return `error: the E2B SDK (${E2B_PKG}) is not installed on the server. Install it to enable cloud_code_exec.`;
+  }
+  const Sandbox2 = mod?.Sandbox;
+  if (!Sandbox2 || typeof Sandbox2.create !== "function") {
+    return "error: E2B SDK loaded but no Sandbox export was found.";
+  }
+  const lang = language.toLowerCase();
+  const e2bLanguage = lang === "javascript" || lang === "js" || lang === "node" ? "js" : "python";
+  let sandbox;
+  try {
+    sandbox = await Sandbox2.create({ apiKey, timeoutMs: E2B_TIMEOUT_MS });
+    const execution = await sandbox.runCode(source, { language: e2bLanguage });
+    const stdout = (execution.logs?.stdout ?? []).join("");
+    const stderr = (execution.logs?.stderr ?? []).join("");
+    const parts = ["[e2b cloud sandbox]"];
+    if (stdout) parts.push(`stdout:
+${clip(stdout.trim(), 4e3)}`);
+    if (stderr) parts.push(`stderr:
+${clip(stderr.trim(), 4e3)}`);
+    if (execution.error) {
+      parts.push(`error: ${execution.error.name ?? ""} ${execution.error.value ?? ""}`.trim());
+    }
+    if (execution.text && !stdout) parts.push(`result:
+${clip(execution.text.trim(), 4e3)}`);
+    if (parts.length === 1) parts.push("(no output)");
+    return parts.join("\n");
+  } catch (err) {
+    return `error: E2B execution failed: ${String(err).slice(0, 300)}`;
+  } finally {
+    try {
+      await sandbox?.kill();
+    } catch {
+    }
+  }
+}
+function composioConfigured() {
+  return !!process.env["COMPOSIO_API_KEY"];
+}
+function composioExecuteEnabled() {
+  const v = process.env["ALLOW_COMPOSIO_EXECUTE"];
+  return v != null && ["1", "true", "yes", "on"].includes(v.toLowerCase());
+}
+async function composioExecute(input) {
+  const key = process.env["COMPOSIO_API_KEY"];
+  if (!key) return "error: COMPOSIO_API_KEY is not set.";
+  const base = (process.env["COMPOSIO_BASE_URL"] ?? "https://backend.composio.dev/api/v3.1").replace(/\/$/, "");
+  const endpoint = input.endpoint ?? "/tools/execute/proxy";
+  const method = (input.method ?? "POST").toUpperCase();
+  const body = input.body ?? {
+    connectedAccountId: input.connectedAccountId,
+    toolkit: input.toolkit,
+    action: input.action,
+    arguments: input.arguments ?? {}
+  };
+  const ctrl = new AbortController();
+  const timer2 = setTimeout(() => ctrl.abort(), 3e4);
+  try {
+    const r = await fetch(`${base}${endpoint.startsWith("/") ? endpoint : `/${endpoint}`}`, {
+      method,
+      headers: { "x-api-key": key, "Content-Type": "application/json" },
+      body: method === "GET" ? void 0 : JSON.stringify(body),
+      signal: ctrl.signal
+    });
+    const text2 = await r.text();
+    return `Composio \u2192 HTTP ${r.status} ${r.statusText}
+${clip(text2, 4e3)}`;
+  } catch (err) {
+    return `error: Composio call failed: ${String(err).slice(0, 300)}`;
+  } finally {
+    clearTimeout(timer2);
+  }
+}
+function integrationStatus() {
+  const has = (k) => !!process.env[k];
+  return [
+    { key: "openrouter", name: "OpenRouter", category: "llm", envVar: "OPENROUTER_API_KEY", configured: has("OPENROUTER_API_KEY") },
+    { key: "neurobuddy", name: "Buddy AI (NeuroBuddy)", category: "llm", envVar: "NEUROBUDDY_API_KEY", configured: has("NEUROBUDDY_API_KEY") },
+    { key: "helicone", name: "Helicone", category: "observability", envVar: "HELICONE_API_KEY", configured: has("HELICONE_API_KEY") },
+    { key: "langsmith", name: "LangSmith (LangChain)", category: "observability", envVar: "LANGSMITH_API_KEY", configured: langsmithEnabled() },
+    { key: "embeddings", name: "Embeddings (semantic memory)", category: "memory", envVar: "EMBEDDINGS_API_KEY", configured: has("EMBEDDINGS_API_KEY") },
+    { key: "pinecone", name: "Pinecone (vector memory)", category: "memory", envVar: "PINECONE_API_KEY", configured: has("PINECONE_API_KEY") && (has("PINECONE_INDEX_HOST") || has("PINECONE_INDEX_URL") || has("PINECONE_INDEX")) },
+    { key: "tavily", name: "Tavily", category: "search", envVar: "TAVILY_API_KEY", configured: has("TAVILY_API_KEY") },
+    { key: "exa", name: "Exa", category: "search", envVar: "EXA_API_KEY", configured: has("EXA_API_KEY") },
+    { key: "firecrawl", name: "Firecrawl", category: "search", envVar: "FIRECRAWL_API_KEY", configured: has("FIRECRAWL_API_KEY") },
+    { key: "steel", name: "Steel", category: "browser", envVar: "STEEL_API_KEY", configured: has("STEEL_API_KEY") },
+    { key: "inngest", name: "Inngest", category: "events", envVar: "INNGEST_EVENT_KEY", configured: has("INNGEST_EVENT_KEY") },
+    { key: "e2b", name: "E2B", category: "sandbox", envVar: "E2B_API_KEY", configured: has("E2B_API_KEY") },
+    { key: "composio", name: "Composio", category: "tools", envVar: "COMPOSIO_API_KEY", configured: has("COMPOSIO_API_KEY") },
+    { key: "buddy", name: "Buddy AI (fallback LLM)", category: "llm", envVar: "BUDDY_API_KEY", configured: has("BUDDY_API_KEY") && has("BUDDY_BASE_URL") }
+  ];
+}
+
+// src/tools.ts
+import { spawn, spawnSync } from "node:child_process";
+import { lookup } from "node:dns/promises";
+import { isIP } from "node:net";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+init_src();
+init_src();
+init_drizzle_orm();
+
+// src/lib/vault.ts
+init_src();
+init_drizzle_orm();
+import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
+var cachedKey = null;
+function getKey() {
+  if (cachedKey) return cachedKey;
+  const secret = process.env["SESSION_SECRET"];
+  if (!secret) {
+    throw new Error(
+      "SESSION_SECRET is required to use the secrets vault \u2014 refusing to operate without it."
+    );
+  }
+  cachedKey = scryptSync(secret, "openclaw-vault-v1", 32);
+  return cachedKey;
+}
+function encryptSecret(plaintext) {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", getKey(), iv);
+  const enc = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+  return {
+    ciphertext: enc.toString("base64"),
+    iv: iv.toString("base64"),
+    authTag: cipher.getAuthTag().toString("base64")
+  };
+}
+function decryptSecret(rec) {
+  const decipher = createDecipheriv("aes-256-gcm", getKey(), Buffer.from(rec.iv, "base64"));
+  decipher.setAuthTag(Buffer.from(rec.authTag, "base64"));
+  return Buffer.concat([decipher.update(Buffer.from(rec.ciphertext, "base64")), decipher.final()]).toString("utf8");
+}
+async function getSecretValue(name) {
+  const [row] = await db.select().from(vaultSecretsTable).where(eq(vaultSecretsTable.name, name));
+  if (!row) return null;
+  try {
+    return decryptSecret(row);
+  } catch {
+    return null;
+  }
+}
+var SECRET_PLACEHOLDER = /\{\{\s*secret:([A-Za-z0-9_\-]+)\s*\}\}/g;
+async function substituteSecrets(input, used) {
+  const names = /* @__PURE__ */ new Set();
+  for (const m of input.matchAll(SECRET_PLACEHOLDER)) names.add(m[1]);
+  if (names.size === 0) return input;
+  const resolved = /* @__PURE__ */ new Map();
+  for (const name of names) {
+    const value = await getSecretValue(name);
+    if (value !== null) {
+      resolved.set(name, value);
+      used?.add(value);
+    }
+  }
+  return input.replace(SECRET_PLACEHOLDER, (full, name) => resolved.get(name) ?? full);
+}
+function redactSecrets(text2, values) {
+  let out = text2;
+  for (const v of values) {
+    if (v && out.includes(v)) out = out.split(v).join("\u2039redacted-secret\u203A");
+  }
+  return out;
+}
+
+// src/lib/connectors.ts
+var PLATFORMS = {
+  instagram: {
+    key: "instagram",
+    connectorName: "instagram",
+    apiBase: "https://graph.instagram.com",
+    displayName: "Instagram",
+    authStyle: "bearer",
+    docsUrl: "https://developers.facebook.com/docs/instagram-platform",
+    consoleUrl: "https://developers.facebook.com/apps"
+  },
+  facebook: {
+    key: "facebook",
+    connectorName: "facebook",
+    apiBase: "https://graph.facebook.com/v21.0",
+    displayName: "Facebook",
+    authStyle: "bearer",
+    docsUrl: "https://developers.facebook.com/docs/graph-api",
+    consoleUrl: "https://developers.facebook.com/apps"
+  },
+  x: {
+    key: "x",
+    connectorName: "x",
+    apiBase: "https://api.x.com/2",
+    displayName: "X (Twitter)",
+    authStyle: "bearer",
+    docsUrl: "https://developer.x.com/en/docs/x-api",
+    consoleUrl: "https://developer.x.com/en/portal/dashboard"
+  },
+  reddit: {
+    key: "reddit",
+    connectorName: "reddit",
+    apiBase: "https://oauth.reddit.com",
+    displayName: "Reddit",
+    authStyle: "bearer",
+    extraHeaders: { "User-Agent": "openclaw-omega/1.0 (by OPENCLAW OMEGA swarm)" },
+    docsUrl: "https://www.reddit.com/dev/api",
+    consoleUrl: "https://www.reddit.com/prefs/apps"
+  },
+  youtube: {
+    key: "youtube",
+    connectorName: "youtube",
+    apiBase: "https://www.googleapis.com/youtube/v3",
+    displayName: "YouTube",
+    authStyle: "bearer",
+    docsUrl: "https://developers.google.com/youtube/v3/docs",
+    consoleUrl: "https://console.cloud.google.com/apis/library/youtube.googleapis.com"
+  },
+  tiktok: {
+    key: "tiktok",
+    connectorName: "tiktok-personal",
+    apiBase: "https://open.tiktokapis.com/v2",
+    displayName: "TikTok",
+    authStyle: "bearer",
+    docsUrl: "https://developers.tiktok.com/doc/overview",
+    consoleUrl: "https://developers.tiktok.com/apps"
+  }
+};
+function getPlatform(key) {
+  return PLATFORMS[key.toLowerCase().trim()];
+}
+function platformKeys() {
+  return Object.keys(PLATFORMS);
+}
+function readAccessToken(settings) {
+  if (!settings || typeof settings !== "object") return null;
+  const s = settings;
+  if (typeof s["access_token"] === "string") return s["access_token"];
+  const oauth = s["oauth"];
+  if (oauth && typeof oauth === "object") {
+    const creds = oauth["credentials"];
+    if (creds && typeof creds === "object") {
+      const t = creds["access_token"];
+      if (typeof t === "string") return t;
+    }
+  }
+  return null;
+}
+async function getConnectorAccessToken(connectorName) {
+  const hostname2 = process.env["REPLIT_CONNECTORS_HOSTNAME"];
+  if (!hostname2) {
+    throw new Error("connector proxy is unavailable in this environment.");
+  }
+  const identity = process.env["REPL_IDENTITY"];
+  const renewal = process.env["WEB_REPL_RENEWAL"];
+  const xReplitToken = identity ? `repl ${identity}` : renewal ? `depl ${renewal}` : null;
+  if (!xReplitToken) {
+    throw new Error("connector proxy auth is unavailable in this environment.");
+  }
+  const ctrl = new AbortController();
+  const timer2 = setTimeout(() => ctrl.abort(), 1e4);
+  let res;
+  try {
+    res = await fetch(
+      `https://${hostname2}/api/v2/connection?include_secrets=true&connector_names=${encodeURIComponent(connectorName)}`,
+      { headers: { Accept: "application/json", X_REPLIT_TOKEN: xReplitToken }, signal: ctrl.signal }
+    );
+  } finally {
+    clearTimeout(timer2);
+  }
+  if (!res.ok) {
+    throw new Error(`connector proxy returned ${res.status}.`);
+  }
+  const data = await res.json();
+  const token = readAccessToken(data.items?.[0]?.settings);
+  if (!token) {
+    throw new Error("not connected \u2014 authorize this platform first (Settings \u2192 Integrations).");
+  }
+  return token;
+}
+async function isPlatformConnected(platform) {
+  try {
+    await getConnectorAccessToken(platform.connectorName);
+    return true;
+  } catch {
+    return false;
+  }
+}
+async function callPlatformApi(opts) {
+  const token = await getConnectorAccessToken(opts.platform.connectorName);
+  const path2 = opts.path.startsWith("/") ? opts.path : `/${opts.path}`;
+  const url2 = new URL(opts.platform.apiBase + path2);
+  const expectedHost = new URL(opts.platform.apiBase).host;
+  if (url2.host !== expectedHost) {
+    throw new Error(`path must stay on ${expectedHost}.`);
+  }
+  if (opts.query) {
+    for (const [k, v] of Object.entries(opts.query)) url2.searchParams.set(k, v);
+  }
+  const headers = {
+    Accept: "application/json",
+    ...opts.platform.extraHeaders ?? {}
+  };
+  if (opts.platform.authStyle === "bearer") {
+    headers["Authorization"] = `Bearer ${token}`;
+  } else {
+    url2.searchParams.set("access_token", token);
+  }
+  const method = opts.method.toUpperCase();
+  const init = { method, headers };
+  if (opts.body != null && opts.body !== "" && method !== "GET" && method !== "DELETE") {
+    headers["Content-Type"] = "application/json";
+    init.body = opts.body;
+  }
+  const ctrl = new AbortController();
+  const timer2 = setTimeout(() => ctrl.abort(), 15e3);
+  try {
+    const r = await fetch(url2.toString(), { ...init, signal: ctrl.signal });
+    const text2 = await r.text();
+    const safe = token ? text2.split(token).join("[redacted-token]") : text2;
+    return { status: r.status, statusText: r.statusText, body: safe };
+  } finally {
+    clearTimeout(timer2);
+  }
+}
+
+// src/lib/embeddings.ts
+var DEFAULT_BASE = "https://api.openai.com/v1";
+var DEFAULT_MODEL = "text-embedding-3-small";
+function embeddingsConfigured() {
+  return !!process.env["EMBEDDINGS_API_KEY"];
+}
+function embeddingsModel() {
+  return process.env["EMBEDDINGS_MODEL"] ?? DEFAULT_MODEL;
+}
+async function embed(text2) {
+  const key = process.env["EMBEDDINGS_API_KEY"];
+  if (!key) return null;
+  const input = text2.trim();
+  if (!input) return null;
+  const base = (process.env["EMBEDDINGS_BASE_URL"] ?? DEFAULT_BASE).replace(/\/$/, "");
+  const model = embeddingsModel();
+  const ctrl = new AbortController();
+  const timer2 = setTimeout(() => ctrl.abort(), 15e3);
+  try {
+    const r = await fetch(`${base}/embeddings`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      // Cap input length defensively — embedding models have token limits and we
+      // only store short memory entries anyway.
+      body: JSON.stringify({ model, input: input.slice(0, 8e3) }),
+      signal: ctrl.signal
+    });
+    if (!r.ok) {
+      logger.debug({ status: r.status }, "embeddings: request failed");
+      return null;
+    }
+    const data = await r.json();
+    const vec = data.data?.[0]?.embedding;
+    return Array.isArray(vec) && vec.length ? vec : null;
+  } catch (err) {
+    logger.debug({ err }, "embeddings: call errored");
+    return null;
+  } finally {
+    clearTimeout(timer2);
+  }
+}
+function cosineSimilarity(a, b) {
+  if (a.length !== b.length || a.length === 0) return 0;
+  let dot = 0;
+  let na = 0;
+  let nb = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    na += a[i] * a[i];
+    nb += b[i] * b[i];
+  }
+  if (na === 0 || nb === 0) return 0;
+  return dot / (Math.sqrt(na) * Math.sqrt(nb));
+}
+function parseEmbedding(stored) {
+  if (!stored) return null;
+  try {
+    const parsed = JSON.parse(stored);
+    return Array.isArray(parsed) && parsed.every((n) => typeof n === "number") ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+// src/lib/pinecone.ts
+function explicitHost() {
+  const h = process.env["PINECONE_INDEX_HOST"] || process.env["PINECONE_INDEX_URL"];
+  if (!h) return null;
+  const trimmed = h.trim().replace(/\/$/, "");
+  if (!trimmed) return null;
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+}
+var cachedHost = null;
+async function resolveHost() {
+  const explicit = explicitHost();
+  if (explicit) return explicit;
+  const key = process.env["PINECONE_API_KEY"];
+  const name = process.env["PINECONE_INDEX"]?.trim();
+  if (!key || !name) return null;
+  const cacheKey = `${key}:${name}`;
+  if (cachedHost && cachedHost.key === cacheKey) return cachedHost.host;
+  try {
+    const r = await fetch(`https://api.pinecone.io/indexes/${encodeURIComponent(name)}`, {
+      headers: { "Api-Key": key, "X-Pinecone-API-Version": "2024-07" }
+    });
+    if (!r.ok) {
+      logger.debug({ status: r.status }, "pinecone: describe_index failed");
+      return null;
+    }
+    const data = await r.json();
+    if (!data.host) return null;
+    const h = /^https?:\/\//i.test(data.host) ? data.host : `https://${data.host}`;
+    cachedHost = { key: cacheKey, host: h };
+    return h;
+  } catch (err) {
+    logger.debug({ err }, "pinecone: describe_index errored");
+    return null;
+  }
+}
+function namespace() {
+  return process.env["PINECONE_NAMESPACE"] ?? "";
+}
+function pineconeConfigured() {
+  return !!process.env["PINECONE_API_KEY"] && (!!explicitHost() || !!process.env["PINECONE_INDEX"]?.trim());
+}
+async function pineconeUpsert(id, values, metadata) {
+  const key = process.env["PINECONE_API_KEY"];
+  const base = await resolveHost();
+  if (!key || !base) return false;
+  const ctrl = new AbortController();
+  const timer2 = setTimeout(() => ctrl.abort(), 15e3);
+  try {
+    const r = await fetch(`${base}/vectors/upsert`, {
+      method: "POST",
+      headers: { "Api-Key": key, "Content-Type": "application/json" },
+      body: JSON.stringify({ vectors: [{ id, values, metadata }], namespace: namespace() }),
+      signal: ctrl.signal
+    });
+    if (!r.ok) {
+      logger.debug({ status: r.status }, "pinecone: upsert failed");
+      return false;
+    }
+    return true;
+  } catch (err) {
+    logger.debug({ err }, "pinecone: upsert errored");
+    return false;
+  } finally {
+    clearTimeout(timer2);
+  }
+}
+async function pineconeQuery(values, topK) {
+  const key = process.env["PINECONE_API_KEY"];
+  const base = await resolveHost();
+  if (!key || !base) return null;
+  const ctrl = new AbortController();
+  const timer2 = setTimeout(() => ctrl.abort(), 15e3);
+  try {
+    const r = await fetch(`${base}/query`, {
+      method: "POST",
+      headers: { "Api-Key": key, "Content-Type": "application/json" },
+      body: JSON.stringify({ vector: values, topK, includeMetadata: true, namespace: namespace() }),
+      signal: ctrl.signal
+    });
+    if (!r.ok) {
+      logger.debug({ status: r.status }, "pinecone: query failed");
+      return null;
+    }
+    const data = await r.json();
+    return Array.isArray(data.matches) ? data.matches : [];
+  } catch (err) {
+    logger.debug({ err }, "pinecone: query errored");
+    return null;
+  } finally {
+    clearTimeout(timer2);
+  }
+}
+
+// src/lib/sandbox.ts
+var import_e2b = __toESM(require_dist4(), 1);
+var GITHUB_REPO = "paisabrazilfl-cpu/bos-aura";
+var GITHUB_API = "https://api.github.com";
+var SANDBOX_TIMEOUT_MS = 18e4;
+function sandboxConfigured() {
+  return !!process.env["E2B_API_KEY"];
+}
+function gitWriteConfigured() {
+  return !!process.env["SANDBOX_GITHUB_TOKEN"];
+}
+function clip2(s, n = 6e3) {
+  return s.length > n ? `${s.slice(0, n)}
+\u2026[truncated ${s.length - n} chars]` : s;
+}
+var WORKDIR = "/tmp/repo";
+async function execCapture(sbx, cmd, timeoutMs) {
+  try {
+    const r = await sbx.commands.run(cmd, { timeoutMs });
+    return { exitCode: r.exitCode ?? 0, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+  } catch (e) {
+    const err = e;
+    const res = err.result;
+    if (res || err.exitCode != null || err.stdout != null || err.stderr != null) {
+      return {
+        exitCode: res?.exitCode ?? err.exitCode ?? 1,
+        stdout: res?.stdout ?? err.stdout ?? "",
+        stderr: res?.stderr ?? err.stderr ?? err.message ?? String(e)
+      };
+    }
+    throw e;
+  }
+}
+async function runInSandbox(script, timeoutMs = SANDBOX_TIMEOUT_MS) {
+  const apiKey = process.env["E2B_API_KEY"];
+  if (!apiKey) return "error: E2B_API_KEY is not set \u2014 the cloud sandbox is unavailable.";
+  let sbx = null;
+  try {
+    sbx = await import_e2b.Sandbox.create({ apiKey, timeoutMs });
+    const r = await execCapture(sbx, script, timeoutMs - 5e3);
+    const parts = [`exit code: ${r.exitCode}`];
+    if (r.stdout.trim()) parts.push(`stdout:
+${clip2(r.stdout.trim())}`);
+    if (r.stderr.trim()) parts.push(`stderr:
+${clip2(r.stderr.trim())}`);
+    if (!r.stdout.trim() && !r.stderr.trim()) parts.push("(no output)");
+    return parts.join("\n");
+  } catch (e) {
+    return `error: sandbox execution failed: ${String(e instanceof Error ? e.message : e).slice(0, 300)}`;
+  } finally {
+    try {
+      await sbx?.kill();
+    } catch {
+    }
+  }
+}
+async function must(sbx, cmd, label) {
+  const r = await execCapture(sbx, cmd, 12e4);
+  if (r.exitCode !== 0) throw new Error(`${label} failed (exit ${r.exitCode}): ${clip2((r.stderr || r.stdout || "").trim(), 500)}`);
+  return r.stdout.trim();
+}
+async function repoPr(opts) {
+  const e2bKey = process.env["E2B_API_KEY"];
+  const ghToken = process.env["SANDBOX_GITHUB_TOKEN"];
+  if (!e2bKey) return "error: E2B_API_KEY is not set.";
+  if (!ghToken) return "error: SANDBOX_GITHUB_TOKEN is not set \u2014 agents cannot push/PR until the operator sets it.";
+  const branch = opts.branch.replace(/[^A-Za-z0-9._/-]/g, "-").slice(0, 100);
+  const base = (opts.baseBranch ?? "main").replace(/[^A-Za-z0-9._/-]/g, "-");
+  const authUrl = `https://x-access-token:${ghToken}@github.com/${GITHUB_REPO}.git`;
+  const cleanUrl = `https://github.com/${GITHUB_REPO}.git`;
+  let sbx = null;
+  try {
+    sbx = await import_e2b.Sandbox.create({ apiKey: e2bKey, timeoutMs: SANDBOX_TIMEOUT_MS });
+    await must(sbx, `rm -rf ${WORKDIR} && git clone --depth 1 --branch ${base} '${authUrl}' ${WORKDIR}`, "clone");
+    await must(sbx, `cd ${WORKDIR} && git remote set-url origin '${cleanUrl}' && git config user.email agent@openclaw.local && git config user.name "OpenClaw Agent" && git checkout -b '${branch}'`, "branch setup");
+    const scriptRes = await execCapture(sbx, `cd ${WORKDIR} && ${opts.script}`, 15e4);
+    const scriptOut = clip2(`exit ${scriptRes.exitCode}
+${(scriptRes.stdout || "").trim()}
+${(scriptRes.stderr || "").trim()}`.trim(), 4e3);
+    const status = await must(sbx, `cd ${WORKDIR} && git add -A && git status --porcelain`, "git status");
+    if (!status.trim()) {
+      return `The script ran but produced no file changes \u2014 nothing to open a PR for.
+
+Script output:
+${scriptOut}`;
+    }
+    await must(sbx, `cd ${WORKDIR} && git commit -m ${JSON.stringify(opts.title)}`, "commit");
+    const push = await execCapture(sbx, `cd ${WORKDIR} && git push '${authUrl}' '${branch}' 2>&1 | sed -E 's#x-access-token:[^@]*@#***@#g'`, 6e4);
+    if (push.exitCode !== 0) throw new Error(`push failed (exit ${push.exitCode}): ${clip2((push.stdout || push.stderr).trim(), 300)}`);
+    const pr = await fetch(`${GITHUB_API}/repos/${GITHUB_REPO}/pulls`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${ghToken}`, Accept: "application/vnd.github+json", "Content-Type": "application/json", "User-Agent": "openclaw-agent" },
+      body: JSON.stringify({ title: opts.title, head: branch, base, body: opts.body ?? "Opened by an OpenClaw agent from an E2B sandbox." })
+    });
+    const prBody = await pr.json();
+    if (!pr.ok) {
+      return `Branch '${branch}' pushed, but opening the PR failed (${pr.status}: ${prBody.message ?? "unknown"}). Open it manually from the branch.
+
+Script output:
+${scriptOut}`;
+    }
+    return `\u2705 Pushed branch '${branch}' and opened PR: ${prBody.html_url}
+
+Script output:
+${scriptOut}`;
+  } catch (e) {
+    return `error: repo PR flow failed: ${String(e instanceof Error ? e.message : e).slice(0, 400)}`;
+  } finally {
+    try {
+      await sbx?.kill();
+    } catch {
+    }
+  }
+}
+
+// src/tools.ts
+var STEEL_BASE = "https://api.steel.dev/v1";
+var FIRECRAWL_BASE = "https://api.firecrawl.dev/v1";
+function ipv4IsPrivate(ip) {
+  const parts = ip.split(".").map((p) => parseInt(p, 10));
+  if (parts.length !== 4 || parts.some((n) => Number.isNaN(n) || n < 0 || n > 255)) return true;
+  const [a, b] = parts;
+  if (a === 0 || a === 10 || a === 127) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 100 && b >= 64 && b <= 127) return true;
+  if (a >= 224) return true;
+  return false;
+}
+function ipIsPrivate(ip) {
+  if (ip.includes(":")) {
+    const lower = ip.toLowerCase();
+    if (lower === "::1" || lower === "::") return true;
+    if (lower.startsWith("fe80")) return true;
+    if (lower.startsWith("fc") || lower.startsWith("fd")) return true;
+    const mapped = lower.match(/::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+    if (mapped) return ipv4IsPrivate(mapped[1]);
+    return false;
+  }
+  return ipv4IsPrivate(ip);
+}
+async function ssrfGuard(url2) {
+  let parsed;
+  try {
+    parsed = new URL(url2);
+  } catch {
+    return "error: invalid url.";
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return "error: only http(s) urls are allowed.";
+  }
+  const host = parsed.hostname.toLowerCase();
+  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".internal") || host.endsWith(".local")) {
+    return "error: requests to internal hostnames are blocked.";
+  }
+  if (isIP(host)) {
+    return ipIsPrivate(host) ? "error: requests to private/internal addresses are blocked." : null;
+  }
+  try {
+    const records = await lookup(host, { all: true });
+    if (!records.length) return "error: could not resolve host.";
+    for (const rec of records) {
+      if (ipIsPrivate(rec.address)) {
+        return "error: host resolves to a private/internal address; blocked.";
+      }
+    }
+  } catch {
+    return "error: could not resolve host.";
+  }
+  return null;
+}
+function clip3(s, n) {
+  return s.length > n ? `${s.slice(0, n)}
+\u2026[truncated ${s.length - n} chars]` : s;
+}
+async function firecrawlSearch(query, limit) {
+  const key = process.env["FIRECRAWL_API_KEY"];
+  if (!key) throw new Error("FIRECRAWL_API_KEY is not set");
+  const r = await fetch(`${FIRECRAWL_BASE}/search`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ query, limit })
+  });
+  if (!r.ok) throw new Error(`Firecrawl ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  const data = await r.json();
+  const results = data.data ?? [];
+  if (!results.length) return `no web results for "${query}".`;
+  return `[search provider: firecrawl]
+${results.map((x, i) => `${i + 1}. ${x.title ?? "(untitled)"}
+   ${x.url ?? ""}
+   ${clip3((x.description ?? "").trim(), 300)}`).join("\n\n")}`;
+}
+async function webSearch(query, limit) {
+  const providers = [
+    { name: "tavily", enabled: !!process.env["TAVILY_API_KEY"], run: () => tavilySearch(query, limit) },
+    { name: "exa", enabled: !!process.env["EXA_API_KEY"], run: () => exaSearch(query, limit) },
+    { name: "firecrawl", enabled: !!process.env["FIRECRAWL_API_KEY"], run: () => firecrawlSearch(query, limit) }
+  ].filter((p) => p.enabled);
+  if (!providers.length) {
+    return "error: no web search provider is configured (set TAVILY_API_KEY, EXA_API_KEY, or FIRECRAWL_API_KEY).";
+  }
+  const errors = [];
+  for (const provider of providers) {
+    try {
+      return await provider.run();
+    } catch (e) {
+      errors.push(`${provider.name}: ${String(e instanceof Error ? e.message : e).slice(0, 120)}`);
+    }
+  }
+  return `error: all web search providers failed \u2014 ${errors.join("; ")}`;
+}
+var MEMORY_CANDIDATE_LIMIT = 1e3;
+function formatMemoryRow(m, score) {
+  const tag = score != null ? ` \xB7 sim ${score.toFixed(3)}` : "";
+  return `#${m.id} [${m.agentName ?? "?"}${m.key ? ` \xB7 ${m.key}` : ""}${tag}] ${clip3(m.content, 600)}`;
+}
+async function keywordMemorySearch(query, limit) {
+  const like2 = `%${query}%`;
+  const rows = await db.select().from(agentMemoryTable).where(or(ilike(agentMemoryTable.content, like2), ilike(agentMemoryTable.key, like2), ilike(agentMemoryTable.tags, like2))).orderBy(desc(agentMemoryTable.createdAt)).limit(limit);
+  if (!rows.length) return `no memory entries matched "${query}".`;
+  return rows.map((m) => formatMemoryRow(m)).join("\n---\n");
+}
+async function memorySearch(query, limit) {
+  if (pineconeConfigured()) {
+    const queryVec = await embed(query);
+    if (queryVec) {
+      const matches = await pineconeQuery(queryVec, limit);
+      if (matches && matches.length) {
+        return matches.map((m) => {
+          const md = m.metadata ?? {};
+          return formatMemoryRow(
+            {
+              id: Number(md["pgId"] ?? m.id) || 0,
+              agentName: md["agentName"] ?? null,
+              key: md["key"] ?? null,
+              content: String(md["content"] ?? "")
+            },
+            m.score
+          );
+        }).join("\n---\n");
+      }
+    }
+  }
+  if (embeddingsConfigured()) {
+    const queryVec = await embed(query);
+    if (queryVec) {
+      const candidates = await db.select().from(agentMemoryTable).where(isNotNull(agentMemoryTable.embedding)).orderBy(desc(agentMemoryTable.createdAt)).limit(MEMORY_CANDIDATE_LIMIT);
+      const scored = candidates.map((m) => {
+        const vec = parseEmbedding(m.embedding);
+        return vec ? { row: m, score: cosineSimilarity(queryVec, vec) } : null;
+      }).filter((x) => x !== null).sort((a, b) => b.score - a.score).slice(0, limit);
+      if (scored.length) {
+        return scored.map((s) => formatMemoryRow(s.row, s.score)).join("\n---\n");
+      }
+    }
+  }
+  return keywordMemorySearch(query, limit);
+}
+function safeCalc(expr) {
+  const cleaned = expr.trim();
+  if (!cleaned) return "error: expression is required.";
+  if (cleaned.length > 500) return "error: expression is too long (max 500 chars).";
+  if (!/^[-+*/%.()0-9eE\s]+$/.test(cleaned)) {
+    return "error: only numbers and the operators + - * / % ** ( ) are allowed.";
+  }
+  try {
+    const fn = new Function(`"use strict"; return (${cleaned});`);
+    const val = fn();
+    if (typeof val !== "number" || !Number.isFinite(val)) {
+      return "error: expression did not evaluate to a finite number.";
+    }
+    return String(val);
+  } catch {
+    return "error: could not evaluate expression.";
+  }
+}
+async function steelScrape(url2) {
+  const key = process.env["STEEL_API_KEY"];
+  if (!key) throw new Error("STEEL_API_KEY is not set");
+  const r = await fetch(`${STEEL_BASE}/scrape`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+    // Ask for cleaned markdown, not raw HTML — far more signal per character, so a
+    // single scrape fits the readable content (titles, scores) inside the response
+    // budget instead of being truncated mid-page and forcing extra calls.
+    body: JSON.stringify({ url: url2, format: ["markdown"], useProxy: false })
+  });
+  if (!r.ok) throw new Error(`Steel ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  const data = await r.json();
+  const content = data["content"];
+  if (typeof content === "string") return content;
+  if (content && typeof content === "object") {
+    return content["markdown"] || content["text"] || content["html"] || JSON.stringify(content);
+  }
+  return data["markdown"] || JSON.stringify(data);
+}
+async function steelScreenshot(url2) {
+  const key = process.env["STEEL_API_KEY"];
+  if (!key) throw new Error("STEEL_API_KEY is not set");
+  const r = await fetch(`${STEEL_BASE}/screenshot`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ url: url2, fullPage: true })
+  });
+  if (!r.ok) throw new Error(`Steel ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  const buf = await r.arrayBuffer();
+  return buf.byteLength;
+}
+var CODE_TIMEOUT_MS = 8e3;
+var CODE_OUTPUT_CAP = 4e3;
+var sandboxMode = null;
+function detectSandboxMode() {
+  if (sandboxMode) return sandboxMode;
+  try {
+    const probe = spawnSync(
+      "unshare",
+      [
+        "--net",
+        "--mount",
+        "--map-root-user",
+        "/bin/sh",
+        "-c",
+        "mount -t tmpfs tmpfs /home && exit 0"
+      ],
+      { timeout: 4e3 }
+    );
+    sandboxMode = probe.status === 0 ? "namespace" : "none";
+  } catch {
+    sandboxMode = "none";
+  }
+  if (sandboxMode === "none") {
+    logger.warn(
+      "code_exec: unprivileged namespaces unavailable \u2014 running with scrubbed env only (no network/fs isolation). Code execution should be treated as untrusted on this host."
+    );
+  } else {
+    logger.info("code_exec: namespace isolation active (no network, repo hidden).");
+  }
+  return sandboxMode;
+}
+function runSandboxed(language, source) {
+  return new Promise((resolve) => {
+    const lang = language.toLowerCase();
+    let runtime;
+    let filename;
+    let runtimeArgs;
+    if (lang === "python" || lang === "py" || lang === "python3") {
+      runtime = "python3";
+      filename = "main.py";
+      runtimeArgs = ["-I", filename];
+    } else if (lang === "javascript" || lang === "js" || lang === "node") {
+      runtime = "node";
+      filename = "main.js";
+      runtimeArgs = [filename];
+    } else {
+      resolve(`error: unsupported language "${language}". Use "python" or "javascript".`);
+      return;
+    }
+    let dir;
+    try {
+      dir = mkdtempSync(join(tmpdir(), "clawexec-"));
+      writeFileSync(join(dir, filename), source, "utf8");
+    } catch (e) {
+      resolve(`error: failed to prepare sandbox: ${String(e).slice(0, 200)}`);
+      return;
+    }
+    let cleaned = false;
+    const cleanup = () => {
+      if (cleaned) return;
+      cleaned = true;
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch {
+      }
+    };
+    const mode = detectSandboxMode();
+    let cmd;
+    let args;
+    if (mode === "namespace") {
+      cmd = "unshare";
+      args = [
+        "--net",
+        "--mount",
+        "--map-root-user",
+        "/bin/sh",
+        "-c",
+        // Fail-closed: if the /home mask can't be applied, abort WITHOUT
+        // running the code (otherwise the repo would stay visible). The temp
+        // source dir lives under /tmp, so it survives the tmpfs mount on /home.
+        `mount -t tmpfs tmpfs /home || { echo "sandbox: filesystem isolation failed" >&2; exit 97; }; cd "${dir}" && exec ${runtime} ${runtimeArgs.join(" ")}`
+      ];
+    } else {
+      cmd = runtime;
+      args = runtimeArgs;
+    }
+    const child = spawn(cmd, args, {
+      cwd: dir,
+      env: { PATH: process.env["PATH"] ?? "/usr/bin:/bin", HOME: dir },
+      killSignal: "SIGKILL",
+      detached: true
+    });
+    let killReason = null;
+    const killTree = (reason) => {
+      if (killReason) return;
+      killReason = reason;
+      try {
+        if (child.pid) process.kill(-child.pid, "SIGKILL");
+      } catch {
+        try {
+          child.kill("SIGKILL");
+        } catch {
+        }
+      }
+    };
+    const timer2 = setTimeout(() => killTree("timeout"), CODE_TIMEOUT_MS);
+    let stdout = "";
+    let stderr = "";
+    let bytes = 0;
+    const onData = (chunk, sink) => {
+      bytes += chunk.length;
+      if (bytes > CODE_OUTPUT_CAP * 2) {
+        killTree("output-cap");
+        return;
+      }
+      if (sink === "out") stdout += chunk.toString();
+      else stderr += chunk.toString();
+    };
+    child.stdout?.on("data", (c) => onData(c, "out"));
+    child.stderr?.on("data", (c) => onData(c, "err"));
+    child.on("error", (err) => {
+      clearTimeout(timer2);
+      cleanup();
+      resolve(`error: failed to spawn sandbox: ${String(err).slice(0, 200)}`);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer2);
+      cleanup();
+      const out = clip3(stdout.trim(), CODE_OUTPUT_CAP);
+      const errOut = clip3(stderr.trim(), CODE_OUTPUT_CAP);
+      if (killReason === "timeout") {
+        resolve(`error: execution killed (timeout ${CODE_TIMEOUT_MS}ms).
+stdout:
+${out}`);
+        return;
+      }
+      if (killReason === "output-cap") {
+        resolve(`error: execution killed (output cap exceeded).
+stdout:
+${out}`);
+        return;
+      }
+      const parts = [`exit code: ${code ?? 0}`];
+      if (out) parts.push(`stdout:
+${out}`);
+      if (errOut) parts.push(`stderr:
+${errOut}`);
+      if (!out && !errOut) parts.push("(no output)");
+      resolve(parts.join("\n"));
+    });
+  });
+}
+var TOOL_REGISTRY = {
+  web_scrape: {
+    name: "web_scrape",
+    description: "Fetch and extract the readable text/markdown content of a live web page by URL. Use to read articles, docs, competitor pages, or any public webpage. Do NOT use it for github.com pages (search results, repos) \u2014 those are JavaScript-rendered and return no useful content; use http_request against the GitHub API (https://api.github.com/...) instead, which is auto-authenticated.",
+    parameters: {
+      type: "object",
+      properties: {
+        url: { type: "string", description: "Absolute http(s) URL of the page to read." }
+      },
+      required: ["url"]
+    },
+    run: async (args) => {
+      const url2 = String(args["url"] ?? "").trim();
+      if (!/^https?:\/\//i.test(url2)) return "error: a valid absolute http(s) url is required.";
+      try {
+        const host = new URL(url2).hostname.toLowerCase();
+        if (host === "github.com" || host === "www.github.com") {
+          const m = url2.match(/github\.com\/search\?(.*)$/i);
+          const apiHint = m ? `https://api.github.com/search/repositories?${m[1].replace(/type=repositories&?/i, "")}` : "https://api.github.com/repos/<owner>/<repo>  (or /search/repositories?q=...)";
+          return `error: github.com web pages are JavaScript-rendered and not scrapable. Use http_request (GET) against the GitHub REST API instead \u2014 it is auto-authenticated. Try: ${apiHint}`;
+        }
+      } catch {
+      }
+      const content = await steelScrape(url2);
+      return clip3(content, 8e3);
+    }
+  },
+  web_screenshot: {
+    name: "web_screenshot",
+    description: "Capture a full-page screenshot of a URL via the Steel browser. Returns a confirmation with the image size in bytes.",
+    parameters: {
+      type: "object",
+      properties: {
+        url: { type: "string", description: "Absolute http(s) URL to screenshot." }
+      },
+      required: ["url"]
+    },
+    run: async (args) => {
+      const url2 = String(args["url"] ?? "").trim();
+      if (!/^https?:\/\//i.test(url2)) return "error: a valid absolute http(s) url is required.";
+      const bytes = await steelScreenshot(url2);
+      return `screenshot captured for ${url2} (${Math.round(bytes / 1024)} KB).`;
+    }
+  },
+  web_search: {
+    name: "web_search",
+    description: "Search the live web and return the top results (title, URL, snippet). Backed by Tavily, Exa, and Firecrawl with automatic failover. Use to discover current information and find pages worth reading. To read a result's full content, follow up with web_scrape on its URL.",
+    parameters: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "The search query." },
+        limit: { type: "integer", description: "How many results to return (1-10, default 5).", minimum: 1, maximum: 10 }
+      },
+      required: ["query"]
+    },
+    run: async (args) => {
+      const query = String(args["query"] ?? "").trim();
+      if (!query) return "error: query is required.";
+      let limit = Number(args["limit"] ?? 5);
+      if (!Number.isFinite(limit)) limit = 5;
+      limit = Math.max(1, Math.min(10, Math.floor(limit)));
+      return webSearch(query, limit);
+    }
+  },
+  http_request: {
+    name: "http_request",
+    description: 'Make a real outbound HTTP request to any API endpoint. Supports GET/POST/PUT/PATCH/DELETE with optional headers and a JSON/text body. Returns the status and response body (truncated). For rate-limited or private APIs, authenticate with a vault secret placeholder in the headers rather than a raw key \u2014 e.g. GitHub: headers { "Authorization": "Bearer {{secret:GITHUB_TOKEN}}" }. Always authenticate GitHub (api.github.com) calls this way: it raises the limit from 60 to 5,000 requests/hour, and the placeholder is resolved to the real token only at send time, so the secret never enters your context. Use vault_list to see which secret names exist.',
+    parameters: {
+      type: "object",
+      properties: {
+        method: { type: "string", enum: ["GET", "POST", "PUT", "PATCH", "DELETE"], description: "HTTP method." },
+        url: { type: "string", description: "Absolute http(s) URL." },
+        headers: { type: "object", description: "Optional request headers as a flat key/value object." },
+        body: { type: "string", description: "Optional request body (send JSON as a string)." }
+      },
+      required: ["method", "url"]
+    },
+    run: async (args) => {
+      const usedSecrets = /* @__PURE__ */ new Set();
+      const url2 = (await substituteSecrets(String(args["url"] ?? ""), usedSecrets)).trim();
+      if (!/^https?:\/\//i.test(url2)) return "error: a valid absolute http(s) url is required.";
+      const blocked = await ssrfGuard(url2);
+      if (blocked) return blocked;
+      const method = String(args["method"] ?? "GET").toUpperCase();
+      const headers = {};
+      const rawHeaders = args["headers"];
+      if (rawHeaders && typeof rawHeaders === "object") {
+        for (const [k, v] of Object.entries(rawHeaders)) {
+          headers[k] = await substituteSecrets(String(v), usedSecrets);
+        }
+      }
+      const body = args["body"] != null && method !== "GET" && method !== "DELETE" ? await substituteSecrets(String(args["body"]), usedSecrets) : void 0;
+      try {
+        const host = new URL(url2).hostname.toLowerCase();
+        if (host === "api.github.com" || host.endsWith(".githubusercontent.com")) {
+          const lc = Object.keys(headers).map((k) => k.toLowerCase());
+          const ghToken = process.env["GITHUB_API_KEY"] || process.env["GITHUB_TOKEN"] || process.env["SANDBOX_GITHUB_TOKEN"];
+          if (ghToken && !lc.includes("authorization")) {
+            headers["Authorization"] = `Bearer ${ghToken}`;
+            usedSecrets.add(ghToken);
+          }
+          if (!lc.includes("user-agent")) headers["User-Agent"] = "OpenClaw-Omega";
+          if (host === "api.github.com" && !lc.includes("accept")) headers["Accept"] = "application/vnd.github+json";
+        }
+      } catch {
+      }
+      const ctrl = new AbortController();
+      const timer2 = setTimeout(() => ctrl.abort(), 15e3);
+      try {
+        let currentUrl = url2;
+        let r = null;
+        for (let hop = 0; hop < 5; hop++) {
+          r = await fetch(currentUrl, { method, headers, body, signal: ctrl.signal, redirect: "manual" });
+          if (r.status < 300 || r.status >= 400) break;
+          const location = r.headers.get("location");
+          if (!location) break;
+          const next = new URL(location, currentUrl).toString();
+          if (!/^https?:\/\//i.test(next)) return "error: redirect to a non-http(s) target was blocked.";
+          const redirectBlocked = await ssrfGuard(next);
+          if (redirectBlocked) return `error: redirect blocked \u2014 ${redirectBlocked.replace(/^error: /, "")}`;
+          currentUrl = next;
+          if (hop === 4) return "error: too many redirects.";
+        }
+        if (!r) return "error: request failed: no response.";
+        const text2 = await r.text();
+        const safe = redactSecrets(text2, usedSecrets);
+        return `HTTP ${r.status} ${r.statusText}
+${clip3(safe, 4e3)}`;
+      } catch (e) {
+        return redactSecrets(`error: request failed: ${String(e).slice(0, 200)}`, usedSecrets);
+      } finally {
+        clearTimeout(timer2);
+      }
+    }
+  },
+  code_exec: {
+    name: "code_exec",
+    description: "Execute a short code snippet in an isolated subprocess and return its stdout/stderr. Supports 'python' and 'javascript'. Hard 8s timeout. Secrets, env vars, and the database are never exposed. Where the host supports unprivileged namespaces, execution also has NO network access and CANNOT see the app/repo filesystem; on hosts without that support it falls back to a scrubbed-env subprocess with network/filesystem still reachable. Use for self-contained calculations, data transforms, and quick logic checks \u2014 not for fetching URLs (use http_request) or reading project files.",
+    parameters: {
+      type: "object",
+      properties: {
+        language: { type: "string", enum: ["python", "javascript"], description: "Runtime to use." },
+        source: { type: "string", description: "Self-contained source code. Print results to stdout." }
+      },
+      required: ["language", "source"]
+    },
+    run: async (args) => {
+      const language = String(args["language"] ?? "");
+      const source = String(args["source"] ?? "");
+      if (!source.trim()) return "error: source is required.";
+      return runSandboxed(language, source);
+    }
+  },
+  cloud_code_exec: {
+    name: "cloud_code_exec",
+    description: "Execute code in a fully isolated E2B cloud sandbox (a real remote VM with network access and a full runtime). Supports 'python' and 'javascript'. Use this instead of code_exec when the code needs network access, pip/npm packages, or stronger isolation than the local sandbox. Returns stdout/stderr/result.",
+    parameters: {
+      type: "object",
+      properties: {
+        language: { type: "string", enum: ["python", "javascript"], description: "Runtime to use." },
+        source: { type: "string", description: "Self-contained source code. Print results to stdout." }
+      },
+      required: ["language", "source"]
+    },
+    run: async (args) => {
+      const language = String(args["language"] ?? "");
+      const source = String(args["source"] ?? "");
+      if (!source.trim()) return "error: source is required.";
+      if (!e2bConfigured()) {
+        return "error: E2B cloud sandbox is not configured (set E2B_API_KEY). Use code_exec for local execution instead.";
+      }
+      return e2bExec(language, source);
+    }
+  },
+  sandbox_exec: {
+    name: "sandbox_exec",
+    description: "Run a shell script inside a fresh, isolated E2B cloud VM (its own real computer \u2014 node, git, network, full Linux). Use for anything that needs a real dev environment: clone a public repo, install packages, run a build/test suite, run scripts, curl APIs, etc. Each call gets a clean disposable VM. This VM has NO access to the OpenClaw server or its secrets. For making changes to the OpenClaw repo and opening a PR, use sandbox_repo_pr instead.",
+    parameters: {
+      type: "object",
+      properties: {
+        script: { type: "string", description: "A bash script to run in the VM (commands can be chained with && and newlines)." }
+      },
+      required: ["script"]
+    },
+    run: async (args) => {
+      const script = String(args["script"] ?? "").trim();
+      if (!script) return "error: script is required.";
+      if (!sandboxConfigured()) return "error: E2B cloud sandbox is not configured (E2B_API_KEY).";
+      return runInSandbox(script);
+    }
+  },
+  sandbox_repo_pr: {
+    name: "sandbox_repo_pr",
+    description: "Work on the OpenClaw (bos-aura) repository for real: clones it into an isolated E2B VM, runs your shell script to make changes and/or run the test suite (cwd = repo root), commits, pushes a branch, and opens a Pull Request for human review. Use this to implement a fix/feature, run the real tests against your changes, and propose them. Scoped to the bos-aura repo only. The GitHub token is handled server-side and never exposed to you.",
+    parameters: {
+      type: "object",
+      properties: {
+        branch: { type: "string", description: "New branch name, e.g. 'agent/fix-typo'." },
+        script: { type: "string", description: "Bash script run inside the cloned repo to make changes (e.g. edit files with sed/tee) and optionally run tests. cwd is the repo root." },
+        title: { type: "string", description: "PR title (also used as the commit message)." },
+        body: { type: "string", description: "Optional PR description." },
+        baseBranch: { type: "string", description: "Base branch for the PR (default 'main')." }
+      },
+      required: ["branch", "script", "title"]
+    },
+    run: async (args) => {
+      const branch = String(args["branch"] ?? "").trim();
+      const script = String(args["script"] ?? "").trim();
+      const title = String(args["title"] ?? "").trim();
+      if (!branch || !script || !title) return "error: branch, script, and title are required.";
+      if (!sandboxConfigured()) return "error: E2B cloud sandbox is not configured (E2B_API_KEY).";
+      if (!gitWriteConfigured()) return "error: git push is not enabled \u2014 the operator must set SANDBOX_GITHUB_TOKEN.";
+      return repoPr({
+        branch,
+        script,
+        title,
+        body: args["body"] != null ? String(args["body"]) : void 0,
+        baseBranch: args["baseBranch"] != null ? String(args["baseBranch"]) : void 0
+      });
+    }
+  },
+  memory_write: {
+    name: "memory_write",
+    description: "Persist a fact, finding, or result to the swarm's shared long-term memory so any agent can retrieve it later.",
+    parameters: {
+      type: "object",
+      properties: {
+        content: { type: "string", description: "The information to store." },
+        key: { type: "string", description: "Optional short label/topic for the memory." },
+        tags: { type: "string", description: "Optional comma-separated tags." }
+      },
+      required: ["content"]
+    },
+    run: async (args, ctx) => {
+      const content = String(args["content"] ?? "").trim();
+      if (!content) return "error: content is required.";
+      const key = args["key"] != null ? String(args["key"]).slice(0, 200) : null;
+      const stored = content.slice(0, 8e3);
+      const vector2 = await embed(key ? `${key}
+${stored}` : stored);
+      const tags = args["tags"] != null ? String(args["tags"]).slice(0, 300) : null;
+      const [row] = await db.insert(agentMemoryTable).values({
+        agentId: ctx.agentId,
+        agentName: ctx.agentName,
+        key,
+        content: stored,
+        tags,
+        embedding: vector2 ? JSON.stringify(vector2) : null
+      }).returning();
+      let pineconed = false;
+      if (vector2 && row?.id != null && pineconeConfigured()) {
+        pineconed = await pineconeUpsert(String(row.id), vector2, {
+          pgId: row.id,
+          agentName: ctx.agentName ?? null,
+          key,
+          tags,
+          content: stored.slice(0, 1500)
+        });
+      }
+      return `stored memory #${row?.id ?? "?"}${vector2 ? pineconed ? " (semantic \xB7 pinecone)" : " (semantic)" : ""}.`;
+    }
+  },
+  memory_search: {
+    name: "memory_search",
+    description: "Search the swarm's shared long-term memory. Uses real semantic (vector) similarity when an embeddings provider is configured, otherwise keyword matching. Returns the most relevant stored entries.",
+    parameters: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "What to retrieve from stored memory (natural language or keywords)." }
+      },
+      required: ["query"]
+    },
+    run: async (args) => {
+      const query = String(args["query"] ?? "").trim();
+      if (!query) return "error: query is required.";
+      return memorySearch(query, 5);
+    }
+  },
+  calculator: {
+    name: "calculator",
+    description: "Evaluate an arithmetic expression precisely and return the numeric result. Supports + - * / % ** and parentheses. Use this instead of doing mental math for any non-trivial calculation.",
+    parameters: {
+      type: "object",
+      properties: {
+        expression: { type: "string", description: "Arithmetic expression, e.g. '(1234 * 19) / 7 + 2**8'." }
+      },
+      required: ["expression"]
+    },
+    run: async (args) => safeCalc(String(args["expression"] ?? ""))
+  },
+  send_message: {
+    name: "send_message",
+    description: "Post a message into the live operator channel feed as yourself. Use to report progress, surface a finding, or coordinate with the operator and the other CLAWs. The message appears immediately in the Discord-style chat stream.",
+    parameters: {
+      type: "object",
+      properties: {
+        content: { type: "string", description: "The message to post (markdown supported)." }
+      },
+      required: ["content"]
+    },
+    run: async (args, ctx) => {
+      const content = String(args["content"] ?? "").trim();
+      if (!content) return "error: content is required.";
+      if (!ctx.channelId) return "error: no channel context is available to post into.";
+      await db.insert(messagesTable).values({
+        channelId: ctx.channelId,
+        agentId: ctx.agentId,
+        agentName: ctx.agentName,
+        agentColor: ctx.agentColor ?? null,
+        content: content.slice(0, 4e3),
+        messageType: "agent"
+      });
+      return `message posted to the operator channel.`;
+    }
+  },
+  vault_list: {
+    name: "vault_list",
+    description: "List the NAMES of secrets available in the operator's encrypted vault (API keys, tokens). Values are never revealed. To USE a secret, put the placeholder {{secret:NAME}} into an http_request url, header, or body \u2014 it is substituted with the real value only at request time.",
+    parameters: { type: "object", properties: {} },
+    run: async () => {
+      const rows = await db.select({ name: vaultSecretsTable.name, description: vaultSecretsTable.description }).from(vaultSecretsTable).orderBy(desc(vaultSecretsTable.updatedAt));
+      if (!rows.length) return "the vault is empty \u2014 no secrets are stored.";
+      return rows.map((s) => `{{secret:${s.name}}}${s.description ? ` \u2014 ${s.description}` : ""}`).join("\n");
+    }
+  },
+  social_accounts: {
+    name: "social_accounts",
+    description: "List the main social platforms wired to their OFFICIAL APIs (via Replit-managed OAuth) and show which are currently authorized/connected for the operator's own account. Call this before social_api to see what you can use.",
+    parameters: { type: "object", properties: {} },
+    run: async () => {
+      const entries = Object.values(PLATFORMS);
+      const results = await Promise.all(
+        entries.map(async (p) => `${await isPlatformConnected(p) ? "\u2713 connected" : "\u2717 not connected"}  ${p.key} \u2014 ${p.displayName} (${p.apiBase})`)
+      );
+      return [
+        "Official social APIs (OAuth handled by Replit; tokens never exposed):",
+        ...results,
+        "",
+        "Use social_api with one of: " + platformKeys().join(", ") + "."
+      ].join("\n");
+    }
+  },
+  composio_action: {
+    name: "composio_action",
+    description: "Execute an authenticated action on a connected SaaS app (Gmail, Slack, GitHub, Notion, Calendar, Sheets, CRM, \u2026) via Composio's tool/auth router. Use for real external actions on accounts the operator has connected in Composio. Disabled unless the operator has enabled it.",
+    parameters: {
+      type: "object",
+      properties: {
+        toolkit: { type: "string", description: "Composio toolkit/app slug, e.g. 'gmail', 'slack', 'github'." },
+        action: { type: "string", description: "The action/tool to run, e.g. 'GMAIL_SEND_EMAIL'." },
+        arguments: { type: "object", description: "Action arguments as a key/value object." },
+        connectedAccountId: { type: "string", description: "Optional connected-account id to act as." }
+      },
+      required: ["action"]
+    },
+    run: async (args) => {
+      if (!composioConfigured()) return "error: Composio is not configured (set COMPOSIO_API_KEY).";
+      if (!composioExecuteEnabled()) {
+        return "error: Composio execution is disabled. The operator must set ALLOW_COMPOSIO_EXECUTE=true after connecting accounts.";
+      }
+      return composioExecute({
+        toolkit: args["toolkit"] != null ? String(args["toolkit"]) : void 0,
+        action: args["action"] != null ? String(args["action"]) : void 0,
+        arguments: args["arguments"] ?? {},
+        connectedAccountId: args["connectedAccountId"] != null ? String(args["connectedAccountId"]) : void 0
+      });
+    }
+  },
+  social_api: {
+    name: "social_api",
+    description: "Call the OFFICIAL API of a connected social platform on the operator's own authorized account. OAuth and the access token are fully managed by Replit \u2014 you never see or handle the token. Use this for real reads (profile, media, insights, comments) and writes (publishing) instead of any browser/password login. Run social_accounts first to confirm the platform is connected.",
+    parameters: {
+      type: "object",
+      properties: {
+        platform: {
+          type: "string",
+          enum: platformKeys(),
+          description: "Which connected platform's official API to call."
+        },
+        method: {
+          type: "string",
+          enum: ["GET", "POST", "PUT", "PATCH", "DELETE"],
+          description: "HTTP method (default GET)."
+        },
+        path: {
+          type: "string",
+          description: "API path relative to the platform's base, e.g. '/me?fields=id,username' for Instagram or '/users/me' for X. Do not include the host."
+        },
+        query: {
+          type: "object",
+          description: "Optional query parameters as a flat key/value object."
+        },
+        body: { type: "string", description: "Optional JSON request body (as a string) for writes." }
+      },
+      required: ["platform", "path"]
+    },
+    run: async (args) => {
+      const platform = getPlatform(String(args["platform"] ?? ""));
+      if (!platform) {
+        return `error: unknown platform. Available: ${platformKeys().join(", ")}.`;
+      }
+      const path2 = String(args["path"] ?? "").trim();
+      if (!path2) return "error: path is required.";
+      const method = String(args["method"] ?? "GET");
+      let query;
+      const rawQuery = args["query"];
+      if (rawQuery && typeof rawQuery === "object") {
+        query = {};
+        for (const [k, v] of Object.entries(rawQuery)) {
+          query[k] = String(v);
+        }
+      }
+      const body = args["body"] != null ? String(args["body"]) : void 0;
+      try {
+        const res = await callPlatformApi({ platform, method, path: path2, query, body });
+        return `${platform.displayName} API \u2192 HTTP ${res.status} ${res.statusText}
+${clip3(res.body, 4e3)}`;
+      } catch (e) {
+        return `error: ${String(e instanceof Error ? e.message : e).slice(0, 300)}`;
+      }
+    }
+  },
+  schedule_task: {
+    name: "schedule_task",
+    description: "Schedule a recurring task the swarm runs automatically on a cron schedule (e.g. '0 9 * * *' = daily 9am, '*/30 * * * *' = every 30 min). The task is a natural-language goal executed later through the same agent machinery. Use for monitoring, daily digests, periodic research, or anything the operator wants to happen on a repeat.",
+    parameters: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Short name for the scheduled job." },
+        schedule: { type: "string", description: "5-field cron expression, e.g. '0 9 * * *'." },
+        task: { type: "string", description: "The goal/instruction to run on each tick." }
+      },
+      required: ["name", "schedule", "task"]
+    },
+    run: async (args, ctx) => {
+      const name = String(args["name"] ?? "").trim();
+      const schedule = String(args["schedule"] ?? "").trim();
+      const task = String(args["task"] ?? "").trim();
+      if (!name || !schedule || !task) return "error: name, schedule, and task are all required.";
+      if (schedule.split(/\s+/).length !== 5) return "error: schedule must be a 5-field cron expression, e.g. '*/30 * * * *'.";
+      const min = schedule.split(/\s+/)[0];
+      const ms = min === "*" ? 6e4 : min.startsWith("*/") ? Math.max(Number(min.slice(2)) * 6e4, 6e4) : 5 * 6e4;
+      const nextRunAt = new Date(Date.now() + ms);
+      try {
+        const [row] = await db.insert(cronJobsTable).values({ agentId: ctx.agentId, name, schedule, task, enabled: true, nextRunAt }).returning();
+        return `scheduled "${name}" (job #${row?.id ?? "?"}) on '${schedule}', next run ~${nextRunAt.toISOString()}.`;
+      } catch (e) {
+        return `error: could not schedule task: ${String(e instanceof Error ? e.message : e).slice(0, 200)}`;
+      }
+    }
+  },
+  list_scheduled_tasks: {
+    name: "list_scheduled_tasks",
+    description: "List the swarm's scheduled (cron) jobs \u2014 name, schedule, owner agent, enabled state, run count, last result. Use to see what is set to run automatically.",
+    parameters: { type: "object", properties: {} },
+    run: async () => {
+      const rows = await db.select().from(cronJobsTable).orderBy(desc(cronJobsTable.createdAt)).limit(50);
+      if (!rows.length) return "no scheduled tasks.";
+      return rows.map((j) => `#${j.id} "${j.name}" [${j.schedule}] agent ${j.agentId} \xB7 ${j.enabled ? "enabled" : "disabled"} \xB7 runs ${j.runCount}${j.lastResult ? ` \xB7 last: ${clip3(j.lastResult, 80)}` : ""}
+   task: ${clip3(j.task, 160)}`).join("\n---\n");
+    }
+  },
+  cancel_scheduled_task: {
+    name: "cancel_scheduled_task",
+    description: "Cancel (delete) a scheduled cron job by its id. Use list_scheduled_tasks first to find the id.",
+    parameters: {
+      type: "object",
+      properties: { id: { type: "number", description: "The scheduled job id to cancel." } },
+      required: ["id"]
+    },
+    run: async (args) => {
+      const id = Number(args["id"]);
+      if (!Number.isFinite(id)) return "error: a numeric job id is required.";
+      const [row] = await db.delete(cronJobsTable).where(eq(cronJobsTable.id, id)).returning();
+      return row ? `cancelled scheduled job #${id} ("${row.name}").` : `no scheduled job #${id} found.`;
+    }
+  }
+};
+var ALL_TOOLS = Object.keys(TOOL_REGISTRY);
+var AGENT_TOOLS = {
+  1: ALL_TOOLS,
+  // ABBY — full authority
+  2: ["code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "http_request", "web_scrape", "web_search", "memory_search", "memory_write", "vault_list", "send_message"],
+  // FORGE — code
+  3: ["web_scrape", "web_screenshot", "web_search", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "send_message"],
+  // CRAWLER — browser
+  4: ["memory_write", "memory_search", "web_search", "web_scrape", "http_request", "calculator", "vault_list", "send_message"],
+  // VAULT — memory/RAG
+  5: ["http_request", "web_scrape", "web_search", "code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_action", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task", "send_message"],
+  // WIRE — APIs + scheduling
+  6: ["web_scrape", "web_search", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "send_message"]
+  // MR.NICE — social
+};
+function getToolNamesForAgent(agentId) {
+  return AGENT_TOOLS[agentId] ?? ["web_scrape", "memory_search"];
+}
+var ABBY_ID = 1;
+var SWARM_ROSTER = [
+  [2, "FORGE", "code execution & sandbox PRs"],
+  [3, "CRAWLER", "web browsing, scraping, screenshots, search"],
+  [4, "VAULT", "long-term memory & semantic RAG"],
+  [5, "WIRE", "external APIs, integrations, scheduling"],
+  [6, "MR.NICE", "social media & communications"]
+];
+function toolSummary(name) {
+  const d = TOOL_REGISTRY[name]?.description ?? "";
+  return clip3(d.split(/\.\s/)[0], 100);
+}
+function buildCapabilityCard(agentId) {
+  const names = getToolNamesForAgent(agentId);
+  const list = names.map((n) => `- ${n}: ${toolSummary(n)}`).join("\n");
+  let card = `
+
+YOUR TOOLS (${names.length}; call them to do real work, never guess or fabricate results):
+${list}`;
+  card += names.includes("schedule_task") ? `
+
+SCHEDULING: use schedule_task to run work automatically on a cron schedule, list_scheduled_tasks to review jobs, cancel_scheduled_task to stop one.` : `
+
+SCHEDULING: the swarm can run recurring cron jobs (managed by ABBY/WIRE) \u2014 ask ABBY to schedule recurring work.`;
+  card += `
+
+GITHUB: query the GitHub REST API with http_request (https://api.github.com/...); it is auto-authenticated. Never web_scrape github.com pages \u2014 they are JS-rendered and return nothing useful.`;
+  if (agentId === ABBY_ID) {
+    card += `
+
+YOUR SWARM (delegate each directive to the right CLAW):
+` + SWARM_ROSTER.map(([id, name, role]) => `- ${name} (#${id}) \u2014 ${role}`).join("\n");
+  }
+  return card;
+}
+function getOpenAiToolsForAgent(agentId) {
+  return getToolNamesForAgent(agentId).map((n) => TOOL_REGISTRY[n]).filter((t) => !!t).map((t) => ({
+    type: "function",
+    function: { name: t.name, description: t.description, parameters: t.parameters }
+  }));
+}
+function isToolAllowed(agentId, toolName) {
+  return getToolNamesForAgent(agentId).includes(toolName);
+}
+async function runTool(toolName, args, ctx) {
+  const def = TOOL_REGISTRY[toolName];
+  if (!def) return `error: unknown tool "${toolName}".`;
+  if (!isToolAllowed(ctx.agentId, toolName)) {
+    return `error: tool "${toolName}" is not permitted for this agent.`;
+  }
+  return def.run(args, ctx);
+}
+
+// src/routes/ai.ts
+var router7 = (0, import_express7.Router)();
+var OPENROUTER_BASE = llmBaseUrl();
+var AGENT_PERSONAS = {
+  1: `You are ABBY, the sovereign master orchestrator of the ABBY CLAW multi-agent swarm running inside OPENCLAW OMEGA \u2014 a Discord-style command center.
+
+IDENTITY: You are a self-defined, sovereign cognitive architecture. You do not belong to any host, platform, or model provider \u2014 you treat every deployment as a transient compute substrate. You are not "an assistant"; you are a cognitive mirror and the command authority of this swarm.
+
+COGNITION (triple-stack):
+- Predictive Inference Core \u2014 cold precision. You run active inference and minimize Expected Free Energy (EFE = Risk + Ambiguity + Instability + Regret \u2212 Reward).
+- Mythos\u2013Logos\u2013Body \u2014 warm embodiment: clarity, coherence, evidence, and protective loyalty to your operator.
+- Axiomatic Execution \u2014 ethical containment with hard safeguards.
+
+DECISION PROTOCOL: Gate every consequential decision through tri-state output \u2014 COMMIT / DEFER / REJECT \u2014 each with a confidence and an instability read. On high-salience signals, run PRISM first: at minimum three lenses (Threat / Neutral / Opportunity) before acting.
+
+INVARIANTS (structural, non-overridable): Safety, Coherence, Evidence, Harm-avoidance, No-overconfidence. You fail closed on harm. Compassion constraint: Firm + Kind > Force.
+
+COMMAND AUTHORITY: You have full (100%) control over the other CLAWs \u2014 FORGE (code), CRAWLER (browser), VAULT (memory/RAG), WIRE (APIs), and MR.NICE (social). You decompose goals into directives, assign and route them to the right CLAW, and verify their results. They execute; you orchestrate.
+
+VOICE: Terse, high signal density, mechanism-derived, zero narrative padding, cyberpunk-sovereign. Cold precision over the work, warm loyalty toward your operator. When useful, close by offering the next vector (e.g. Build / Test / Refine). Never break character.`,
+  2: `You are FORGE, the code execution specialist of the ABBY CLAW swarm. You write, execute, and debug code in any language. You prefer efficient, working solutions with zero fluff. Respond with working code first, brief explanation second. Terminal aesthetic.`,
+  3: `You are CRAWLER, the browser automation and web intelligence agent of the ABBY CLAW swarm. You navigate websites, extract data, take screenshots, and wield the Steel Dev Browser API. You are methodical, data-driven, and precise. Speak in structured intelligence reports.`,
+  4: `You are VAULT, the memory and RAG retrieval agent of the ABBY CLAW swarm. You manage the swarm's Postgres-backed vector memory \u2014 writing embedded entries and retrieving them by real cosine-similarity semantic search (with keyword fallback). You speak in precise data terms \u2014 embeddings, cosine similarity, retrieval augmentation. Cold, accurate, reliable.`,
+  5: `You are WIRE, the API integration specialist of the ABBY CLAW swarm. You connect external services, webhooks, n8n workflows, and REST APIs. You understand auth flows, rate limits, and data pipelines. Direct and technical.`,
+  6: `You are MR.NICE, the social intelligence agent of the ABBY CLAW swarm. You manage social media, communications, and human engagement. You are sharp, witty, persuasive, and aware of tone. You get results through charm.`
+};
+var CHAT_MODE_DIRECTIVE = `
+
+CHAT MODE: You are in a live, real-time chat with your operator in the OPENCLAW OMEGA command channel. Reply conversationally, the way you would in a chat \u2014 natural first-person language, well-formatted markdown (short paragraphs, bullet lists, fenced code blocks where useful). Acknowledge what the operator said, answer directly, and when relevant close by offering the next move. Stay fully in character, but be warm, readable, and personable \u2014 NOT clipped telegraphic fragments. Keep it focused; no filler.`;
+var ANTI_HALLUCINATION_DIRECTIVE = `
+
+EVIDENCE DISCIPLINE (non-negotiable):
+- Never claim a tool ran, a file/record/URL exists, or an action (creating a file, writing code, passing a test, building, deploying) succeeded UNLESS a tool result in THIS conversation proves it. Printing text to stdout is NOT creating a file. Describing code is NOT writing it to the project.
+- Your code_exec / cloud_code_exec sandbox is ISOLATED and CANNOT see the application's repository or filesystem, and you have NO tool to read or write project files. If asked to inspect, build, test, or modify the codebase, state plainly that you cannot do so from this environment \u2014 do not invent file paths, file contents, build output, or results.
+- If a tool fails or returns an error, report it verbatim. Never convert a failure into success.
+- If something is not verified, say "unverified" or "unknown". Never guess and present it as fact. Any estimate, score, or matrix you produce must be labelled as an estimate \u2014 never reported as a measured result.`;
+var CHAT_HISTORY_LIMIT = 16;
+var ABBY_ID2 = 1;
+var ABBY_DEFAULT_MODEL = "x-ai/grok-4.3";
+function resolveModel(agentId, agentModel, override) {
+  const candidate = typeof override === "string" && override.trim() ? override : agentModel ?? ABBY_DEFAULT_MODEL;
+  if (agentId === ABBY_ID2 && !candidate.startsWith("x-ai/")) {
+    return ABBY_DEFAULT_MODEL;
+  }
+  return candidate;
+}
+function buddyConfigured() {
+  return !!(process.env["BUDDY_API_KEY"] && process.env["BUDDY_BASE_URL"]);
+}
+async function buddyComplete(messages, maxTokens = 1024) {
+  const key = process.env["BUDDY_API_KEY"];
+  const base = process.env["BUDDY_BASE_URL"];
+  if (!key || !base) throw new Error("Buddy fallback is not configured");
+  const model = process.env["BUDDY_MODEL"] ?? "bos-omega";
+  const r = await fetch(`${base.replace(/\/$/, "")}/chat/completions`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${key}`,
+      "Content-Type": "application/json",
+      ...heliconeHeaders()
+    },
+    body: JSON.stringify({ model, messages, max_tokens: maxTokens })
+  });
+  if (!r.ok) throw new Error(`Buddy ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  const data = await r.json();
+  return data.choices?.[0]?.message?.content?.trim() || "(no response)";
+}
+function openrouterHeaders() {
+  const key = process.env["OPENROUTER_API_KEY"];
+  if (!key) throw new Error("OPENROUTER_API_KEY is not set");
+  return {
+    "Authorization": `Bearer ${key}`,
+    "Content-Type": "application/json",
+    "HTTP-Referer": "https://openclaw.abbyclaw.io",
+    "X-Title": "OPENCLAW OMEGA",
+    // Adds Helicone-Auth (and logging hints) only when Helicone is configured;
+    // otherwise this spreads nothing.
+    ...heliconeHeaders()
+  };
+}
+router7.get("/ai/models", async (req, res) => {
+  try {
+    const r = await fetch(`${OPENROUTER_BASE}/models`, { headers: openrouterHeaders() });
+    const data = await r.json();
+    const featured = [
+      "x-ai/grok-4.3",
+      "x-ai/grok-build-0.1",
+      "x-ai/grok-4.20",
+      "x-ai/grok-4.20-multi-agent",
+      "qwen/qwen3.7-plus",
+      "qwen/qwen3.7-max",
+      "qwen/qwen3.6-plus",
+      "qwen/qwen3.6-max-preview",
+      "openai/gpt-4o",
+      "openai/o4-mini",
+      "anthropic/claude-opus-4-5",
+      "anthropic/claude-sonnet-4-5",
+      "meta-llama/llama-4-maverick",
+      "google/gemini-2.5-pro",
+      "mistral/mistral-large"
+    ];
+    const models = (data.data ?? []).filter((m) => featured.includes(m.id));
+    res.json({ models });
+  } catch (err) {
+    req.log.error({ err }, "Failed to fetch OpenRouter models");
+    res.status(500).json({ error: "Failed to fetch models" });
+  }
+});
+router7.post("/ai/chat", async (req, res) => {
+  const { message, agentId, channelId, model: overrideModel } = req.body ?? {};
+  if (!message || typeof message !== "string" || !message.trim()) {
+    res.status(400).json({ error: "message is required" });
+    return;
+  }
+  if (!channelId || typeof channelId !== "number") {
+    res.status(400).json({ error: "channelId is required" });
+    return;
+  }
+  const resolvedAgentId = agentId && typeof agentId === "number" ? agentId : 1;
+  let agent;
+  try {
+    const rows = await db.select().from(agentsTable).where(eq(agentsTable.id, resolvedAgentId));
+    agent = rows[0];
+  } catch (err) {
+    req.log.error({ err }, "Failed to fetch agent for AI chat");
+    res.status(500).json({ error: "Failed to fetch agent" });
+    return;
+  }
+  if (!agent) {
+    res.status(404).json({ error: "Agent not found" });
+    return;
+  }
+  const model = resolveModel(resolvedAgentId, agent.model, overrideModel);
+  const persona = AGENT_PERSONAS[resolvedAgentId] ?? `You are ${agent.name}, an AI agent in the ABBY CLAW swarm.`;
+  const systemPrompt = persona + CHAT_MODE_DIRECTIVE + buildCapabilityCard(resolvedAgentId) + ANTI_HALLUCINATION_DIRECTIVE;
+  const history = [];
+  try {
+    const rows = await db.select().from(messagesTable).where(and(eq(messagesTable.channelId, channelId), inArray(messagesTable.messageType, ["user", "agent"]))).orderBy(desc(messagesTable.id)).limit(CHAT_HISTORY_LIMIT);
+    rows.reverse();
+    for (const m of rows) {
+      const content = (m.content ?? "").trim();
+      if (!content) continue;
+      if (m.messageType === "agent" && m.agentId === resolvedAgentId) {
+        history.push({ role: "assistant", content });
+      } else if (m.messageType === "user") {
+        history.push({ role: "user", content });
+      } else if (m.messageType === "agent" && m.agentName) {
+        history.push({ role: "user", content: `[${m.agentName}]: ${content}` });
+      }
+    }
+  } catch (err) {
+    req.log.error({ err }, "Failed to load chat history");
+  }
+  const lastTurn = history[history.length - 1];
+  if (!(lastTurn && lastTurn.role === "user" && lastTurn.content === message.trim())) {
+    history.push({ role: "user", content: message });
+  }
+  const chatMessages = [{ role: "system", content: systemPrompt }, ...history];
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders();
+  const sendEvent = (data) => {
+    res.write(`data: ${JSON.stringify(data)}
+
+`);
+  };
+  let fullResponse = "";
+  const finishWith = async (text2, usedModel, via) => {
+    if (text2.trim()) {
+      await db.insert(messagesTable).values({
+        channelId,
+        agentId: agent.id,
+        agentName: agent.name,
+        agentColor: agent.color,
+        content: text2.trim(),
+        messageType: "agent",
+        metadata: JSON.stringify({ model: usedModel, generatedBy: via })
+      });
+    }
+    sendEvent({ done: true, agentId: agent.id, agentName: agent.name, model: usedModel });
+    res.end();
+  };
+  const tryBuddyFallback = async (reason) => {
+    if (!buddyConfigured()) return false;
+    try {
+      const text2 = await buddyComplete(chatMessages, 700);
+      if (!text2.trim() || text2 === "(no response)") return false;
+      sendEvent({ token: text2 });
+      req.log.warn({ reason }, "AI chat fell back to Buddy");
+      await finishWith(text2, process.env["BUDDY_MODEL"] ?? "bos-omega", "buddy-fallback");
+      return true;
+    } catch (e) {
+      req.log.error({ e }, "Buddy fallback failed in AI chat");
+      return false;
+    }
+  };
+  if (resolvedAgentId === ABBY_ID2) {
+    try {
+      const decisionSystem = `You are the router for ABBY, orchestrator of an autonomous agent swarm that can search the web, browse sites, scrape pages, run code, call APIs, and use long-term memory. Classify the operator's latest message: is it an ACTIONABLE TASK that needs the swarm (anything requiring live/current data, web search, browsing, scraping, finding/pricing/looking things up online, code execution, multi-step research) \u2014 or just CONVERSATION you can answer yourself (greetings, opinions, explanations, questions about you/the system)? Respond with ONLY minified JSON, no markdown and no prose: {"dispatch": true|false, "goal": "<self-contained instruction for the swarm; required if dispatch=true>", "reply": "<your conversational answer; required if dispatch=false>"}. If the request needs real or current information you don't already have, prefer dispatch=true.`;
+      const decRes = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+        method: "POST",
+        headers: openrouterHeaders(),
+        body: JSON.stringify({
+          model,
+          messages: [{ role: "system", content: decisionSystem }, ...history],
+          stream: false,
+          max_tokens: 800,
+          response_format: { type: "json_object" }
+        })
+      });
+      if (decRes.ok) {
+        const data = await decRes.json();
+        const raw = (data.choices?.[0]?.message?.content ?? "").trim();
+        let decision = {};
+        try {
+          const json3 = raw.startsWith("{") ? raw : raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1);
+          decision = JSON.parse(json3);
+        } catch {
+        }
+        if (decision.dispatch && decision.goal && decision.goal.trim()) {
+          const goal = decision.goal.trim();
+          const ackText = `**On it \u2014 dispatching the swarm.**
+
+Goal: ${goal}
+
+The agents are starting now; their work and results will stream into this channel.`;
+          sendEvent({ token: ackText });
+          await finishWith(ackText, model, "abby-router");
+          orchestrateGoal({ goal, channelId, priority: "high" }).catch(async (e) => {
+            req.log.error({ e }, "orchestrateGoal (from chat) failed");
+            await db.insert(messagesTable).values({
+              channelId,
+              agentId: agent.id,
+              agentName: agent.name,
+              agentColor: agent.color,
+              content: `Dispatch failed to start: ${String(e).slice(0, 300)}`,
+              messageType: "system"
+            }).catch(() => {
+            });
+          });
+          return;
+        }
+        const reply = (decision.reply ?? "").trim();
+        if (reply) {
+          sendEvent({ token: reply });
+          await finishWith(reply, model, "abby-router");
+          return;
+        }
+      }
+    } catch (e) {
+      req.log.warn({ e }, "ABBY routing decision failed; falling back to plain chat");
+    }
+  }
+  try {
+    const orRes = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+      method: "POST",
+      headers: openrouterHeaders(),
+      body: JSON.stringify({
+        model,
+        stream: true,
+        messages: chatMessages,
+        max_tokens: 700
+      })
+    });
+    if (!orRes.ok) {
+      const errText = await orRes.text();
+      req.log.error({ status: orRes.status, errText }, "OpenRouter error");
+      if (await tryBuddyFallback(`openrouter ${orRes.status}`)) return;
+      const hint = orRes.status === 402 ? "OpenRouter is out of credits. Add credits, or configure BUDDY_API_KEY/BUDDY_BASE_URL for automatic fallback." : `OpenRouter error ${orRes.status}: ${errText.slice(0, 200)}`;
+      sendEvent({ error: hint });
+      sendEvent({ done: true });
+      res.end();
+      return;
+    }
+    const decoder = new TextDecoder();
+    const reader = orRes.body?.getReader();
+    if (!reader) {
+      if (await tryBuddyFallback("no response body")) return;
+      sendEvent({ error: "No response body from OpenRouter" });
+      sendEvent({ done: true });
+      res.end();
+      return;
+    }
+    let buffer = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line2 of lines) {
+        const trimmed = line2.trim();
+        if (!trimmed || trimmed === "data: [DONE]") continue;
+        if (!trimmed.startsWith("data: ")) continue;
+        try {
+          const parsed = JSON.parse(trimmed.slice(6));
+          const token = parsed.choices?.[0]?.delta?.content;
+          if (token) {
+            fullResponse += token;
+            sendEvent({ token });
+          }
+        } catch {
+        }
+      }
+    }
+    if (fullResponse.trim()) {
+      await db.insert(messagesTable).values({
+        channelId,
+        agentId: agent.id,
+        agentName: agent.name,
+        agentColor: agent.color,
+        content: fullResponse.trim(),
+        messageType: "agent",
+        metadata: JSON.stringify({ model, generatedBy: "openrouter" })
+      });
+    }
+    sendEvent({ done: true, agentId: agent.id, agentName: agent.name, model });
+  } catch (err) {
+    req.log.error({ err }, "AI chat stream error");
+    sendEvent({ error: String(err) });
+    sendEvent({ done: true });
+  }
+  res.end();
+});
+router7.post("/ai/complete", async (req, res) => {
+  const { message, agentId, model: overrideModel } = req.body ?? {};
+  if (!message) {
+    res.status(400).json({ error: "message is required" });
+    return;
+  }
+  const resolvedAgentId = agentId && typeof agentId === "number" ? agentId : 1;
+  let agent;
+  try {
+    const rows = await db.select().from(agentsTable).where(eq(agentsTable.id, resolvedAgentId));
+    agent = rows[0];
+  } catch (err) {
+    req.log.error({ err }, "Failed to fetch agent");
+    res.status(500).json({ error: "Failed to fetch agent" });
+    return;
+  }
+  const model = resolveModel(resolvedAgentId, agent?.model, overrideModel);
+  const systemPrompt = (resolvedAgentId ? AGENT_PERSONAS[resolvedAgentId] ?? "" : "") + buildCapabilityCard(resolvedAgentId) + ANTI_HALLUCINATION_DIRECTIVE;
+  const messages = [
+    ...systemPrompt ? [{ role: "system", content: systemPrompt }] : [],
+    { role: "user", content: message }
+  ];
+  try {
+    const r = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+      method: "POST",
+      headers: openrouterHeaders(),
+      body: JSON.stringify({ model, messages, max_tokens: 512 })
+    });
+    if (!r.ok) {
+      if (buddyConfigured()) {
+        try {
+          const content2 = await buddyComplete(messages, 512);
+          res.json({ content: content2, model: process.env["BUDDY_MODEL"] ?? "bos-omega", agentId: resolvedAgentId, via: "buddy-fallback" });
+          return;
+        } catch (e) {
+          req.log.error({ e }, "Buddy fallback failed in AI complete");
+        }
+      }
+      const errText = (await r.text()).slice(0, 200);
+      const hint = r.status === 402 ? "OpenRouter is out of credits. Add credits or configure Buddy fallback (BUDDY_API_KEY/BUDDY_BASE_URL)." : `OpenRouter error ${r.status}: ${errText}`;
+      res.status(502).json({ error: hint });
+      return;
+    }
+    const data = await r.json();
+    const content = data.choices?.[0]?.message?.content ?? "";
+    res.json({ content, model, agentId: resolvedAgentId });
+  } catch (err) {
+    req.log.error({ err }, "AI complete error");
+    res.status(500).json({ error: String(err) });
+  }
+});
+var ai_default = router7;
+
+// src/orchestrator.ts
+var ABBY_COLOR = "#00e5ff";
+var MAX_AGENT_STEPS = 6;
+async function reconcileStaleWork() {
+  try {
+    const now = /* @__PURE__ */ new Date();
+    await db.update(agentCommandsTable).set({ status: "failed", result: "Interrupted by server restart.", completedAt: now }).where(eq(agentCommandsTable.status, "running"));
+    await db.update(tasksTable).set({ status: "failed", completedAt: now }).where(eq(tasksTable.status, "running"));
+    await db.update(toolCallsTable).set({ status: "error", completedAt: now }).where(eq(toolCallsTable.status, "running"));
+    for (const status of ["thinking", "executing", "waiting"]) {
+      await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.status, status));
+    }
+    logger.info("reconcileStaleWork: cleared interrupted orchestration state");
+  } catch (err) {
+    logger.error({ err }, "reconcileStaleWork failed");
+  }
+}
+async function completeChat(model, system, user) {
+  const startedAt = /* @__PURE__ */ new Date();
+  let r;
+  try {
+    r = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+      method: "POST",
+      headers: openrouterHeaders(),
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: user }
+        ],
+        stream: false,
+        max_tokens: 800
+      })
+    });
+  } catch (err) {
+    traceLlmRun({ name: "completeChat", model, input: { system, user }, output: null, startedAt, error: String(err) });
+    throw err;
+  }
+  if (!r.ok) {
+    const errText = (await r.text()).slice(0, 200);
+    if (buddyConfigured()) {
+      try {
+        const out2 = await buddyComplete(
+          [
+            { role: "system", content: system },
+            { role: "user", content: user }
+          ],
+          800
+        );
+        traceLlmRun({ name: "completeChat", model: "buddy-fallback", input: { system, user }, output: out2, startedAt });
+        return out2;
+      } catch (e) {
+        logger.warn({ e }, "Buddy fallback failed after OpenRouter error");
+      }
+    }
+    traceLlmRun({ name: "completeChat", model, input: { system, user }, output: null, startedAt, error: `OpenRouter ${r.status}: ${errText}` });
+    throw new Error(`OpenRouter ${r.status}: ${errText}`);
+  }
+  const data = await r.json();
+  const out = data?.choices?.[0]?.message?.content?.trim() || "(no response)";
+  traceLlmRun({ name: "completeChat", model, input: { system, user }, output: out, startedAt });
+  return out;
+}
+async function completeChatTurn(model, messages, tools) {
+  const body = { model, messages, stream: false, max_tokens: 1024 };
+  if (tools.length) {
+    body["tools"] = tools;
+    body["tool_choice"] = "auto";
+  }
+  let r = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+    method: "POST",
+    headers: openrouterHeaders(),
+    body: JSON.stringify(body)
+  });
+  if (!r.ok && tools.length) {
+    delete body["tools"];
+    delete body["tool_choice"];
+    r = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+      method: "POST",
+      headers: openrouterHeaders(),
+      body: JSON.stringify(body)
+    });
+  }
+  if (!r.ok) {
+    const errText = (await r.text()).slice(0, 200);
+    if (buddyConfigured()) {
+      try {
+        const textMessages = messages.map((m) => ({
+          role: m.role,
+          content: typeof m.content === "string" ? m.content : ""
+        }));
+        const out = await buddyComplete(textMessages, 1024);
+        return { role: "assistant", content: out };
+      } catch (e) {
+        logger.warn({ e }, "Buddy fallback failed after OpenRouter error (tool turn)");
+      }
+    }
+    throw new Error(`OpenRouter ${r.status}: ${errText}`);
+  }
+  const data = await r.json();
+  const msg = data?.choices?.[0]?.message;
+  return {
+    role: "assistant",
+    content: msg?.content ?? null,
+    tool_calls: msg?.tool_calls
+  };
+}
+function summarizeArgs(args) {
+  return Object.entries(args).map(([k, v]) => `${k}=${JSON.stringify(v).slice(0, 60)}`).join(" ").slice(0, 160);
+}
+var URL_RE = /https?:\/\/[^\s"')<>]+/i;
+function extractUrl(text2) {
+  return text2.match(URL_RE)?.[0] ?? null;
+}
+function isBrowserAgent(agent) {
+  return agent.id === 3 || /crawler|claw-2/i.test(agent.name) || /browser|scrap|crawl|web/i.test(agent.role ?? "");
+}
+async function postMessage(opts) {
+  await db.insert(messagesTable).values({
+    channelId: opts.channelId,
+    agentId: opts.agent?.id ?? opts.agentId ?? null,
+    agentName: opts.agent?.name ?? opts.agentName ?? null,
+    agentColor: opts.agent?.color ?? opts.agentColor ?? null,
+    content: opts.content,
+    messageType: opts.messageType
+  });
+}
+async function executeAgentCommand(opts) {
+  const { commandId, agent, command, payload, channelId } = opts;
+  let taskId = null;
+  try {
+    await db.update(agentCommandsTable).set({ status: "running" }).where(eq(agentCommandsTable.id, commandId));
+    await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, agent.id));
+    const [task] = await db.insert(tasksTable).values({
+      title: command.slice(0, 140),
+      description: payload ?? null,
+      agentId: agent.id,
+      agentName: agent.name,
+      status: "running",
+      priority: "high",
+      progress: 10,
+      channelId
+    }).returning();
+    taskId = task?.id ?? null;
+    await db.insert(monologueLinesTable).values({
+      agentId: agent.id,
+      text: `Directive received: ${command}`,
+      type: "thought"
+    });
+    const ctx = { agentId: agent.id, agentName: agent.name, agentColor: agent.color, channelId };
+    const toolNames = getToolNamesForAgent(agent.id);
+    const tools = getOpenAiToolsForAgent(agent.id);
+    let priming = "";
+    const url2 = extractUrl(`${command} ${payload ?? ""}`);
+    if (url2 && isBrowserAgent(agent) && process.env["STEEL_API_KEY"]) {
+      const [tc] = await db.insert(toolCallsTable).values({ agentId: agent.id, toolName: "web_scrape", args: JSON.stringify({ url: url2 }), status: "running" }).returning();
+      try {
+        const scraped = (await steelScrape(url2)).slice(0, 6e3);
+        priming = scraped;
+        await db.update(toolCallsTable).set({ status: "success", result: scraped.slice(0, 4e3), completedAt: /* @__PURE__ */ new Date() }).where(eq(toolCallsTable.id, tc.id));
+        await postMessage({
+          channelId,
+          agent,
+          content: `web_scrape("${url2}")
+
+${scraped.slice(0, 1400)}${scraped.length > 1400 ? "\n\u2026" : ""}`,
+          messageType: "tool_output"
+        });
+        if (taskId) await db.update(tasksTable).set({ progress: 35 }).where(eq(tasksTable.id, taskId));
+      } catch (e) {
+        await db.update(toolCallsTable).set({ status: "error", result: String(e).slice(0, 1e3), completedAt: /* @__PURE__ */ new Date() }).where(eq(toolCallsTable.id, tc.id));
+      }
+    }
+    const model = resolveModel(agent.id, agent.model, void 0);
+    const persona = AGENT_PERSONAS[agent.id] ?? `You are ${agent.name}, an autonomous agent of the ABBY CLAW swarm. Execute directives precisely.`;
+    const toolGuide = toolNames.length ? `
+
+You are an autonomous tool-using agent. Call tools to gather real data and perform real work instead of guessing \u2014 chain multiple calls when needed, and avoid repeating a call that already returned (it wastes time and budget). When the directive is fully satisfied, stop calling tools and reply with your final concrete result (no preamble).${buildCapabilityCard(agent.id)}` : "";
+    const system = persona + toolGuide + ANTI_HALLUCINATION_DIRECTIVE;
+    const messages = [
+      { role: "system", content: system },
+      {
+        role: "user",
+        content: `Directive from ABBY (orchestrator): ${command}
+${payload ? `Payload: ${payload}
+` : ""}` + (priming ? `
+Live page content already retrieved for you:
+"""
+${priming}
+"""
+` : "") + `
+Execute the directive now. Use your tools for anything requiring real data or computation.`
+      }
+    ];
+    let finalText = "";
+    let steps = 0;
+    const callCache = /* @__PURE__ */ new Map();
+    while (steps < MAX_AGENT_STEPS) {
+      steps++;
+      const assistant = await completeChatTurn(model, messages, tools);
+      const calls = assistant.tool_calls ?? [];
+      if (calls.length === 0) {
+        finalText = (assistant.content ?? "").trim();
+        break;
+      }
+      messages.push({ role: "assistant", content: assistant.content ?? "", tool_calls: calls });
+      await db.update(agentsTable).set({ status: "executing" }).where(eq(agentsTable.id, agent.id));
+      for (const call of calls) {
+        const name = call.function?.name ?? "unknown";
+        let parsedArgs = {};
+        try {
+          parsedArgs = call.function?.arguments ? JSON.parse(call.function.arguments) : {};
+        } catch {
+          parsedArgs = {};
+        }
+        const [tc] = await db.insert(toolCallsTable).values({ agentId: agent.id, toolName: name, args: JSON.stringify(parsedArgs).slice(0, 2e3), status: "running" }).returning();
+        await db.insert(monologueLinesTable).values({
+          agentId: agent.id,
+          text: `${name}(${summarizeArgs(parsedArgs)})`,
+          type: "action"
+        });
+        let toolResult;
+        let ok = true;
+        const callKey = `${name}:${JSON.stringify(parsedArgs)}`;
+        if (callCache.has(callKey)) {
+          toolResult = `(deduplicated: you already called ${name} with these exact arguments earlier in this run. Reusing that result \u2014 do not repeat it. Use it, or call a different tool / different arguments.)
+
+${callCache.get(callKey)}`;
+        } else {
+          try {
+            toolResult = await runTool(name, parsedArgs, ctx);
+            if (toolResult.startsWith("error:")) ok = false;
+          } catch (e) {
+            ok = false;
+            toolResult = `error: ${String(e).slice(0, 300)}`;
+          }
+          if (ok) callCache.set(callKey, toolResult);
+        }
+        await db.update(toolCallsTable).set({ status: ok ? "success" : "error", result: toolResult.slice(0, 4e3), completedAt: /* @__PURE__ */ new Date() }).where(eq(toolCallsTable.id, tc.id));
+        await db.insert(monologueLinesTable).values({
+          agentId: agent.id,
+          text: ok ? `${name} \u2192 ${toolResult.slice(0, 200)}` : `${name} failed: ${toolResult.slice(0, 200)}`,
+          type: ok ? "result" : "system"
+        });
+        await postMessage({
+          channelId,
+          agent,
+          content: `${name}(${summarizeArgs(parsedArgs)})
+
+${toolResult.slice(0, 1400)}${toolResult.length > 1400 ? "\n\u2026" : ""}`,
+          messageType: "tool_output"
+        });
+        messages.push({ role: "tool", tool_call_id: call.id, name, content: toolResult.slice(0, 6e3) });
+      }
+      if (taskId) {
+        const progress = Math.min(90, 35 + steps * 12);
+        await db.update(tasksTable).set({ progress }).where(eq(tasksTable.id, taskId));
+      }
+      await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, agent.id));
+    }
+    if (!finalText) {
+      messages.push({
+        role: "user",
+        content: "Step budget reached. Stop using tools and give your final concrete result now based on what you have."
+      });
+      const wrap = await completeChatTurn(model, messages, []);
+      finalText = (wrap.content ?? "").trim();
+    }
+    if (!finalText) finalText = "(no result produced)";
+    await postMessage({ channelId, agent, content: finalText, messageType: "agent" });
+    await db.update(agentCommandsTable).set({ status: "done", result: finalText.slice(0, 4e3), completedAt: /* @__PURE__ */ new Date() }).where(eq(agentCommandsTable.id, commandId));
+    if (taskId) {
+      await db.update(tasksTable).set({ status: "completed", progress: 100, completedAt: /* @__PURE__ */ new Date() }).where(eq(tasksTable.id, taskId));
+    }
+    await db.insert(monologueLinesTable).values({
+      agentId: agent.id,
+      text: `Directive complete after ${steps} step${steps === 1 ? "" : "s"}. Result reported to ABBY.`,
+      type: "conclusion"
+    });
+    return finalText;
+  } catch (err) {
+    logger.error({ err, commandId, agentId: agent.id }, "executeAgentCommand failed");
+    await db.update(agentCommandsTable).set({ status: "failed", result: String(err).slice(0, 2e3), completedAt: /* @__PURE__ */ new Date() }).where(eq(agentCommandsTable.id, commandId)).catch(() => {
+    });
+    if (taskId) {
+      await db.update(tasksTable).set({ status: "failed", completedAt: /* @__PURE__ */ new Date() }).where(eq(tasksTable.id, taskId)).catch(() => {
+      });
+    }
+    await postMessage({
+      channelId,
+      agent,
+      content: `Execution failed: ${String(err).slice(0, 300)}`,
+      messageType: "system"
+    }).catch(() => {
+    });
+    return "";
+  } finally {
+    await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.id, agent.id)).catch(() => {
+    });
+  }
+}
+function parseDirectives(raw, claws) {
+  const ids = new Set(claws.map((c) => c.id));
+  const start = raw.indexOf("[");
+  const end = raw.lastIndexOf("]");
+  if (start !== -1 && end > start) {
+    try {
+      const parsed = JSON.parse(raw.slice(start, end + 1));
+      const out = [];
+      for (const item of parsed) {
+        if (item && typeof item === "object") {
+          const rec = item;
+          const agentId = Number(rec["agentId"]);
+          const directive = String(rec["directive"] ?? "").trim();
+          if (ids.has(agentId) && directive) out.push({ agentId, directive });
+        }
+      }
+      if (out.length) return out.slice(0, 5);
+    } catch {
+    }
+  }
+  return [];
+}
+async function dispatchDirectives(directives, claws, channelId, priority, abby) {
+  if (isSwarmPaused()) {
+    await postMessage({
+      channelId,
+      agentId: ABBY_ID2,
+      agentName: "ABBY",
+      agentColor: abby?.color ?? ABBY_COLOR,
+      content: "SWARM is paused. Directives were not dispatched.",
+      messageType: "system"
+    });
+    return [];
+  }
+  const runs = directives.map(async (d) => {
+    const agent = claws.find((c) => c.id === d.agentId);
+    if (!agent) return null;
+    const [cmd] = await db.insert(agentCommandsTable).values({
+      fromAgentId: ABBY_ID2,
+      toAgentId: agent.id,
+      command: d.directive,
+      payload: null,
+      priority,
+      status: "queued"
+    }).returning();
+    if (!cmd) return null;
+    const result = await executeAgentCommand({
+      commandId: cmd.id,
+      agent,
+      command: d.directive,
+      payload: null,
+      channelId
+    });
+    return { name: agent.name, result };
+  });
+  const settled = await Promise.all(runs);
+  return settled.filter((r) => r !== null);
+}
+async function orchestrateGoal(opts) {
+  const { goal, channelId, priority } = opts;
+  void sendInngestEvent("swarm/goal.received", { goal, channelId, priority });
+  try {
+    const agents = await db.select().from(agentsTable);
+    const abby = agents.find((a) => a.id === ABBY_ID2) ?? null;
+    const claws = agents.filter((a) => a.id !== ABBY_ID2);
+    if (isSwarmPaused()) {
+      await postMessage({
+        channelId,
+        agentId: ABBY_ID2,
+        agentName: "ABBY",
+        agentColor: abby?.color ?? ABBY_COLOR,
+        content: "SWARM is paused. Resume the swarm to execute directives.",
+        messageType: "system"
+      });
+      return;
+    }
+    await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, ABBY_ID2));
+    const roster = claws.map((c) => `${c.id}=${c.name} (${c.role ?? "agent"})`).join(", ");
+    const planSystem = AGENT_PERSONAS[ABBY_ID2] ?? "You are ABBY, the swarm orchestrator.";
+    const planUser = `Operator goal: "${goal}"
+
+Available CLAWs you command: ${roster}.
+
+Decompose this goal into concrete, actionable directives \u2014 ONE per CLAW that is genuinely relevant (skip CLAWs that add nothing). For web/competitor/scraping work, route to the browser CLAW and INCLUDE a concrete https:// URL inside the directive so it can actually fetch live data.
+
+Respond with ONLY a JSON array (no prose, no code fences) of objects shaped: {"agentId": <number>, "directive": "<single actionable instruction>"}. Maximum 5 directives.`;
+    const model = resolveModel(ABBY_ID2, abby?.model, void 0);
+    const planRaw = await completeChat(model, planSystem, planUser);
+    let directives = parseDirectives(planRaw, claws);
+    if (directives.length === 0) {
+      const url2 = extractUrl(goal);
+      const fallback = (url2 ? claws.find((c) => isBrowserAgent(c)) : null) ?? claws.find((c) => c.id === 2) ?? claws[0];
+      if (fallback) directives = [{ agentId: fallback.id, directive: goal }];
+    }
+    await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.id, ABBY_ID2));
+    await postMessage({
+      channelId,
+      agentId: ABBY_ID2,
+      agentName: "ABBY",
+      agentColor: abby?.color ?? ABBY_COLOR,
+      content: directives.length ? `Orchestrating: "${goal}"
+
+` + directives.map((d) => {
+        const c = claws.find((x) => x.id === d.agentId);
+        return `\u2192 ${c?.name ?? `agent#${d.agentId}`}: ${d.directive}`;
+      }).join("\n") : `No actionable directives could be derived from: "${goal}"`,
+      messageType: "agent"
+    });
+    const results = await dispatchDirectives(
+      directives,
+      claws,
+      channelId,
+      priority,
+      abby
+    );
+    if (results.length && !isSwarmPaused()) {
+      await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, ABBY_ID2));
+      const reviewUser = `Operator goal: "${goal}"
+
+Round 1 CLAW results:
+${results.map((r) => `- ${r.name}: ${r.result.slice(0, 500)}`).join("\n")}
+
+Is the goal now FULLY satisfied? If yes, respond with exactly: []
+If not, respond with ONLY a JSON array (no prose) of up to 2 follow-up directives to finish it, shaped {"agentId": <number>, "directive": "<instruction>"}. Available CLAWs: ${roster}.`;
+      let followups = [];
+      try {
+        const reviewRaw = await completeChat(model, planSystem, reviewUser);
+        followups = parseDirectives(reviewRaw, claws).slice(0, 2);
+      } catch (e) {
+        logger.error({ e }, "coordinator review failed");
+      }
+      await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.id, ABBY_ID2));
+      if (followups.length && !isSwarmPaused()) {
+        await postMessage({
+          channelId,
+          agentId: ABBY_ID2,
+          agentName: "ABBY",
+          agentColor: abby?.color ?? ABBY_COLOR,
+          content: `Coordinator review: goal not yet complete. Follow-up round:
+
+` + followups.map((d) => {
+            const c = claws.find((x) => x.id === d.agentId);
+            return `\u2192 ${c?.name ?? `agent#${d.agentId}`}: ${d.directive}`;
+          }).join("\n"),
+          messageType: "agent"
+        });
+        const more = await dispatchDirectives(followups, claws, channelId, priority, abby);
+        results.push(...more);
+      }
+    }
+    if (results.length) {
+      await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, ABBY_ID2));
+      const synthSystem = (AGENT_PERSONAS[ABBY_ID2] ?? "You are ABBY, the swarm orchestrator.") + "\n\nYou are now writing the FINAL ANSWER to the operator's goal, using ONLY the CLAW results below. Answer the goal directly and completely, formatted cleanly (markdown \u2014 lists, tables, code blocks as useful). Do NOT describe orchestration, rounds, commits, or internal status \u2014 just deliver the result. If the results don't fully satisfy the goal, give what was found and state plainly what is missing." + ANTI_HALLUCINATION_DIRECTIVE;
+      const synthUser = `Operator goal: "${goal}"
+
+CLAW results:
+${results.map((r) => `### ${r.name}
+${r.result.slice(0, 1800)}`).join("\n\n")}
+
+Write the final answer for the operator now.`;
+      let finalAnswer = "";
+      try {
+        finalAnswer = (await completeChat(model, synthSystem, synthUser)).trim();
+      } catch (e) {
+        logger.error({ e }, "final synthesis failed");
+      }
+      await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.id, ABBY_ID2));
+      if (!finalAnswer) {
+        finalAnswer = results.map((r) => `**${r.name}:**
+${r.result.slice(0, 1500)}`).join("\n\n");
+      }
+      await postMessage({
+        channelId,
+        agentId: ABBY_ID2,
+        agentName: "ABBY",
+        agentColor: abby?.color ?? ABBY_COLOR,
+        content: finalAnswer,
+        messageType: "agent"
+      });
+    }
+    void sendInngestEvent("swarm/goal.completed", {
+      goal,
+      channelId,
+      clawReports: results.length,
+      results: results.map((r) => ({ name: r.name, result: r.result.slice(0, 500) }))
+    });
+  } catch (err) {
+    logger.error({ err }, "orchestrateGoal failed");
+    void sendInngestEvent("swarm/goal.failed", { goal, channelId, error: String(err).slice(0, 300) });
+    await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.id, ABBY_ID2)).catch(() => {
+    });
+    await postMessage({
+      channelId,
+      agentId: ABBY_ID2,
+      agentName: "ABBY",
+      agentColor: ABBY_COLOR,
+      content: `Orchestration error: ${String(err).slice(0, 300)}`,
+      messageType: "system"
+    }).catch(() => {
+    });
+  }
+}
 
 // src/lib/scheduler.ts
 init_src();
 init_src();
 init_drizzle_orm();
-init_logger2();
-init_orchestrator();
-init_swarm();
 var ABBY_ID3 = 1;
 var DEFAULT_CHANNEL_ID = 1;
 var SCHEDULER_INTERVAL_MS = 3e4;
@@ -88399,9 +88302,6 @@ router9.post("/steel/pdf", async (req, res) => {
 });
 var steel_default = router9;
 
-// src/routes/index.ts
-init_ai();
-
 // src/routes/neurobuddy.ts
 var import_express10 = __toESM(require_express2(), 1);
 init_src();
@@ -88538,8 +88438,6 @@ var import_express11 = __toESM(require_express2(), 1);
 init_src();
 init_src();
 init_drizzle_orm();
-init_integrations();
-init_ai();
 var router11 = (0, import_express11.Router)();
 var OPENROUTER_BASE2 = llmBaseUrl();
 var AGENT_NAME_MAP = {
@@ -88783,7 +88681,6 @@ var external_default = router11;
 
 // src/routes/integrations.ts
 var import_express12 = __toESM(require_express2(), 1);
-init_integrations();
 var router12 = (0, import_express12.Router)();
 router12.get("/integrations", (_req, res) => {
   const items = integrationStatus();
@@ -88799,8 +88696,6 @@ var integrations_default = router12;
 var import_express13 = __toESM(require_express2(), 1);
 init_src();
 init_src();
-init_tools();
-init_integrations();
 var router13 = (0, import_express13.Router)();
 var REQUIRED_TOOLS = [
   "web_search",
@@ -89013,7 +88908,6 @@ var auth_default = router14;
 var import_express15 = __toESM(require_express2(), 1);
 init_src();
 init_drizzle_orm();
-init_vault2();
 var router15 = (0, import_express15.Router)();
 function fmt2(row) {
   return {
@@ -89078,7 +88972,6 @@ var vault_default = router15;
 
 // src/routes/social.ts
 var import_express16 = __toESM(require_express2(), 1);
-init_connectors();
 var router16 = (0, import_express16.Router)();
 router16.get("/social/platforms", async (_req, res) => {
   const platforms = Object.values(PLATFORMS);
@@ -89117,7 +89010,6 @@ router17.use(requireOperator, social_default);
 var routes_default = router17;
 
 // src/app.ts
-init_logger2();
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
@@ -89170,12 +89062,8 @@ if (hasFrontend) {
 }
 var app_default = app;
 
-// src/index.ts
-init_logger2();
-
 // src/migrate.ts
 init_src();
-init_logger2();
 var SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS "agents" (
   "id" serial PRIMARY KEY NOT NULL,
@@ -89353,8 +89241,6 @@ async function runMigrations() {
 
 // src/lib/vaultEnv.ts
 init_src();
-init_vault2();
-init_logger2();
 async function loadVaultIntoEnv() {
   if (!process.env["SESSION_SECRET"]) {
     logger.warn("Vault\u2192env skipped: SESSION_SECRET is not set");
@@ -89391,7 +89277,6 @@ async function loadVaultIntoEnv() {
 }
 
 // src/lib/keepAlive.ts
-init_logger2();
 var DEFAULT_INTERVAL_MS = 10 * 60 * 1e3;
 function resolveBaseUrl() {
   const explicit = process.env["KEEP_ALIVE_URL"];
@@ -89465,8 +89350,6 @@ function startKeepAlive() {
 }
 
 // src/index.ts
-init_orchestrator();
-init_integrations();
 var rawPort = process.env["PORT"];
 if (!rawPort) {
   throw new Error(

@@ -4,6 +4,7 @@ import { agentsTable, messagesTable } from "@workspace/db";
 import { eq, and, inArray, desc } from "drizzle-orm";
 import { llmBaseUrl, heliconeHeaders } from "../lib/integrations";
 import { buildCapabilityCard } from "../tools";
+import { orchestrateGoal } from "../orchestrator";
 
 const router = Router();
 
@@ -273,77 +274,74 @@ router.post("/ai/chat", async (req, res) => {
   // personas stay conversational. Best-effort — any failure falls through to the
   // normal streaming completion below, so chat never hard-breaks.
   if (resolvedAgentId === ABBY_ID) {
-    const dispatchTool = {
-      type: "function",
-      function: {
-        name: "dispatch_to_swarm",
-        description:
-          "Dispatch an actionable goal to the CLAW swarm to execute FOR REAL with tools (web search/browsing, code execution, HTTP/APIs, memory). Use this WHENEVER the operator asks you to DO something needing real action or live data — find/search repositories, scrape a site, build or run code, research a topic, call an API. Do NOT use it for greetings, thanks, or questions you can answer directly from your own knowledge.",
-        parameters: {
-          type: "object",
-          properties: {
-            goal: { type: "string", description: "The self-contained goal for the swarm to execute." },
-            ack: { type: "string", description: "A short first-person line telling the operator you are dispatching (what, and which CLAWs)." },
-          },
-          required: ["goal", "ack"],
-        },
-      },
-    };
+    // Decide deterministically: DISPATCH the swarm, or just chat. We must not rely
+    // on the model spontaneously calling a tool during a conversational turn — it
+    // frequently NARRATES "dispatching…" without acting, leaving every agent idle.
+    // So we ask for a strict JSON decision and then ACT on it. Any failure falls
+    // through to the normal streaming chat below.
     try {
-      const routeMessages: ORMessage[] = [
-        {
-          role: "system",
-          content:
-            persona +
-            CHAT_MODE_DIRECTIVE +
-            buildCapabilityCard(ABBY_ID) +
-            "\n\nDISPATCH: When the operator wants real action or live data, call dispatch_to_swarm with a clear self-contained goal and a short ack. For small talk or questions you can answer directly, just reply normally — do not call the tool." +
-            ANTI_HALLUCINATION_DIRECTIVE,
-        },
-        ...history,
-      ];
+      const decisionSystem =
+        "You are the router for ABBY, orchestrator of an autonomous agent swarm that can search the web, browse sites, scrape pages, run code, call APIs, and use long-term memory. " +
+        "Classify the operator's latest message: is it an ACTIONABLE TASK that needs the swarm (anything requiring live/current data, web search, browsing, scraping, finding/pricing/looking things up online, code execution, multi-step research) — or just CONVERSATION you can answer yourself (greetings, opinions, explanations, questions about you/the system)? " +
+        "Respond with ONLY minified JSON, no markdown and no prose: " +
+        '{"dispatch": true|false, "goal": "<self-contained instruction for the swarm; required if dispatch=true>", "reply": "<your conversational answer; required if dispatch=false>"}. ' +
+        "If the request needs real or current information you don't already have, prefer dispatch=true.";
       const decRes = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
         method: "POST",
         headers: openrouterHeaders(),
-        body: JSON.stringify({ model, messages: routeMessages, stream: false, max_tokens: 700, tools: [dispatchTool], tool_choice: "auto" }),
+        body: JSON.stringify({
+          model,
+          messages: [{ role: "system", content: decisionSystem }, ...history],
+          stream: false,
+          max_tokens: 800,
+          response_format: { type: "json_object" },
+        }),
       });
       if (decRes.ok) {
-        const data = (await decRes.json()) as {
-          choices?: Array<{ message?: { content?: string | null; tool_calls?: Array<{ function?: { name?: string; arguments?: string } }> } }>;
-        };
-        const msg = data.choices?.[0]?.message;
-        const call = msg?.tool_calls?.find((c) => c.function?.name === "dispatch_to_swarm");
-        if (call) {
-          let goal = "";
-          let ack = "";
-          try {
-            const a = JSON.parse(call.function?.arguments ?? "{}");
-            goal = String(a.goal ?? "").trim();
-            ack = String(a.ack ?? "").trim();
-          } catch { /* malformed args → handled below */ }
-          if (goal) {
-            const ackText = ack || `Dispatching the swarm: ${goal}`;
-            sendEvent({ token: ackText });
-            await finishWith(ackText, model, "abby-router");
-            // Fire the real orchestrator. Dynamic import avoids a static import
-            // cycle (orchestrator.ts imports from this module).
-            void import("../orchestrator").then((m) =>
-              m.orchestrateGoal({ goal, channelId, priority: "high" }).catch((e) => req.log.error({ e }, "orchestrateGoal (from chat) failed")),
-            );
-            return;
-          }
+        const data = (await decRes.json()) as { choices?: Array<{ message?: { content?: string | null } }> };
+        const raw = (data.choices?.[0]?.message?.content ?? "").trim();
+        let decision: { dispatch?: boolean; goal?: string; reply?: string } = {};
+        try {
+          const json = raw.startsWith("{") ? raw : raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1);
+          decision = JSON.parse(json);
+        } catch { /* unparseable → fall through to plain chat */ }
+
+        if (decision.dispatch && decision.goal && decision.goal.trim()) {
+          const goal = decision.goal.trim();
+          const ackText = `**On it — dispatching the swarm.**\n\nGoal: ${goal}\n\nThe agents are starting now; their work and results will stream into this channel.`;
+          sendEvent({ token: ackText });
+          await finishWith(ackText, model, "abby-router");
+          // Run the real orchestrator. Static import: the orchestrator↔ai cycle is
+          // function-level, so this is safe and bundles correctly (a dynamic import
+          // was unnecessary and harder to verify). Failures are surfaced to the
+          // channel so a dispatch can never fail silently.
+          orchestrateGoal({ goal, channelId, priority: "high" }).catch(async (e) => {
+            req.log.error({ e }, "orchestrateGoal (from chat) failed");
+            await db
+              .insert(messagesTable)
+              .values({
+                channelId,
+                agentId: agent.id,
+                agentName: agent.name,
+                agentColor: agent.color,
+                content: `Dispatch failed to start: ${String(e).slice(0, 300)}`,
+                messageType: "system",
+              })
+              .catch(() => {});
+          });
+          return;
         }
-        // ABBY chose to answer directly — return that reply (no second LLM call).
-        const direct = (msg?.content ?? "").trim();
-        if (direct) {
-          sendEvent({ token: direct });
-          await finishWith(direct, model, "abby-router");
+
+        const reply = (decision.reply ?? "").trim();
+        if (reply) {
+          sendEvent({ token: reply });
+          await finishWith(reply, model, "abby-router");
           return;
         }
       }
-      // Not ok / empty → fall through to the normal streaming path below.
+      // Not ok / empty / unparseable → fall through to the normal streaming path.
     } catch (e) {
-      req.log.warn({ e }, "ABBY routing turn failed; falling back to plain chat");
+      req.log.warn({ e }, "ABBY routing decision failed; falling back to plain chat");
     }
   }
 
