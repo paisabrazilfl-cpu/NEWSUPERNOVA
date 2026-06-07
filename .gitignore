@@ -54,3 +54,6 @@ Thumbs.db
 .local/
 .replit
 attached_assets/
+
+# self-test artifacts (screenshots, reports)
+.self-test/

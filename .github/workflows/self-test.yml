@@ -1,0 +1,86 @@
+name: Self-Test (build · tests · endpoints · Playwright UI)
+
+# Runs the automatable self-test phases: typecheck, build, vitest, then boots the
+# real server against a Postgres service and runs endpoint + Playwright UI smoke.
+# Evidence is uploaded as an artifact. A red self-test is a real signal.
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'artifacts/api-server/dist/**'
+      - 'artifacts/openclaw/dist/**'
+      - '.agents/**'
+      - '**.md'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  self-test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: openclaw
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/openclaw
+      NODE_ENV: production
+      PORT: "3001"
+      BASE_PATH: /
+      BASE_URL: http://localhost:3001
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '10'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Install Playwright Chromium
+        run: pnpm --filter @workspace/scripts exec playwright install --with-deps chromium
+
+      - name: Build API + frontend
+        run: |
+          pnpm --filter @workspace/api-server run build
+          pnpm --filter @workspace/openclaw run build
+
+      - name: Boot server
+        run: |
+          node artifacts/api-server/dist/index.mjs > server.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:3001/api/healthz > /dev/null; then echo "server up"; break; fi
+            sleep 1
+          done
+
+      - name: Run self-test harness
+        run: pnpm --filter @workspace/scripts run self-test
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: self-test-evidence
+          path: |
+            .self-test/
+            server.log
+          if-no-files-found: ignore

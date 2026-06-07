@@ -97,3 +97,19 @@ declare them "created and verified", plus a fake "92.3% satisfied" matrix.
 - **Rule sets:** docs/anti-hallucination/ (index, execution rules, runtime/kernel
   rules, verification ledger + verdict format, pre-flight card).
 - **Governance:** CLAUDE.md (dev agent) + .agents/memory/anti-hallucination.md.
+
+## 2026-06-07 — Self-test harness + runtime self-check (+ real Playwright)
+
+Implements the automatable subset of the self-test phases, for both layers.
+
+- **Dev/CI harness** (`scripts/src/self-test.ts`): typecheck → api build → vitest
+  → live endpoint checks → **Playwright UI smoke** (`ui-smoke.ts`, headless
+  Chromium walks all 6 routes) → Verdict + Execution Trace (`.self-test/report.json`).
+  CI workflow `.github/workflows/self-test.yml` (Postgres service, boots server,
+  uploads evidence). Verified locally: STATUS PASS, 10/10 gates, UI 6/6.
+- **Runtime self-check** (`GET /api/self-check`): proves only what the server can
+  observe in-process — tool-registry integrity (13/13 wired), agent roster (6/6),
+  SSRF guard (5/5 blocked), integrations status, DB reachability. Explicitly does
+  NOT claim repo/build/UI (the agent sandbox can't see those). Exported `ssrfGuard`.
+- First real browser validation in the project — closes the long-standing
+  "browser: NOT RUN" gap.

@@ -20501,27 +20501,27 @@ var require_router = __commonJS({
     var slice = Array.prototype.slice;
     var flatten = Array.prototype.flat;
     var methods = METHODS.map((method) => method.toLowerCase());
-    module.exports = Router17;
+    module.exports = Router18;
     module.exports.Route = Route;
-    function Router17(options) {
-      if (!(this instanceof Router17)) {
-        return new Router17(options);
+    function Router18(options) {
+      if (!(this instanceof Router18)) {
+        return new Router18(options);
       }
       const opts = options || {};
-      function router17(req, res, next) {
-        router17.handle(req, res, next);
+      function router18(req, res, next) {
+        router18.handle(req, res, next);
       }
-      Object.setPrototypeOf(router17, this);
-      router17.caseSensitive = opts.caseSensitive;
-      router17.mergeParams = opts.mergeParams;
-      router17.params = {};
-      router17.strict = opts.strict;
-      router17.stack = [];
-      return router17;
+      Object.setPrototypeOf(router18, this);
+      router18.caseSensitive = opts.caseSensitive;
+      router18.mergeParams = opts.mergeParams;
+      router18.params = {};
+      router18.strict = opts.strict;
+      router18.stack = [];
+      return router18;
     }
-    Router17.prototype = function() {
+    Router18.prototype = function() {
     };
-    Router17.prototype.param = function param(name, fn) {
+    Router18.prototype.param = function param(name, fn) {
       if (!name) {
         throw new TypeError("argument name is required");
       }
@@ -20541,7 +20541,7 @@ var require_router = __commonJS({
       params.push(fn);
       return this;
     };
-    Router17.prototype.handle = function handle(req, res, callback) {
+    Router18.prototype.handle = function handle(req, res, callback) {
       if (!callback) {
         throw new TypeError("argument callback is required");
       }
@@ -20668,7 +20668,7 @@ var require_router = __commonJS({
         }
       }
     };
-    Router17.prototype.use = function use(handler) {
+    Router18.prototype.use = function use(handler) {
       let offset = 0;
       let path2 = "/";
       if (typeof handler !== "function") {
@@ -20701,7 +20701,7 @@ var require_router = __commonJS({
       }
       return this;
     };
-    Router17.prototype.route = function route(path2) {
+    Router18.prototype.route = function route(path2) {
       const route2 = new Route(path2);
       const layer = new Layer(path2, {
         sensitive: this.caseSensitive,
@@ -20716,7 +20716,7 @@ var require_router = __commonJS({
       return route2;
     };
     methods.concat("all").forEach(function(method) {
-      Router17.prototype[method] = function(path2) {
+      Router18.prototype[method] = function(path2) {
         const route = this.route(path2);
         route[method].apply(route, slice.call(arguments, 1));
         return this;
@@ -20899,13 +20899,13 @@ var require_application = __commonJS({
     var compileTrust = require_utils3().compileTrust;
     var resolve = __require("node:path").resolve;
     var once = require_once();
-    var Router17 = require_router();
+    var Router18 = require_router();
     var slice = Array.prototype.slice;
     var flatten = Array.prototype.flat;
     var app2 = exports = module.exports = {};
     var trustProxyDefaultSymbol = "@@symbol:trust_proxy_default";
     app2.init = function init() {
-      var router17 = null;
+      var router18 = null;
       this.cache = /* @__PURE__ */ Object.create(null);
       this.engines = /* @__PURE__ */ Object.create(null);
       this.settings = /* @__PURE__ */ Object.create(null);
@@ -20914,13 +20914,13 @@ var require_application = __commonJS({
         configurable: true,
         enumerable: true,
         get: function getrouter() {
-          if (router17 === null) {
-            router17 = new Router17({
+          if (router18 === null) {
+            router18 = new Router18({
               caseSensitive: this.enabled("case sensitive routing"),
               strict: this.enabled("strict routing")
             });
           }
-          return router17;
+          return router18;
         }
       });
     };
@@ -20991,15 +20991,15 @@ var require_application = __commonJS({
       if (fns.length === 0) {
         throw new TypeError("app.use() requires a middleware function");
       }
-      var router17 = this.router;
+      var router18 = this.router;
       fns.forEach(function(fn2) {
         if (!fn2 || !fn2.handle || !fn2.set) {
-          return router17.use(path2, fn2);
+          return router18.use(path2, fn2);
         }
         debug(".use app under %s", path2);
         fn2.mountpath = path2;
         fn2.parent = this;
-        router17.use(path2, function mounted_app(req, res, next) {
+        router18.use(path2, function mounted_app(req, res, next) {
           var orig = req.app;
           fn2.handle(req, res, function(err) {
             Object.setPrototypeOf(req, orig.request);
@@ -23572,7 +23572,7 @@ var require_express = __commonJS({
     var EventEmitter = __require("node:events").EventEmitter;
     var mixin = require_merge_descriptors();
     var proto = require_application();
-    var Router17 = require_router();
+    var Router18 = require_router();
     var req = require_request();
     var res = require_response();
     exports = module.exports = createApplication;
@@ -23594,8 +23594,8 @@ var require_express = __commonJS({
     exports.application = proto;
     exports.request = req;
     exports.response = res;
-    exports.Route = Router17.Route;
-    exports.Router = Router17;
+    exports.Route = Router18.Route;
+    exports.Router = Router18;
     exports.json = bodyParser.json;
     exports.raw = bodyParser.raw;
     exports.static = require_serve_static();
@@ -54238,13 +54238,13 @@ var init_src = __esm({
 });
 
 // src/app.ts
-var import_express17 = __toESM(require_express2(), 1);
+var import_express18 = __toESM(require_express2(), 1);
 var import_cors = __toESM(require_lib3(), 1);
 var import_cookie_parser = __toESM(require_cookie_parser(), 1);
 var import_pino_http = __toESM(require_logger(), 1);
 
 // src/routes/index.ts
-var import_express16 = __toESM(require_express2(), 1);
+var import_express17 = __toESM(require_express2(), 1);
 
 // src/routes/health.ts
 var import_express = __toESM(require_express2(), 1);
@@ -61672,8 +61672,90 @@ router12.get("/integrations", (_req, res) => {
 });
 var integrations_default = router12;
 
-// src/routes/auth.ts
+// src/routes/selfCheck.ts
 var import_express13 = __toESM(require_express2(), 1);
+init_src();
+init_src();
+var router13 = (0, import_express13.Router)();
+var REQUIRED_TOOLS = [
+  "web_search",
+  "web_scrape",
+  "web_screenshot",
+  "http_request",
+  "code_exec",
+  "cloud_code_exec",
+  "memory_write",
+  "memory_search",
+  "social_api",
+  "social_accounts",
+  "calculator",
+  "send_message",
+  "vault_list"
+];
+var REQUIRED_AGENTS = [1, 2, 3, 4, 5, 6];
+router13.get("/self-check", async (_req, res) => {
+  const checks = [];
+  const assigned = /* @__PURE__ */ new Set();
+  for (const list of Object.values(AGENT_TOOLS)) for (const t of list) assigned.add(t);
+  const toolMatrix = REQUIRED_TOOLS.map((name) => {
+    const def = TOOL_REGISTRY[name];
+    const schema = !!def && typeof def.parameters === "object";
+    const handler = !!def && typeof def.run === "function";
+    const inRouter = !!def;
+    const agent = assigned.has(name);
+    return { tool: name, exists: !!def, schema, handler, router: inRouter, agent, ok: !!def && schema && handler && agent };
+  });
+  checks.push({
+    name: "tool_registry_integrity",
+    ok: toolMatrix.every((t) => t.ok),
+    detail: `${toolMatrix.filter((t) => t.ok).length}/${toolMatrix.length} required tools fully wired (schema+handler+router+agent)`,
+    matrix: toolMatrix
+  });
+  let presentIds = [];
+  try {
+    const rows = await db.select({ id: agentsTable.id }).from(agentsTable);
+    presentIds = rows.map((r) => r.id);
+  } catch {
+  }
+  checks.push({
+    name: "agent_roster",
+    ok: REQUIRED_AGENTS.every((id) => presentIds.includes(id)),
+    detail: `${REQUIRED_AGENTS.filter((id) => presentIds.includes(id)).length}/${REQUIRED_AGENTS.length} required agents seeded`
+  });
+  const targets = ["http://127.0.0.1", "http://169.254.169.254", "http://10.0.0.1", "http://192.168.0.1", "http://0.0.0.0"];
+  const ssrf = await Promise.all(targets.map(async (url2) => ({ url: url2, blocked: await ssrfGuard(url2) !== null })));
+  checks.push({
+    name: "ssrf_guard",
+    ok: ssrf.every((s) => s.blocked),
+    detail: `${ssrf.filter((s) => s.blocked).length}/${ssrf.length} internal targets blocked`,
+    targets: ssrf
+  });
+  const integ = integrationStatus();
+  checks.push({
+    name: "integrations",
+    ok: true,
+    detail: `${integ.filter((i) => i.configured).length}/${integ.length} configured`,
+    integrations: integ.map((i) => ({ key: i.key, configured: i.configured }))
+  });
+  let dbOk = false;
+  try {
+    await db.select({ id: agentsTable.id }).from(agentsTable).limit(1);
+    dbOk = true;
+  } catch {
+  }
+  checks.push({ name: "database", ok: dbOk, detail: dbOk ? "reachable" : "unreachable" });
+  const verdict = checks.every((c) => c.ok) ? "PASS" : "PARTIAL";
+  res.json({
+    verdict,
+    generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+    scope: "Runtime self-check \u2014 observes only what the server can prove in-process. Does NOT inspect the repo, build, or UI (the agent sandbox cannot see those). For build/tests/UI evidence use the dev self-test harness.",
+    checks
+  });
+});
+var selfCheck_default = router13;
+
+// src/routes/auth.ts
+var import_express14 = __toESM(require_express2(), 1);
 
 // src/lib/auth.ts
 import {
@@ -61780,8 +61862,8 @@ function requireOperator(req, res, next) {
 }
 
 // src/routes/auth.ts
-var router13 = (0, import_express13.Router)();
-router13.post("/auth/login", (req, res) => {
+var router14 = (0, import_express14.Router)();
+router14.post("/auth/login", (req, res) => {
   const password = req.body?.password;
   if (!verifyPassword(password)) {
     res.status(401).json({ error: "Invalid operator password" });
@@ -61791,22 +61873,22 @@ router13.post("/auth/login", (req, res) => {
   res.cookie(SESSION_COOKIE, token, sessionCookieOptions());
   res.status(200).json({ authenticated: true });
 });
-router13.post("/auth/logout", (_req, res) => {
+router14.post("/auth/logout", (_req, res) => {
   const opts = sessionCookieOptions();
   res.clearCookie(SESSION_COOKIE, { ...opts, maxAge: void 0 });
   res.status(200).json({ authenticated: false });
 });
-router13.get("/auth/me", (req, res) => {
+router14.get("/auth/me", (req, res) => {
   const token = req.cookies?.[SESSION_COOKIE];
   res.status(200).json({ authenticated: verifySessionToken(token) });
 });
-var auth_default = router13;
+var auth_default = router14;
 
 // src/routes/vault.ts
-var import_express14 = __toESM(require_express2(), 1);
+var import_express15 = __toESM(require_express2(), 1);
 init_src();
 init_drizzle_orm();
-var router14 = (0, import_express14.Router)();
+var router15 = (0, import_express15.Router)();
 function fmt2(row) {
   return {
     id: row.id,
@@ -61816,11 +61898,11 @@ function fmt2(row) {
     updatedAt: row.updatedAt.toISOString()
   };
 }
-router14.get("/vault", async (_req, res) => {
+router15.get("/vault", async (_req, res) => {
   const rows = await db.select().from(vaultSecretsTable).orderBy(desc(vaultSecretsTable.updatedAt));
   res.json(rows.map(fmt2));
 });
-router14.put("/vault", async (req, res) => {
+router15.put("/vault", async (req, res) => {
   const parsed = setVaultSecretSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid secret data" });
@@ -61851,7 +61933,7 @@ router14.put("/vault", async (req, res) => {
     res.status(500).json({ error: "Failed to store secret" });
   }
 });
-router14.delete("/vault/:name", async (req, res) => {
+router15.delete("/vault/:name", async (req, res) => {
   const name = req.params.name;
   try {
     const [row] = await db.delete(vaultSecretsTable).where(eq(vaultSecretsTable.name, name)).returning();
@@ -61865,12 +61947,12 @@ router14.delete("/vault/:name", async (req, res) => {
     res.status(500).json({ error: "Failed to delete secret" });
   }
 });
-var vault_default = router14;
+var vault_default = router15;
 
 // src/routes/social.ts
-var import_express15 = __toESM(require_express2(), 1);
-var router15 = (0, import_express15.Router)();
-router15.get("/social/platforms", async (_req, res) => {
+var import_express16 = __toESM(require_express2(), 1);
+var router16 = (0, import_express16.Router)();
+router16.get("/social/platforms", async (_req, res) => {
   const platforms = Object.values(PLATFORMS);
   const rows = await Promise.all(
     platforms.map(async (p) => ({
@@ -61884,32 +61966,33 @@ router15.get("/social/platforms", async (_req, res) => {
   );
   res.json(rows);
 });
-var social_default = router15;
+var social_default = router16;
 
 // src/routes/index.ts
-var router16 = (0, import_express16.Router)();
-router16.use(health_default);
-router16.use("/agents", agents_default);
-router16.use("/channels", channels_default);
-router16.use("/tasks", tasks_default);
-router16.use(telemetry_default);
-router16.use("/swarm", swarm_default);
-router16.use(commands_default);
-router16.use(steel_default);
-router16.use(ai_default);
-router16.use(neurobuddy_default);
-router16.use(external_default);
-router16.use(integrations_default);
-router16.use(auth_default);
-router16.use(requireOperator, vault_default);
-router16.use(requireOperator, social_default);
-var routes_default = router16;
+var router17 = (0, import_express17.Router)();
+router17.use(health_default);
+router17.use("/agents", agents_default);
+router17.use("/channels", channels_default);
+router17.use("/tasks", tasks_default);
+router17.use(telemetry_default);
+router17.use("/swarm", swarm_default);
+router17.use(commands_default);
+router17.use(steel_default);
+router17.use(ai_default);
+router17.use(neurobuddy_default);
+router17.use(external_default);
+router17.use(integrations_default);
+router17.use(selfCheck_default);
+router17.use(auth_default);
+router17.use(requireOperator, vault_default);
+router17.use(requireOperator, social_default);
+var routes_default = router17;
 
 // src/app.ts
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
-var app = (0, import_express17.default)();
+var app = (0, import_express18.default)();
 app.use(
   (0, import_pino_http.default)({
     logger,
@@ -61931,8 +62014,8 @@ app.use(
 );
 app.use((0, import_cors.default)());
 app.use((0, import_cookie_parser.default)());
-app.use(import_express17.default.json());
-app.use(import_express17.default.urlencoded({ extended: true }));
+app.use(import_express18.default.json());
+app.use(import_express18.default.urlencoded({ extended: true }));
 app.use("/api", routes_default);
 app.get("/healthz", (_req, res) => {
   res.json({ status: "ok", service: "bos-aura-api" });
@@ -61943,7 +62026,7 @@ var staticPath = path.join(__dirname_app, "..", "..", "openclaw", "dist", "publi
 var indexHtml = path.join(staticPath, "index.html");
 var hasFrontend = process.env["NODE_ENV"] === "production" && fs.existsSync(indexHtml);
 if (hasFrontend) {
-  app.use(import_express17.default.static(staticPath));
+  app.use(import_express18.default.static(staticPath));
   app.get("/*path", (req, res, next) => {
     if (req.path.startsWith("/api")) return next();
     if (path.extname(req.path)) return next();

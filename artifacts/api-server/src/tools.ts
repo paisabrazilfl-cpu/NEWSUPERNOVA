@@ -81,7 +81,7 @@ function ipIsPrivate(ip: string): boolean {
 }
 
 /** Returns an error string if the URL is unsafe to fetch, or null if allowed. */
-async function ssrfGuard(url: string): Promise<string | null> {
+export async function ssrfGuard(url: string): Promise<string | null> {
   let parsed: URL;
   try {
     parsed = new URL(url);

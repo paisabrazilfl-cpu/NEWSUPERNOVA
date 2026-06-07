@@ -6,10 +6,13 @@
   "scripts": {
     "hello": "tsx ./src/hello.ts",
     "render:set-env": "tsx ./src/render-set-env.ts",
+    "ui-smoke": "tsx ./src/ui-smoke.ts",
+    "self-test": "tsx ./src/self-test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
     "@types/node": "catalog:",
-    "tsx": "catalog:"
+    "tsx": "catalog:",
+    "playwright": "1.49.1"
   }
 }
