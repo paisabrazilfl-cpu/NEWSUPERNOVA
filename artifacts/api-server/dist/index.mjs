@@ -89053,6 +89053,7 @@ router15.put("/vault", async (req, res) => {
         updatedAt: /* @__PURE__ */ new Date()
       }
     }).returning();
+    process.env[name] = value;
     res.status(200).json(fmt2(row));
   } catch (err) {
     req.log.error({ err }, "Failed to store secret");

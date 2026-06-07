@@ -53,6 +53,10 @@ router.put("/vault", async (req, res) => {
         },
       })
       .returning();
+    // Activate the secret immediately so integrations that read it from the
+    // environment (EMBEDDINGS_API_KEY, PINECONE_*, COMPOSIO_API_KEY, GITHUB_API_KEY,
+    // …) turn On without waiting for a server restart. Boot still re-loads the vault.
+    process.env[name] = value;
     res.status(200).json(fmt(row));
   } catch (err) {
     req.log.error({ err }, "Failed to store secret");
