@@ -679,8 +679,10 @@ Respond with ONLY a JSON array (no prose, no code fences) of objects shaped: {"a
 Round 1 CLAW results:
 ${results.map((r) => `- ${r.name}: ${r.result.slice(0, 500)}`).join("\n")}
 
-Is the goal now FULLY satisfied? If yes, respond with exactly: []
-If not, respond with ONLY a JSON array (no prose) of up to 2 follow-up directives to finish it, shaped {"agentId": <number>, "directive": "<instruction>"}. Available CLAWs: ${roster}.`;
+First, internally assess which parts of the goal are VERIFIED by the real tool output above versus still missing, unverified, or only assumed — judge only on evidence actually present in the results, never on work no result shows. Do this reasoning silently; do not write it out.
+
+Then, if every part of the goal is verified and complete, respond with exactly: []
+Otherwise respond with ONLY a JSON array (no prose, no code fences) of up to 2 follow-up directives that close the remaining gap, each shaped {"agentId": <number>, "directive": "<instruction>"}. Available CLAWs: ${roster}.`;
       let followups: Directive[] = [];
       try {
         const reviewRaw = await completeChat(model, planSystem, reviewUser);
