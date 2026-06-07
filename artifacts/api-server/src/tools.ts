@@ -43,6 +43,7 @@ import {
   composioExecute,
 } from "./lib/integrations";
 import { embed, embeddingsConfigured, cosineSimilarity, parseEmbedding } from "./lib/embeddings";
+import { runInSandbox, repoPr, sandboxConfigured, gitWriteConfigured } from "./lib/sandbox";
 
 const STEEL_BASE = "https://api.steel.dev/v1";
 const FIRECRAWL_BASE = "https://api.firecrawl.dev/v1";
@@ -657,6 +658,57 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
     },
   },
 
+  sandbox_exec: {
+    name: "sandbox_exec",
+    description:
+      "Run a shell script inside a fresh, isolated E2B cloud VM (its own real computer — node, git, network, full Linux). Use for anything that needs a real dev environment: clone a public repo, install packages, run a build/test suite, run scripts, curl APIs, etc. Each call gets a clean disposable VM. This VM has NO access to the OpenClaw server or its secrets. For making changes to the OpenClaw repo and opening a PR, use sandbox_repo_pr instead.",
+    parameters: {
+      type: "object",
+      properties: {
+        script: { type: "string", description: "A bash script to run in the VM (commands can be chained with && and newlines)." },
+      },
+      required: ["script"],
+    },
+    run: async (args) => {
+      const script = String(args["script"] ?? "").trim();
+      if (!script) return "error: script is required.";
+      if (!sandboxConfigured()) return "error: E2B cloud sandbox is not configured (E2B_API_KEY).";
+      return runInSandbox(script);
+    },
+  },
+
+  sandbox_repo_pr: {
+    name: "sandbox_repo_pr",
+    description:
+      "Work on the OpenClaw (bos-aura) repository for real: clones it into an isolated E2B VM, runs your shell script to make changes and/or run the test suite (cwd = repo root), commits, pushes a branch, and opens a Pull Request for human review. Use this to implement a fix/feature, run the real tests against your changes, and propose them. Scoped to the bos-aura repo only. The GitHub token is handled server-side and never exposed to you.",
+    parameters: {
+      type: "object",
+      properties: {
+        branch: { type: "string", description: "New branch name, e.g. 'agent/fix-typo'." },
+        script: { type: "string", description: "Bash script run inside the cloned repo to make changes (e.g. edit files with sed/tee) and optionally run tests. cwd is the repo root." },
+        title: { type: "string", description: "PR title (also used as the commit message)." },
+        body: { type: "string", description: "Optional PR description." },
+        baseBranch: { type: "string", description: "Base branch for the PR (default 'main')." },
+      },
+      required: ["branch", "script", "title"],
+    },
+    run: async (args) => {
+      const branch = String(args["branch"] ?? "").trim();
+      const script = String(args["script"] ?? "").trim();
+      const title = String(args["title"] ?? "").trim();
+      if (!branch || !script || !title) return "error: branch, script, and title are required.";
+      if (!sandboxConfigured()) return "error: E2B cloud sandbox is not configured (E2B_API_KEY).";
+      if (!gitWriteConfigured()) return "error: git push is not enabled — the operator must set SANDBOX_GITHUB_TOKEN.";
+      return repoPr({
+        branch,
+        script,
+        title,
+        body: args["body"] != null ? String(args["body"]) : undefined,
+        baseBranch: args["baseBranch"] != null ? String(args["baseBranch"]) : undefined,
+      });
+    },
+  },
+
   memory_write: {
     name: "memory_write",
     description:
@@ -882,10 +934,10 @@ const ALL_TOOLS = Object.keys(TOOL_REGISTRY);
 
 export const AGENT_TOOLS: Record<number, string[]> = {
   1: ALL_TOOLS, // ABBY — full authority
-  2: ["code_exec", "cloud_code_exec", "calculator", "http_request", "web_scrape", "web_search", "memory_search", "memory_write", "vault_list", "send_message"], // FORGE — code
+  2: ["code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "http_request", "web_scrape", "web_search", "memory_search", "memory_write", "vault_list", "send_message"], // FORGE — code
   3: ["web_scrape", "web_screenshot", "web_search", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "send_message"], // CRAWLER — browser
   4: ["memory_write", "memory_search", "web_search", "web_scrape", "http_request", "calculator", "vault_list", "send_message"], // VAULT — memory/RAG
-  5: ["http_request", "web_scrape", "web_search", "code_exec", "cloud_code_exec", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_action", "send_message"], // WIRE — APIs
+  5: ["http_request", "web_scrape", "web_search", "code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_action", "send_message"], // WIRE — APIs
   6: ["web_scrape", "web_search", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "send_message"], // MR.NICE — social
 };
 

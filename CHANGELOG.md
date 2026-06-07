@@ -113,3 +113,19 @@ Implements the automatable subset of the self-test phases, for both layers.
   NOT claim repo/build/UI (the agent sandbox can't see those). Exported `ssrfGuard`.
 - First real browser validation in the project — closes the long-standing
   "browser: NOT RUN" gap.
+
+## 2026-06-07 — E2B dev sandbox: the swarm gets a real computer
+
+Turns the runtime swarm's "no"s into "yes"s, SAFELY (isolated VM, prod untouched).
+
+- **`e2b` SDK** added (bundled into dist so it runs on Render with no node_modules).
+- **`lib/sandbox.ts`** + tools:
+  - `sandbox_exec` — run real shell (pnpm/tsc/vitest/node/curl/playwright/git) in a
+    disposable, isolated E2B VM with no access to the prod server or its secrets.
+  - `sandbox_repo_pr` — clone bos-aura into the VM, run a script to edit/test,
+    commit, push a branch, and OPEN A PR. Scoped to the bos-aura repo only; the
+    GitHub token is server-side and never exposed to the model.
+- Assigned to ABBY, FORGE, WIRE.
+- **Verified live, end-to-end**: sandbox_exec ran shell; sandbox_repo_pr cloned,
+  edited, pushed a branch and opened a real PR; cleanup deleted the branch (204).
+- Prod env set: SANDBOX_GITHUB_TOKEN, INNGEST_EVENT_KEY, BUDDY_* (all live-on).
