@@ -86719,6 +86719,30 @@ ${MARKETING_ENGINE}`;
 }
 var MARKETING_ENGINE_POINTER = "MARKETING TASKS: for any post/caption/campaign/'make this go viral'/lead-magnet/funnel request, call the marketing_playbook tool and apply that universal engine (hook\u2192problem\u2192insight\u2192value\u2192CTA\u2192follow-up, one goal, one CTA keyword, platform-tuned). For the enterprise build (campaign brief, funnels, landing pages, email, paid, governance/compliance, KPIs, rollout) call marketing_playbook with a `section`. Research and CITE any factual claim \u2014 never fabricate stats, studies, or testimonials. Execute with the real tools: image_generate \u2192 instagram_post/composio_action \u2192 schedule_task \u2192 memory_write.";
 
+// src/lib/safety.ts
+var SENSITIVE_RULES = [
+  { label: "confidentiality marker", re: /\b(confidential|top[\s-]?secret|classified|internal[\s-]?only|for internal use|not for distribution|do not distribute|do not share|private and confidential|restricted)\b/i },
+  { label: "legal privilege / NDA", re: /\b(nda|non[\s-]?disclosure|privileged|attorney[\s-]?client|work product|under embargo|embargoed)\b/i },
+  { label: "M&A / deal material", re: /\b(acquisition proposal|merger agreement|term sheet|letter of intent|\bloi\b|cap table|due diligence|purchase agreement|definitive agreement|pre[\s-]?money|post[\s-]?money|equity stake)\b/i },
+  { label: "trade secret / proprietary", re: /\b(trade secret|proprietary( and)? confidential|source code|internal roadmap|unreleased)\b/i },
+  { label: "credential / secret", re: /\b(password|passphrase|api[\s_-]?key|secret[\s_-]?key|private[\s_-]?key|access[\s_-]?token|bearer\s+[a-z0-9._-]{12,})\b/i },
+  { label: "API key pattern", re: /\b(sk-[a-z0-9]{12,}|rnd_[a-z0-9]{12,}|ghp_[a-z0-9]{20,}|AKIA[0-9A-Z]{12,})\b/i },
+  { label: "personal identifier (SSN)", re: /\b\d{3}-\d{2}-\d{4}\b/ }
+];
+function screenForSensitive(text2) {
+  if (!text2) return [];
+  const hits = [];
+  for (const r of SENSITIVE_RULES) {
+    if (r.re.test(text2)) hits.push(r.label);
+  }
+  return [...new Set(hits)];
+}
+function blockIfSensitiveForPublic(content, channel = "a public account") {
+  const flags = screenForSensitive(content);
+  if (!flags.length) return null;
+  return `\u{1F6AB} BLOCKED \u2014 refusing to publish to ${channel}: the content looks CONFIDENTIAL/SENSITIVE (flagged: ${flags.join("; ")}). Nothing was posted. Public posts are irreversible \u2014 confidential, privileged, deal, or credential material must never auto-publish. If this text is genuinely cleared for public release, remove the sensitive wording (or post it manually) and try again.`;
+}
+
 // src/tools.ts
 var STEEL_BASE = "https://api.steel.dev/v1";
 var FIRECRAWL_BASE = "https://api.firecrawl.dev/v1";
@@ -87637,6 +87661,15 @@ The operator connects apps in Settings \u2192 Connect Apps (Composio).`;
       if (!composioExecuteEnabled()) {
         return "error: Composio execution is disabled. The operator must set ALLOW_COMPOSIO_EXECUTE=true after connecting accounts.";
       }
+      const tk = (args["toolkit"] != null ? String(args["toolkit"]) : "").toLowerCase();
+      const mth = (args["method"] != null ? String(args["method"]) : "").toUpperCase();
+      const ep = args["endpoint"] != null ? String(args["endpoint"]) : "";
+      const isSocialWrite = /instagram|facebook|threads|^x$|twitter|tiktok|linkedin|reddit|youtube/.test(tk) && (["POST", "PUT", "PATCH"].includes(mth) || /publish|media|post|tweet|status|share/i.test(ep));
+      if (isSocialWrite) {
+        const payload = `${ep} ${JSON.stringify(args["arguments"] ?? {})} ${JSON.stringify(args["body"] ?? "")}`;
+        const blockedSocial = blockIfSensitiveForPublic(payload, `your public ${tk || "social"} account`);
+        if (blockedSocial) return blockedSocial;
+      }
       return composioExecute({
         toolkit: args["toolkit"] != null ? String(args["toolkit"]) : void 0,
         action: args["action"] != null ? String(args["action"]) : void 0,
@@ -87663,6 +87696,8 @@ The operator connects apps in Settings \u2192 Connect Apps (Composio).`;
       if (!composioExecuteEnabled()) return "error: Composio execution is disabled (operator must set ALLOW_COMPOSIO_EXECUTE=true).";
       const imageUrl = String(args["image_url"] ?? "").trim();
       const caption = args["caption"] != null ? String(args["caption"]) : "";
+      const blocked = blockIfSensitiveForPublic(caption, "your public Instagram");
+      if (blocked) return blocked;
       if (!/^https:\/\/\S+/i.test(imageUrl)) {
         return "error: image_url must be an absolute https URL that Instagram can fetch (use the URL image_generate returns, e.g. https://<host>/api/uploads/<id>). A relative path will not work.";
       }
@@ -88233,7 +88268,8 @@ ${transcript}
       const goal = `${message.trim()}
 
 (Operator request to act on their OWN connected account. Their apps are connected via COMPOSIO \u2014 CHECK composio_apps FIRST (Instagram, Gmail, GitHub, Calendar, Sheets, etc. live there). Use composio_action; for raw API calls use PROXY mode (toolkit + endpoint + method, with data in arguments \u2192 sent as query params). social_accounts/social_api is a SEPARATE native path that is usually EMPTY \u2014 do NOT conclude "not connected" from it; check composio_apps. 
-IF this involves POSTING AN IMAGE TO INSTAGRAM: do it in TWO tool calls only \u2014 (1) image_generate to make the 2D image (it returns an ABSOLUTE public https URL), then (2) instagram_post with image_url=<that exact URL> and caption=<the caption>. instagram_post performs the whole create\u2192publish\u2192permalink flow and returns the live link. Do NOT hand-build /me/media calls and do NOT upload the image anywhere else. Post EXACTLY ONCE. Report the real data / permalink (or the exact API error) \u2014 never a flat "no access", and never fabricate a success or permalink.)`;
+IF this involves POSTING AN IMAGE TO INSTAGRAM: do it in TWO tool calls only \u2014 (1) image_generate to make the 2D image (it returns an ABSOLUTE public https URL), then (2) instagram_post with image_url=<that exact URL> and caption=<the caption>. instagram_post performs the whole create\u2192publish\u2192permalink flow and returns the live link. Do NOT hand-build /me/media calls and do NOT upload the image anywhere else. Post EXACTLY ONCE. 
+PUBLIC-POST SAFEGUARD (critical): a public post must be built ONLY from content explicitly created for THIS request (freshly researched public info + generated assets). NEVER pull from the operator's personal files, uploads, memory, prior private conversation, or any internal/business/confidential material to decide what to post. If the operator hasn't given clear public content to post, ASK what to post \u2014 do not improvise from context. Confidential/proprietary/deal/credential content must NEVER be published. Report the real data / permalink (or the exact API error) \u2014 never a flat "no access", and never fabricate a success or permalink.)`;
       const ackText = "**On it \u2014 checking your connected account now.** The swarm is verifying the connection and pulling what's there; results will stream into this channel.";
       sendEvent({ token: ackText });
       await finishWith(ackText, model, "abby-router");
