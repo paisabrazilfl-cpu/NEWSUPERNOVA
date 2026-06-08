@@ -428,7 +428,7 @@ router.post("/ai/chat", async (req, res) => {
           // function-level, so this is safe and bundles correctly (a dynamic import
           // was unnecessary and harder to verify). Failures are surfaced to the
           // channel so a dispatch can never fail silently.
-          orchestrateGoal({ goal, channelId, priority: "high" }).catch(async (e) => {
+          orchestrateGoal({ goal, channelId, priority: "high", sourceContext: message }).catch(async (e) => {
             req.log.error({ e }, "orchestrateGoal (from chat) failed");
             await db
               .insert(messagesTable)

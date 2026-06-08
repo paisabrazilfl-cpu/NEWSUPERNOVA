@@ -100,6 +100,7 @@ router.post("/commands", async (req, res) => {
       goal: command,
       channelId: targetChannelId,
       priority,
+      sourceContext: payload ?? null,
     }).catch(err => req.log.error({ err }, "orchestrateGoal crashed"));
 
     res.status(202).json({ orchestrating: true, goal: command });
