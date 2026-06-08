@@ -85580,21 +85580,43 @@ async function composioExecute(input) {
   const key = process.env["COMPOSIO_API_KEY"];
   if (!key) return "error: COMPOSIO_API_KEY is not set.";
   const base = (process.env["COMPOSIO_BASE_URL"] ?? "https://backend.composio.dev/api/v3.1").replace(/\/$/, "");
-  const endpoint = input.endpoint ?? "/tools/execute/proxy";
-  const method = (input.method ?? "POST").toUpperCase();
-  const body = input.body ?? {
-    connectedAccountId: input.connectedAccountId,
-    toolkit: input.toolkit,
-    action: input.action,
-    arguments: input.arguments ?? {}
-  };
+  let accId = input.connectedAccountId;
+  if (!accId && input.toolkit) {
+    try {
+      const conns = await composioListConnections();
+      const t = input.toolkit.toLowerCase();
+      accId = (conns.find((c) => c.toolkit.toLowerCase() === t && /ACTIVE|CONNECTED|ENABLED/i.test(c.status)) ?? conns.find((c) => c.toolkit.toLowerCase() === t))?.id;
+    } catch {
+    }
+  }
+  let url2;
+  let payload;
+  if (input.action) {
+    url2 = `${base}/tools/execute/${encodeURIComponent(input.action)}`;
+    payload = {
+      arguments: input.arguments ?? {},
+      ...accId ? { connected_account_id: accId } : {},
+      ...input.userId ? { user_id: input.userId } : {}
+    };
+  } else if (input.endpoint && input.method) {
+    url2 = `${base}/tools/execute/proxy`;
+    payload = {
+      endpoint: input.endpoint,
+      method: input.method.toUpperCase(),
+      ...accId ? { connected_account_id: accId } : {},
+      ...Array.isArray(input.parameters) ? { parameters: input.parameters } : {},
+      ...input.body != null ? { body: input.body } : {}
+    };
+  } else {
+    return "error: composio_action needs an `action` (tool slug like INSTAGRAM_LIST_POSTS), OR an `endpoint`+`method` for a raw proxy call (e.g. endpoint:'/me/media', method:'GET').";
+  }
   const ctrl = new AbortController();
   const timer2 = setTimeout(() => ctrl.abort(), 3e4);
   try {
-    const r = await fetch(`${base}${endpoint.startsWith("/") ? endpoint : `/${endpoint}`}`, {
-      method,
+    const r = await fetch(url2, {
+      method: "POST",
       headers: { "x-api-key": key, "Content-Type": "application/json" },
-      body: method === "GET" ? void 0 : JSON.stringify(body),
+      body: JSON.stringify(payload),
       signal: ctrl.signal
     });
     const text2 = await r.text();
@@ -87341,16 +87363,17 @@ The operator connects apps in Settings \u2192 Connect Apps (Composio).`;
   },
   composio_action: {
     name: "composio_action",
-    description: "Execute an authenticated action on a connected SaaS app (Gmail, Slack, GitHub, Notion, Calendar, Sheets, CRM, \u2026) via Composio's tool/auth router. Use for real external actions on accounts the operator has connected in Composio. Call composio_apps FIRST to confirm the app is live. Disabled unless the operator has enabled it.",
+    description: "Execute an authenticated action on a connected SaaS app (Gmail, Slack, GitHub, Notion, Calendar, Sheets, Instagram, \u2026) via Composio. Call composio_apps FIRST to confirm the app is live; the connected account is auto-resolved from the toolkit. TWO modes: (1) NAMED action \u2014 pass `toolkit` + `action` (a Composio tool slug like GMAIL_SEND_EMAIL) + `arguments`. (2) RAW PROXY \u2014 when no named action fits or to call the app's REST API directly, pass `toolkit` + `endpoint` (the app's API path, e.g. '/me/media?fields=id,caption,timestamp') + `method` (GET/POST/\u2026). Use proxy mode for Instagram/Graph-API reads. Disabled unless the operator enabled execution.",
     parameters: {
       type: "object",
       properties: {
-        toolkit: { type: "string", description: "Composio toolkit/app slug, e.g. 'gmail', 'slack', 'github'." },
-        action: { type: "string", description: "The action/tool to run, e.g. 'GMAIL_SEND_EMAIL'." },
-        arguments: { type: "object", description: "Action arguments as a key/value object." },
-        connectedAccountId: { type: "string", description: "Optional connected-account id to act as." }
-      },
-      required: ["action"]
+        toolkit: { type: "string", description: "Composio app slug, e.g. 'gmail', 'github', 'instagram'. Used to auto-pick your connected account." },
+        action: { type: "string", description: "NAMED mode: the Composio tool/action slug, e.g. 'GMAIL_SEND_EMAIL'. Omit to use raw proxy mode." },
+        arguments: { type: "object", description: "NAMED mode: action arguments as a key/value object." },
+        endpoint: { type: "string", description: "RAW PROXY mode: the connected app's REST path, e.g. '/me/media?fields=id,caption'. Put query params in the path." },
+        method: { type: "string", description: "RAW PROXY mode: HTTP method for the endpoint (GET, POST, \u2026)." },
+        connectedAccountId: { type: "string", description: "Optional explicit connected-account id; auto-resolved from toolkit when omitted." }
+      }
     },
     run: async (args) => {
       if (!composioConfigured()) return "error: Composio is not configured (set COMPOSIO_API_KEY).";
@@ -87361,6 +87384,8 @@ The operator connects apps in Settings \u2192 Connect Apps (Composio).`;
         toolkit: args["toolkit"] != null ? String(args["toolkit"]) : void 0,
         action: args["action"] != null ? String(args["action"]) : void 0,
         arguments: args["arguments"] ?? {},
+        endpoint: args["endpoint"] != null ? String(args["endpoint"]) : void 0,
+        method: args["method"] != null ? String(args["method"]) : void 0,
         connectedAccountId: args["connectedAccountId"] != null ? String(args["connectedAccountId"]) : void 0
       });
     }
