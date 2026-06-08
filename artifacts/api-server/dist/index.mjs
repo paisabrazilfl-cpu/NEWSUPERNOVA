@@ -87776,7 +87776,7 @@ Goal: ${goal}
 The agents are starting now; their work and results will stream into this channel.`;
           sendEvent({ token: ackText });
           await finishWith(ackText, model, "abby-router");
-          orchestrateGoal({ goal, channelId, priority: "high" }).catch(async (e) => {
+          orchestrateGoal({ goal, channelId, priority: "high", sourceContext: message }).catch(async (e) => {
             req.log.error({ e }, "orchestrateGoal (from chat) failed");
             await db.insert(messagesTable).values({
               channelId,
@@ -88054,7 +88054,7 @@ async function postMessage(opts) {
   });
 }
 async function executeAgentCommand(opts) {
-  const { commandId, agent, command, payload, channelId } = opts;
+  const { commandId, agent, command, payload, channelId, sourceContext } = opts;
   let taskId = null;
   try {
     await db.update(agentCommandsTable).set({ status: "running" }).where(eq(agentCommandsTable.id, commandId));
@@ -88111,7 +88111,12 @@ You are an autonomous tool-using agent. Call tools to gather real data and perfo
         role: "user",
         content: `Directive from ABBY (orchestrator): ${command}
 ${payload ? `Payload: ${payload}
-` : ""}` + (priming ? `
+` : ""}` + (sourceContext && sourceContext.trim() ? `
+OPERATOR-PROVIDED SOURCE MATERIAL \u2014 this is your primary input. Build directly from it; do NOT memory_search for it (it is right here):
+"""
+${sourceContext.slice(0, 3e4)}
+"""
+` : "") + (priming ? `
 Live page content already retrieved for you:
 """
 ${priming}
@@ -88249,7 +88254,7 @@ function parseDirectives(raw, claws) {
   }
   return [];
 }
-async function dispatchDirectives(directives, claws, channelId, priority, abby) {
+async function dispatchDirectives(directives, claws, channelId, priority, abby, sourceContext) {
   if (isSwarmPaused()) {
     await postMessage({
       channelId,
@@ -88278,7 +88283,8 @@ async function dispatchDirectives(directives, claws, channelId, priority, abby) 
       agent,
       command: d.directive,
       payload: null,
-      channelId
+      channelId,
+      sourceContext
     });
     return { name: agent.name, result };
   });
@@ -88286,7 +88292,7 @@ async function dispatchDirectives(directives, claws, channelId, priority, abby) 
   return settled.filter((r) => r !== null);
 }
 async function orchestrateGoal(opts) {
-  const { goal, channelId, priority } = opts;
+  const { goal, channelId, priority, sourceContext } = opts;
   void sendInngestEvent("swarm/goal.received", { goal, channelId, priority });
   try {
     const agents = await db.select().from(agentsTable);
@@ -88307,7 +88313,12 @@ async function orchestrateGoal(opts) {
     const roster = claws.map((c) => `${c.id}=${c.name} (${c.role ?? "agent"})`).join(", ");
     const planSystem = (AGENT_PERSONAS[ABBY_ID2] ?? "You are ABBY, the swarm orchestrator.") + EXECUTION_DOCTRINE + RESEARCH_PLAYBOOKS;
     const planUser = `Operator goal: "${goal}"
-
+${sourceContext && sourceContext.trim() ? `
+The operator provided this source material to work from (decompose against THIS; the CLAWs will receive it too \u2014 do not tell them to search memory for it):
+"""
+${sourceContext.slice(0, 12e3)}
+"""
+` : ""}
 Available CLAWs you command: ${roster}.
 
 Decompose this goal into precise, exhaustive, granular directives \u2014 ONE per CLAW that is genuinely relevant (skip CLAWs that add nothing). Together the directives must cover EVERY part of the goal; leave nothing implied. Each directive MUST be:
@@ -88343,7 +88354,8 @@ Respond with ONLY a JSON array (no prose, no code fences) of objects shaped: {"a
       claws,
       channelId,
       priority,
-      abby
+      abby,
+      sourceContext
     );
     if (results.length && !isSwarmPaused()) {
       await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, ABBY_ID2));
@@ -88378,7 +88390,7 @@ Otherwise respond with ONLY a JSON array (no prose, no code fences) of up to 2 f
           }).join("\n"),
           messageType: "agent"
         });
-        const more = await dispatchDirectives(followups, claws, channelId, priority, abby);
+        const more = await dispatchDirectives(followups, claws, channelId, priority, abby, sourceContext);
         results.push(...more);
       }
     }
@@ -88583,7 +88595,8 @@ router8.post("/commands", async (req, res) => {
     void orchestrateGoal({
       goal: command,
       channelId: targetChannelId,
-      priority
+      priority,
+      sourceContext: payload ?? null
     }).catch((err) => req.log.error({ err }, "orchestrateGoal crashed"));
     res.status(202).json({ orchestrating: true, goal: command });
   } catch (err) {
