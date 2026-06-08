@@ -503,9 +503,10 @@ router.post("/ai/chat", async (req, res) => {
     if (requestsConnectedAccountAction(message)) {
       const goal =
         `${message.trim()}\n\n(Operator request about their OWN connected account. ` +
-        `Route to MR.NICE for social platforms via social_accounts/social_api, or WIRE for SaaS apps via composio_apps/composio_action. ` +
-        `First confirm the account is connected (social_accounts / composio_apps), then perform the check/action and report what's really there. ` +
-        `If it is NOT connected, say so plainly and tell the operator to connect it in Settings → Connect Apps — never claim you simply "have no access".)`;
+        `The operator connects apps via COMPOSIO (Settings → Connect Apps), so CHECK composio_apps FIRST — that is where their accounts actually live (Instagram, Gmail, GitHub, Calendar, Sheets, etc. are connected there). ` +
+        `Then use composio_action on the live app: for a read with no obvious named action, use RAW PROXY mode — pass toolkit + endpoint + method (e.g. toolkit:'instagram', endpoint:'/me/media?fields=id,caption,timestamp', method:'GET'). ` +
+        `IMPORTANT: social_accounts/social_api is a SEPARATE native-OAuth path that is usually EMPTY — do NOT conclude "not connected" from social_accounts alone; the app is almost certainly live in composio_apps. Only say it's not connected after checking composio_apps AND social_accounts. ` +
+        `Report the real data returned (or the exact API error) — never a flat "no access" or "not connected" without having checked Composio.)`;
       const ackText =
         "**On it — checking your connected account now.** The swarm is verifying the connection and pulling what's there; results will stream into this channel.";
       sendEvent({ token: ackText });
