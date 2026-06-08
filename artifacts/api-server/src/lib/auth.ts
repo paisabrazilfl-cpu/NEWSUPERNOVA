@@ -52,18 +52,21 @@ export function verifyPassword(provided: unknown): boolean {
   if (!expected || typeof provided !== "string" || provided.length === 0) {
     return false;
   }
-  const a = Buffer.from(provided);
-  const b = Buffer.from(expected);
-  // Length differences are not timing-safe to compare directly; pad to equal
-  // length so `timingSafeEqual` never throws and the comparison stays constant
-  // time relative to the expected value.
-  if (a.length !== b.length) {
-    // Still run a comparison to avoid an early-exit timing signal.
-    timingSafeEqual(b, b);
-    return false;
-  }
-  return timingSafeEqual(a, b);
+  return timingSafeStrEqual(provided, expected);
 }
+
+/**
+ * Constant-time string comparison. Hashes both inputs to a fixed 32-byte digest
+ * first, so neither length nor content leaks via timing (timingSafeEqual throws
+ * on length mismatch, and a raw length check is itself a side channel). Use for
+ * any secret/token/api-key comparison.
+ */
+export function timingSafeStrEqual(a: string, b: string): boolean {
+  const ha = createHmac("sha256", TIMING_SALT).update(a).digest();
+  const hb = createHmac("sha256", TIMING_SALT).update(b).digest();
+  return timingSafeEqual(ha, hb);
+}
+const TIMING_SALT = randomBytes(32);
 
 /** Mint a signed session token that expires after SESSION_TTL_SECONDS. */
 export function issueSessionToken(): string {

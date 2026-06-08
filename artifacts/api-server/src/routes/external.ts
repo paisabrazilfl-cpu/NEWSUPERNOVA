@@ -21,6 +21,7 @@ import { db } from "@workspace/db";
 import { agentsTable, messagesTable, channelsTable } from "@workspace/db";
 import { eq, desc } from "drizzle-orm";
 import { llmBaseUrl, heliconeHeaders } from "../lib/integrations";
+import { timingSafeStrEqual } from "../lib/auth";
 import { ANTI_HALLUCINATION_DIRECTIVE } from "./ai";
 
 const router = Router();
@@ -57,7 +58,7 @@ function apiKeyAuth(req: Request, res: Response, next: NextFunction): void {
   const provided =
     (req.headers["authorization"] as string | undefined)?.replace(/^Bearer\s+/i, "") ??
     (req.headers["x-api-key"] as string | undefined);
-  if (provided !== expectedKey) {
+  if (!provided || !timingSafeStrEqual(provided, expectedKey)) {
     res.status(401).json({ error: "Unauthorized — provide a valid OPENCLAW_API_KEY" }); return;
   }
   next();
@@ -206,7 +207,7 @@ router.post("/external/v1/chat/completions", async (req, res) => {
           if (t.startsWith("data: ")) {
             try {
               const chunk = JSON.parse(t.slice(6));
-              chunk.model = model;
+              if (chunk && typeof chunk === "object") chunk.model = model;
               sendSSE(chunk);
             } catch { res.write(t + "\n\n"); }
           }

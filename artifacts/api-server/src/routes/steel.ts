@@ -9,12 +9,24 @@ function steelHeaders() {
   return { "Authorization": `Bearer ${key}`, "Content-Type": "application/json" };
 }
 
+// fetch with a hard timeout so a hung Steel API can't hold a request open
+// forever (the Steel calls previously had no AbortController).
+async function steelFetch(path: string, init?: RequestInit, timeoutMs = 20000): Promise<Response> {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    return await fetch(`${STEEL_BASE}${path}`, { ...init, signal: ctrl.signal });
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 // List all sessions
 router.get("/steel/sessions", async (req, res) => {
   try {
-    const r = await fetch(`${STEEL_BASE}/sessions`, { headers: steelHeaders() });
-    const data = await r.json();
-    res.json(data);
+    const r = await steelFetch(`/sessions`, { headers: steelHeaders() });
+    const data = await r.json().catch(() => ({ error: "Steel returned a non-JSON body" }));
+    res.status(r.ok ? 200 : r.status).json(data);
   } catch (err) {
     req.log.error({ err }, "Failed to list Steel sessions");
     res.status(500).json({ error: "Failed to list Steel sessions" });
@@ -24,9 +36,9 @@ router.get("/steel/sessions", async (req, res) => {
 // Get a single session
 router.get("/steel/sessions/:id", async (req, res) => {
   try {
-    const r = await fetch(`${STEEL_BASE}/sessions/${req.params.id}`, { headers: steelHeaders() });
-    const data = await r.json();
-    res.json(data);
+    const r = await steelFetch(`/sessions/${req.params.id}`, { headers: steelHeaders() });
+    const data = await r.json().catch(() => ({ error: "Steel returned a non-JSON body" }));
+    res.status(r.ok ? 200 : r.status).json(data);
   } catch (err) {
     req.log.error({ err }, "Failed to get Steel session");
     res.status(500).json({ error: "Failed to get Steel session" });
