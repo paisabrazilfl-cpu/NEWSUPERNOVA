@@ -17,6 +17,7 @@ import {
   RESEARCH_PLAYBOOKS,
   requestsDownloadableArtifact,
   requestsImage,
+  requestsConnectedAccountAction,
 } from "./ai";
 
 describe("requestsDownloadableArtifact — deterministic dispatch for downloads", () => {
@@ -72,6 +73,29 @@ describe("requestsImage — verb-less image-gen detection", () => {
       "explain how the swarm works",
     ]) {
       expect(requestsImage(m), `should NOT misfire on: "${m}"`).toBe(false);
+    }
+  });
+});
+
+describe("requestsConnectedAccountAction — dispatch operator-account requests, never refuse", () => {
+  it("triggers on the operator's own connected accounts", () => {
+    for (const m of [
+      "Check my Instagram please do I have messages?",
+      "any new emails?",
+      "post to my LinkedIn",
+      "what's on my calendar today?",
+      "read my Gmail inbox",
+      "send a DM on my Instagram",
+      "do I have unread Slack messages",
+      "open a GitHub issue on my repo",
+    ]) {
+      expect(requestsConnectedAccountAction(m), `should dispatch: "${m}"`).toBe(true);
+    }
+  });
+
+  it("does NOT trigger on unrelated conversation", () => {
+    for (const m of ["who are you?", "explain TAM/SAM/SOM", "write a python script", "what is the capital of France?"]) {
+      expect(requestsConnectedAccountAction(m), `should NOT fire on: "${m}"`).toBe(false);
     }
   });
 });
