@@ -48,6 +48,7 @@ import { pineconeConfigured, pineconeUpsert, pineconeQuery } from "./lib/pinecon
 import { runInSandbox, repoPr, sandboxConfigured, gitWriteConfigured } from "./lib/sandbox";
 import { TIER1_SOURCES, tier1SourcesText } from "./lib/sources";
 import { marketingPlaybook, MARKETING_SECTIONS } from "./lib/marketing";
+import { computeNextRun } from "./lib/cron";
 import { blockIfSensitiveForPublic } from "./lib/safety";
 import { checkPostAllowed, recordPost } from "./lib/postLimit";
 
@@ -1365,10 +1366,7 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
       const task = String(args["task"] ?? "").trim();
       if (!name || !schedule || !task) return "error: name, schedule, and task are all required.";
       if (schedule.split(/\s+/).length !== 5) return "error: schedule must be a 5-field cron expression, e.g. '*/30 * * * *'.";
-      // Inline next-run (mirrors scheduler.computeNextRun) to avoid an import cycle.
-      const min = schedule.split(/\s+/)[0];
-      const ms = min === "*" ? 60_000 : min.startsWith("*/") ? Math.max(Number(min.slice(2)) * 60_000, 60_000) : 5 * 60_000;
-      const nextRunAt = new Date(Date.now() + ms);
+      const nextRunAt = computeNextRun(schedule);
       try {
         const [row] = await db
           .insert(cronJobsTable)

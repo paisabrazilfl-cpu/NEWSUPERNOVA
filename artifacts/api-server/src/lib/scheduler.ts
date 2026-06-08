@@ -14,28 +14,16 @@ import { and, eq, lte, isNotNull } from "drizzle-orm";
 import { logger } from "./logger";
 import { executeAgentCommand, orchestrateGoal } from "../orchestrator";
 import { isSwarmPaused } from "../routes/swarm";
+import { computeNextRun } from "./cron";
+
+// Re-export so existing importers of computeNextRun from the scheduler keep working.
+export { computeNextRun } from "./cron";
 
 type CronJob = typeof cronJobsTable.$inferSelect;
 
 const ABBY_ID = 1;
 const DEFAULT_CHANNEL_ID = 1;
 const SCHEDULER_INTERVAL_MS = 30_000;
-
-/**
- * Approximate the next run time from a 5-field cron string. Intentionally simple
- * (no external dependency): supports "*" and "*​/N" in the minute field and
- * otherwise defaults to a sane minimum cadence. Always returns at least +60s so
- * a job can never busy-loop.
- */
-export function computeNextRun(schedule: string): Date {
-  const now = new Date();
-  const parts = schedule.trim().split(/\s+/);
-  if (parts.length !== 5) return new Date(now.getTime() + 60_000);
-  const [min] = parts;
-  const ms =
-    min === "*" ? 60_000 : min.startsWith("*/") ? Number(min.slice(2)) * 60_000 : 5 * 60_000;
-  return new Date(now.getTime() + Math.max(ms, 60_000));
-}
 
 /**
  * Execute one cron job for real. Bookkeeping (last_run_at / run_count /
@@ -131,9 +119,31 @@ async function tick(): Promise<void> {
   }
 }
 
+/**
+ * Recompute next-run for every enabled job on boot, so a deploy immediately
+ * corrects any jobs whose nextRunAt was set by the OLD broken calculator (e.g.
+ * a daily "0 0 * * *" job stuck firing every 5 min snaps back to next midnight).
+ */
+async function normalizeSchedules(): Promise<void> {
+  try {
+    const jobs = await db.select().from(cronJobsTable).where(eq(cronJobsTable.enabled, true));
+    for (const j of jobs) {
+      await db
+        .update(cronJobsTable)
+        .set({ nextRunAt: computeNextRun(j.schedule) })
+        .where(eq(cronJobsTable.id, j.id))
+        .catch(() => {});
+    }
+    if (jobs.length) logger.info({ count: jobs.length }, "scheduler: normalized next-run times to the corrected cron calculator");
+  } catch (err) {
+    logger.error({ err }, "scheduler: normalizeSchedules failed");
+  }
+}
+
 /** Start the background scheduler. Idempotent. */
 export function startScheduler(): void {
   if (timer) return;
+  void normalizeSchedules();
   timer = setInterval(() => {
     void tick();
   }, SCHEDULER_INTERVAL_MS);
