@@ -89904,10 +89904,21 @@ var staticPath = path.join(__dirname_app, "..", "..", "openclaw", "dist", "publi
 var indexHtml = path.join(staticPath, "index.html");
 var hasFrontend = process.env["NODE_ENV"] === "production" && fs.existsSync(indexHtml);
 if (hasFrontend) {
-  app.use(import_express19.default.static(staticPath));
+  app.use(
+    import_express19.default.static(staticPath, {
+      setHeaders: (res, filePath) => {
+        if (filePath.endsWith("index.html")) {
+          res.setHeader("Cache-Control", "no-cache");
+        } else if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+          res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+        }
+      }
+    })
+  );
   app.get("/*path", (req, res, next) => {
     if (req.path.startsWith("/api")) return next();
     if (path.extname(req.path)) return next();
+    res.setHeader("Cache-Control", "no-cache");
     res.sendFile(indexHtml, (err) => {
       if (err) next();
     });
