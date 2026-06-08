@@ -12,6 +12,7 @@ import { TOOL_REGISTRY, getToolNamesForAgent, isToolAllowed, buildCapabilityCard
 
 const ABBY = 1;
 const WIRE = 5;
+const MR_NICE = 6;
 
 describe("Composio: agents know which apps are LIVE", () => {
   it("registers a composio_apps discovery tool", () => {
@@ -19,8 +20,8 @@ describe("Composio: agents know which apps are LIVE", () => {
     expect(TOOL_REGISTRY["composio_apps"]!.description.toLowerCase()).toContain("live");
   });
 
-  it("wires composio_apps to ABBY and WIRE (the agents that can act via Composio)", () => {
-    for (const id of [ABBY, WIRE]) {
+  it("wires composio to ABBY, WIRE (API), and MR.NICE (social)", () => {
+    for (const id of [ABBY, WIRE, MR_NICE]) {
       expect(isToolAllowed(id, "composio_apps"), `agent #${id} should have composio_apps`).toBe(true);
       expect(isToolAllowed(id, "composio_action"), `agent #${id} should have composio_action`).toBe(true);
     }
