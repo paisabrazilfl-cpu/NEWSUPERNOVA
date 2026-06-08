@@ -793,7 +793,7 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
     description:
       "Run a shell script inside a fresh, isolated E2B cloud VM (its own real computer — node, git, network, full Linux). Use for anything that needs a real dev environment: clone a public repo, install packages, run a build/test suite, run scripts, curl APIs, etc. " +
       "It is also your INTERACTIVE-AUTOMATION substrate: pip/npm-install and drive real tools here — e.g. Playwright (`pip install playwright && playwright install chromium`) to navigate multi-step web forms, fill fields, click, and submit; or reportlab/fpdf2/fillpdf/pypdf to generate and fill official PDF forms (e.g. AcroForm fields). Print results/paths to stdout and read back any output. " +
-      "Each call gets a clean disposable VM with NO access to the OpenClaw server or its secrets. For making changes to the OpenClaw repo and opening a PR, use sandbox_repo_pr instead.",
+      "STATELESS: each call is a clean disposable VM and files do NOT persist between calls — generate a file, base64 it, and print it ALL in ONE script (then pass to save_artifact); never write in one call and read in the next. NO access to the OpenClaw server or its secrets. For making changes to the OpenClaw repo and opening a PR, use sandbox_repo_pr instead.",
     parameters: {
       type: "object",
       properties: {
