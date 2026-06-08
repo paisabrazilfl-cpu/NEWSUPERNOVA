@@ -87602,7 +87602,17 @@ Only rely on what is ONLINE. If the operator asks for something that needs an of
 }
 function requestsDownloadableArtifact(message) {
   return /\b(downloadable|download link)\b/i.test(message) || /\.(pdf|csv|docx?|xlsx?|pptx?)\b/i.test(message) || /\b(save|create|make|build|generate|produce|export|download)\b[^.!?\n]{0,40}\b(file|files|pdf|csv|deck|decks|slide|slides|presentation|spreadsheet|document|report|download)\b/i.test(message) || // image-generation requests also need a tool (image_generate) → dispatch
-  /\b(make|create|generate|design|draw|render|produce)\b[^.!?\n]{0,30}\b(image|images|picture|photo|logo|illustration|graphic|diagram|drawing|icon|mockup|render|artwork|poster|banner)\b/i.test(message);
+  requestsImage(message);
+}
+var IMAGE_NOUN = "image|images|picture|pictures|photo|photos|photograph|photographs|logo|logos|illustration|illustrations|graphic|graphics|drawing|drawings|icon|icons|mockup|render|rendering|artwork|poster|banner|portrait|wallpaper|avatar|sticker|painting";
+function requestsImage(message) {
+  return new RegExp(
+    `\\b(make|create|generate|design|draw|render|produce|paint|illustrate|sketch|give me|show me|i want|i need)\\b[^.!?\\n]{0,30}\\b(${IMAGE_NOUN})\\b`,
+    "i"
+  ).test(message) || new RegExp(`\\b(${IMAGE_NOUN})\\b\\s+(of|for|showing|depicting|with|that)\\b`, "i").test(message) || new RegExp(
+    `\\b(an?|ultra[- ]?realistic|realistic|photo[- ]?realistic|hyper[- ]?realistic|hd|high[- ]?res|4k|8k|cinematic|detailed)\\b[^.!?\\n]{0,24}\\b(${IMAGE_NOUN})\\b`,
+    "i"
+  ).test(message);
 }
 var CHAT_HISTORY_LIMIT = 16;
 var ABBY_ID2 = 1;
