@@ -25,6 +25,7 @@ const CAPABILITIES: Item[] = [
   { icon: Compass, title: "Dispatch panel", body: "See which CLAW and which model handled each directive, with a grounding proof that your source material reached it." },
   { icon: Link2, title: "Acts on your connected accounts", body: "ABBY knows which tools, APIs, and integrations are live and acts on your connected accounts — \"check my Instagram\", \"any new emails?\", \"post to my LinkedIn\" — instead of refusing. If an app isn't connected, it tells you to add it in Settings → Connect Apps." },
   { icon: BookOpen, title: "Research playbooks", body: "VPD (Vehicles Per Day + Value Proposition Design), market research (TAM/SAM/SOM), a full deck builder, and a PhD-level library across business, engineering, coding, AI, SEO/AEO, marketing, money, and geofencing." },
+  { icon: MessagesSquare, title: "Marketing engine", body: "A universal plug-and-play playbook for any niche: hook → problem → insight → value → CTA → follow-up, platform-tuned, accuracy-first (every claim researched & cited — no fabricated stats). The swarm runs it end to end: research → write → generate image → post → schedule → track." },
   { icon: ShieldCheck, title: "Tier-1 source library", body: "Answers are grounded in a whitelist of authoritative sources, with evidence labeling." },
   { icon: MessagesSquare, title: "Export conversation", body: "Download any chat as .txt or .json from the header." },
 ];
