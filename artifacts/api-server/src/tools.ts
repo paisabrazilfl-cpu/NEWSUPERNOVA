@@ -1325,7 +1325,7 @@ export function buildCapabilityCard(agentId: number): string {
     card += `\n\nDELIVERABLE FILES: whenever you produce a file the operator should keep (report, CSV, code, JSON, or a generated PDF), call save_artifact to store it and get a real download URL, then put that [Download …](url) link in your final answer. Do NOT claim a file exists or name a file you didn't save — an unsaved file is not downloadable and counts as a fabrication. To make a PDF: generate it in sandbox_exec (reportlab/fpdf2), base64 it, then save_artifact with encoding 'base64'.`;
   }
   if (names.includes("image_generate")) {
-    card += `\n\nIMAGES: to create an image/picture/logo/diagram, call image_generate with a detailed prompt — it saves the image and returns a markdown preview + download link to include in your answer.`;
+    card += `\n\nIMAGES: for ANY request for an image/picture/logo/illustration/render/artwork, call image_generate with a detailed prompt — it produces a REAL raster PNG and returns a preview + download link to put in your answer. Do NOT hand-code an SVG or merely describe the image; only produce SVG if the operator explicitly asks for SVG/vector.`;
   }
   if (agentId === ABBY_ID) {
     card += `\n\nYOUR SWARM (delegate each directive to the right CLAW):\n` +
