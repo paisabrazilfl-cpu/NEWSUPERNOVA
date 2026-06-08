@@ -74485,8 +74485,8 @@ var require_dist4 = __commonJS({
         const hashArray = new Uint8Array(hashBuffer);
         return btoa(String.fromCharCode(...hashArray));
       }
-      const { createHash } = __require("crypto");
-      const hash = createHash("sha256").update(data, "utf8").digest();
+      const { createHash: createHash2 } = __require("crypto");
+      const hash = createHash2("sha256").update(data, "utf8").digest();
       return hash.toString("base64");
     }
     function timeoutToSeconds(timeout) {
@@ -79169,7 +79169,7 @@ ${err.stdout}`.toLowerCase();
       const buildLogger = new DefaultBuildLogger(options == null ? void 0 : options.minLevel);
       return buildLogger.logger.bind(buildLogger);
     }
-    var import_node_crypto4 = __toESM2(__require("crypto"));
+    var import_node_crypto5 = __toESM2(__require("crypto"));
     var import_node_fs2 = __toESM2(__require("fs"));
     var import_node_path2 = __toESM2(__require("path"));
     function validateRelativePath(src, stackTrace) {
@@ -79253,7 +79253,7 @@ ${err.stdout}`.toLowerCase();
     }
     async function calculateFilesHash(src, dest, contextPath, ignorePatterns, resolveSymlinks, stackTrace) {
       const srcPath = import_node_path2.default.join(contextPath, src);
-      const hash = import_node_crypto4.default.createHash("sha256");
+      const hash = import_node_crypto5.default.createHash("sha256");
       const content = `COPY ${src} ${dest}`;
       hash.update(content);
       const files = await getAllFilesInPath(src, contextPath, ignorePatterns, true);
@@ -87926,6 +87926,18 @@ router7.post("/ai/complete", async (req, res) => {
 });
 var ai_default = router7;
 
+// src/lib/grounding.ts
+import { createHash } from "node:crypto";
+function groundingProof(sourceContext) {
+  const s = (sourceContext ?? "").trim();
+  if (!s) return { received: false, chars: 0, hash: "" };
+  return {
+    received: true,
+    chars: s.length,
+    hash: "sha256:" + createHash("sha256").update(s).digest("hex").slice(0, 12)
+  };
+}
+
 // src/orchestrator.ts
 var ABBY_COLOR = "#00e5ff";
 var MAX_AGENT_STEPS = 10;
@@ -88055,6 +88067,7 @@ async function postMessage(opts) {
 }
 async function executeAgentCommand(opts) {
   const { commandId, agent, command, payload, channelId, sourceContext } = opts;
+  logger.info({ claw: agent.name, ...groundingProof(sourceContext) }, "claw dispatch grounding");
   let taskId = null;
   try {
     await db.update(agentCommandsTable).set({ status: "running" }).where(eq(agentCommandsTable.id, commandId));
@@ -88293,6 +88306,7 @@ async function dispatchDirectives(directives, claws, channelId, priority, abby, 
 }
 async function orchestrateGoal(opts) {
   const { goal, channelId, priority, sourceContext } = opts;
+  logger.info({ phase: "abby-planning", ...groundingProof(sourceContext) }, "orchestration grounding");
   void sendInngestEvent("swarm/goal.received", { goal, channelId, priority });
   try {
     const agents = await db.select().from(agentsTable);
