@@ -12,6 +12,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useAiStream } from "@/hooks/useAiStream";
 import { GOAL_DRAFT_KEY } from "@/lib/handoff";
 import { MessageContent } from "@/components/chat/MessageContent";
+import { WhatsNewButton } from "@/components/WhatsNew";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import {
@@ -393,6 +394,7 @@ export default function ChatPage() {
             <Bot className="w-5 h-5 text-primary shrink-0" />
             <h1 className="text-sm font-semibold truncate">{activeChannel?.name ?? "OpenClaw"}</h1>
           </div>
+          <WhatsNewButton />
           <div className="relative">
             <button
               onClick={() => setExportOpen((v) => !v)}
@@ -659,7 +661,7 @@ function EmptyState({ onNew }: { onNew: () => void }) {
       </div>
       <div>
         <h2 className="text-lg font-semibold">Welcome to OpenClaw</h2>
-        <p className="text-sm text-muted-foreground mt-1 max-w-sm">Start a conversation and the AI agent swarm will research, browse, run code, and report back.</p>
+        <p className="text-sm text-muted-foreground mt-1 max-w-sm">Start a conversation and the AI agent swarm will research, browse, run code, generate images, build downloadable files, and report back. Attach files or use voice — tap <span className="text-primary font-medium">What's new</span> to see everything it can do.</p>
       </div>
       <button onClick={onNew} className="flex items-center gap-2 px-4 py-2 rounded-xl bg-primary/15 border border-primary/30 text-primary text-sm font-semibold hover:bg-primary/25 transition-colors">
         <Plus className="w-4 h-4" /> New chat
@@ -670,8 +672,9 @@ function EmptyState({ onNew }: { onNew: () => void }) {
 
 function EmptyConversation({ onPrompt }: { onPrompt: (p: string) => void }) {
   const prompts = [
-    "Research the top 3 open-source AI agent frameworks and compare them",
-    "Scrape news.ycombinator.com and list the top 5 stories",
+    "Generate an ultra realistic image of a husky in the snow",
+    "Research the EV market and build a downloadable PDF brief with TAM/SAM/SOM",
+    "Scrape news.ycombinator.com and give me the top 5 stories as a table",
     "Write and run a Python script that prints the first 20 primes",
   ];
   return (
