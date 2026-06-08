@@ -1200,6 +1200,56 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
     },
   },
 
+  instagram_post: {
+    name: "instagram_post",
+    description:
+      "Publish ONE image post to the operator's connected Instagram, end to end. Pass `image_url` (an ABSOLUTE public https URL — use exactly the URL image_generate returns) and `caption`. This does the whole Instagram flow server-side and correctly: create media container → publish → fetch permalink, and returns the live permalink. ALWAYS use this for 'post to my Instagram' instead of hand-driving composio_action — it can't be malformed. Posts exactly once.",
+    parameters: {
+      type: "object",
+      properties: {
+        image_url: { type: "string", description: "Absolute public https URL of the image (the URL image_generate returns)." },
+        caption: { type: "string", description: "The post caption (hook + body + hashtags)." },
+      },
+      required: ["image_url"],
+    },
+    run: async (args) => {
+      if (!composioConfigured()) return "error: Composio is not configured (set COMPOSIO_API_KEY).";
+      if (!composioExecuteEnabled()) return "error: Composio execution is disabled (operator must set ALLOW_COMPOSIO_EXECUTE=true).";
+      const imageUrl = String(args["image_url"] ?? "").trim();
+      const caption = args["caption"] != null ? String(args["caption"]) : "";
+      if (!/^https:\/\/\S+/i.test(imageUrl)) {
+        return "error: image_url must be an absolute https URL that Instagram can fetch (use the URL image_generate returns, e.g. https://<host>/api/uploads/<id>). A relative path will not work.";
+      }
+      const pick = (s: string): Record<string, unknown> | null => {
+        const nl = s.indexOf("\n");
+        try { return JSON.parse(nl >= 0 ? s.slice(nl + 1) : s) as Record<string, unknown>; } catch { return null; }
+      };
+      const dataId = (j: Record<string, unknown> | null): string | undefined =>
+        (((j?.["data"] as Record<string, unknown>)?.["id"]) as string | undefined);
+
+      // Step 1 — create the media container.
+      const r1 = await composioExecute({ toolkit: "instagram", endpoint: "/me/media", method: "POST", arguments: { image_url: imageUrl, caption } });
+      const creationId = dataId(pick(r1));
+      if (!creationId) return `error: Instagram did not create the media container.\n${r1.slice(0, 600)}`;
+
+      // Step 2 — publish it (containers can need a moment to process; retry briefly).
+      let publishedId: string | undefined;
+      let last = "";
+      for (let attempt = 0; attempt < 4 && !publishedId; attempt++) {
+        if (attempt > 0) await new Promise((res) => setTimeout(res, 3000));
+        const r2 = await composioExecute({ toolkit: "instagram", endpoint: "/me/media_publish", method: "POST", arguments: { creation_id: String(creationId) } });
+        last = r2;
+        publishedId = dataId(pick(r2));
+      }
+      if (!publishedId) return `error: Instagram container ${creationId} was created but publish failed.\n${last.slice(0, 600)}`;
+
+      // Step 3 — fetch the permalink as proof it's live.
+      const r3 = await composioExecute({ toolkit: "instagram", endpoint: `/${publishedId}?fields=permalink`, method: "GET" });
+      const permalink = ((pick(r3)?.["data"] as Record<string, unknown>)?.["permalink"]) as string | undefined;
+      return `✅ Instagram post is LIVE. media_id=${publishedId} (container ${creationId}).${permalink ? `\npermalink: ${permalink}` : "\n(permalink fetch returned no link, but publish succeeded)"}`;
+    },
+  },
+
   social_api: {
     name: "social_api",
     description:
@@ -1332,8 +1382,8 @@ export const AGENT_TOOLS: Record<number, string[]> = {
   2: ["code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "http_request", "web_scrape", "web_search", "tier1_sources", "memory_search", "memory_write", "vault_list", "save_artifact", "image_generate", "send_message"], // FORGE — code
   3: ["web_scrape", "web_screenshot", "web_search", "tier1_sources", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "save_artifact", "image_generate", "send_message"], // CRAWLER — browser
   4: ["memory_write", "memory_search", "web_search", "tier1_sources", "web_scrape", "http_request", "calculator", "vault_list", "save_artifact", "image_generate", "send_message"], // VAULT — memory/RAG
-  5: ["http_request", "web_scrape", "web_search", "tier1_sources", "code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_action", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task", "save_artifact", "image_generate", "send_message"], // WIRE — APIs + scheduling
-  6: ["web_scrape", "web_search", "tier1_sources", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_action", "save_artifact", "image_generate", "send_message"], // MR.NICE — social
+  5: ["http_request", "web_scrape", "web_search", "tier1_sources", "code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_action", "instagram_post", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task", "save_artifact", "image_generate", "send_message"], // WIRE — APIs + scheduling
+  6: ["web_scrape", "web_search", "tier1_sources", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_action", "instagram_post", "save_artifact", "image_generate", "send_message"], // MR.NICE — social
 };
 
 export function getToolNamesForAgent(agentId: number): string[] {
@@ -1384,6 +1434,9 @@ export function buildCapabilityCard(agentId: number): string {
     card += `\n\nCONNECTED APPS (Composio): the operator connects their apps — social like Instagram/YouTube/Reddit AND SaaS like Gmail/GitHub/Notion/Calendar/Sheets — in Settings → Connect Apps, which is COMPOSIO. To act on any of them, FIRST call composio_apps to see which are LIVE, THEN call composio_action on a live app. For a read with no obvious named action slug, use composio_action RAW PROXY mode: pass toolkit + endpoint (the app's REST path) + method, e.g. toolkit:'instagram', endpoint:'/me/media?fields=id,caption', method:'GET'.`;
     if (names.includes("social_accounts")) {
       card += ` NOTE: social_accounts/social_api is a SEPARATE native-OAuth path that is usually EMPTY for this operator — NEVER conclude an app is "not connected" from social_accounts alone. The operator's accounts live in COMPOSIO, so always check composio_apps before saying anything is unavailable.`;
+    }
+    if (names.includes("instagram_post")) {
+      card += ` TO POST AN IMAGE TO INSTAGRAM: call image_generate (it returns an ABSOLUTE public https URL), then call instagram_post with that exact image_url + your caption. instagram_post does the full create→publish→permalink flow server-side and returns the live link — do NOT hand-build the /me/media calls yourself, and NEVER upload the image to an external host (imgbb/imgur/etc.); the image_generate URL is already public.`;
     }
   }
   if (agentId === ABBY_ID) {
