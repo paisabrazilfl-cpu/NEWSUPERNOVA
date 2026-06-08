@@ -87563,7 +87563,10 @@ IMAGES: for ANY request for an image/picture/logo/illustration/render/artwork, c
   if (names.includes("composio_apps") || names.includes("composio_action")) {
     card += `
 
-CONNECTED SaaS APPS (Composio): the operator connects apps (Gmail, Slack, GitHub, Notion, Calendar, Sheets, \u2026) in Settings \u2192 Connect Apps. To act on one, FIRST call composio_apps to see which apps are LIVE for this operator right now, THEN call composio_action on a live app. Never assume an app is connected \u2014 check composio_apps. If the app you need isn't live, say so and tell the operator to connect it in Settings.`;
+CONNECTED APPS (Composio): the operator connects their apps \u2014 social like Instagram/YouTube/Reddit AND SaaS like Gmail/GitHub/Notion/Calendar/Sheets \u2014 in Settings \u2192 Connect Apps, which is COMPOSIO. To act on any of them, FIRST call composio_apps to see which are LIVE, THEN call composio_action on a live app. For a read with no obvious named action slug, use composio_action RAW PROXY mode: pass toolkit + endpoint (the app's REST path) + method, e.g. toolkit:'instagram', endpoint:'/me/media?fields=id,caption', method:'GET'.`;
+    if (names.includes("social_accounts")) {
+      card += ` NOTE: social_accounts/social_api is a SEPARATE native-OAuth path that is usually EMPTY for this operator \u2014 NEVER conclude an app is "not connected" from social_accounts alone. The operator's accounts live in COMPOSIO, so always check composio_apps before saying anything is unavailable.`;
+    }
   }
   if (agentId === ABBY_ID) {
     card += `
@@ -87919,7 +87922,7 @@ ${transcript}
     if (requestsConnectedAccountAction(message)) {
       const goal = `${message.trim()}
 
-(Operator request about their OWN connected account. Route to MR.NICE for social platforms via social_accounts/social_api, or WIRE for SaaS apps via composio_apps/composio_action. First confirm the account is connected (social_accounts / composio_apps), then perform the check/action and report what's really there. If it is NOT connected, say so plainly and tell the operator to connect it in Settings \u2192 Connect Apps \u2014 never claim you simply "have no access".)`;
+(Operator request about their OWN connected account. The operator connects apps via COMPOSIO (Settings \u2192 Connect Apps), so CHECK composio_apps FIRST \u2014 that is where their accounts actually live (Instagram, Gmail, GitHub, Calendar, Sheets, etc. are connected there). Then use composio_action on the live app: for a read with no obvious named action, use RAW PROXY mode \u2014 pass toolkit + endpoint + method (e.g. toolkit:'instagram', endpoint:'/me/media?fields=id,caption,timestamp', method:'GET'). IMPORTANT: social_accounts/social_api is a SEPARATE native-OAuth path that is usually EMPTY \u2014 do NOT conclude "not connected" from social_accounts alone; the app is almost certainly live in composio_apps. Only say it's not connected after checking composio_apps AND social_accounts. Report the real data returned (or the exact API error) \u2014 never a flat "no access" or "not connected" without having checked Composio.)`;
       const ackText = "**On it \u2014 checking your connected account now.** The swarm is verifying the connection and pulling what's there; results will stream into this channel.";
       sendEvent({ token: ackText });
       await finishWith(ackText, model, "abby-router");
