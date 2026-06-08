@@ -318,31 +318,62 @@ export async function composioExecute(input: {
   endpoint?: string;
   method?: string;
   body?: unknown;
+  parameters?: unknown;
   toolkit?: string;
   action?: string;
   arguments?: Record<string, unknown>;
   connectedAccountId?: string;
+  userId?: string;
 }): Promise<string> {
   const key = process.env["COMPOSIO_API_KEY"];
   if (!key) return "error: COMPOSIO_API_KEY is not set.";
   const base = (process.env["COMPOSIO_BASE_URL"] ?? "https://backend.composio.dev/api/v3.1").replace(/\/$/, "");
-  const endpoint = input.endpoint ?? "/tools/execute/proxy";
-  const method = (input.method ?? "POST").toUpperCase();
-  const body =
-    input.body ??
-    {
-      connectedAccountId: input.connectedAccountId,
-      toolkit: input.toolkit,
-      action: input.action,
+
+  // Auto-resolve the connected account for the toolkit when the caller didn't
+  // pass one — agents know the app ('instagram'), not the ca_… id.
+  let accId = input.connectedAccountId;
+  if (!accId && input.toolkit) {
+    try {
+      const conns = await composioListConnections();
+      const t = input.toolkit.toLowerCase();
+      accId =
+        (conns.find((c) => c.toolkit.toLowerCase() === t && /ACTIVE|CONNECTED|ENABLED/i.test(c.status)) ??
+          conns.find((c) => c.toolkit.toLowerCase() === t))?.id;
+    } catch { /* Composio returns a clear error below if the account is missing */ }
+  }
+
+  // Two execution modes, each with Composio's real v3 contract (snake_case):
+  //  - NAMED action:  POST /tools/execute/{TOOL_SLUG}  { arguments, connected_account_id }
+  //  - RAW proxy:     POST /tools/execute/proxy        { endpoint, method, connected_account_id, parameters }
+  let url: string;
+  let payload: Record<string, unknown>;
+  if (input.action) {
+    url = `${base}/tools/execute/${encodeURIComponent(input.action)}`;
+    payload = {
       arguments: input.arguments ?? {},
+      ...(accId ? { connected_account_id: accId } : {}),
+      ...(input.userId ? { user_id: input.userId } : {}),
     };
+  } else if (input.endpoint && input.method) {
+    url = `${base}/tools/execute/proxy`;
+    payload = {
+      endpoint: input.endpoint,
+      method: input.method.toUpperCase(),
+      ...(accId ? { connected_account_id: accId } : {}),
+      ...(Array.isArray(input.parameters) ? { parameters: input.parameters } : {}),
+      ...(input.body != null ? { body: input.body } : {}),
+    };
+  } else {
+    return "error: composio_action needs an `action` (tool slug like INSTAGRAM_LIST_POSTS), OR an `endpoint`+`method` for a raw proxy call (e.g. endpoint:'/me/media', method:'GET').";
+  }
+
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 30000);
   try {
-    const r = await fetch(`${base}${endpoint.startsWith("/") ? endpoint : `/${endpoint}`}`, {
-      method,
+    const r = await fetch(url, {
+      method: "POST",
       headers: { "x-api-key": key, "Content-Type": "application/json" },
-      body: method === "GET" ? undefined : JSON.stringify(body),
+      body: JSON.stringify(payload),
       signal: ctrl.signal,
     });
     const text = await r.text();
