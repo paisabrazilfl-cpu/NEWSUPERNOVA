@@ -47,7 +47,7 @@ import { embed, embeddingsConfigured, cosineSimilarity, parseEmbedding } from ".
 import { pineconeConfigured, pineconeUpsert, pineconeQuery } from "./lib/pinecone";
 import { runInSandbox, repoPr, sandboxConfigured, gitWriteConfigured } from "./lib/sandbox";
 import { TIER1_SOURCES, tier1SourcesText } from "./lib/sources";
-import { MARKETING_ENGINE } from "./lib/marketing";
+import { marketingPlaybook, MARKETING_SECTIONS } from "./lib/marketing";
 
 const STEEL_BASE = "https://api.steel.dev/v1";
 const FIRECRAWL_BASE = "https://api.firecrawl.dev/v1";
@@ -948,9 +948,18 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
   marketing_playbook: {
     name: "marketing_playbook",
     description:
-      "Return the Marketing Engine — the universal plug-and-play post→conversion playbook (works for ANY niche/offer/platform). Call this BEFORE writing ANY marketing content (post, caption, campaign, 'make it go viral', lead magnet, funnel, content calendar) and apply its framework: hook→problem→insight→value→CTA→follow-up, one goal + one CTA keyword, platform-tuned, accuracy-first (research & cite every claim — never fabricate stats/studies/testimonials). Then execute with image_generate → instagram_post/composio_action → schedule_task → memory_write.",
-    parameters: { type: "object", properties: {} },
-    run: async () => MARKETING_ENGINE,
+      "Return the Marketing Engine — the universal plug-and-play post→conversion playbook (ANY niche/offer/platform). Call with NO args BEFORE writing any marketing content for the core engine: hook→problem→insight→value→CTA→follow-up, one goal + one CTA keyword, platform-tuned, accuracy-first (research & cite every claim — never fabricate stats/studies/testimonials). Pass a `section` for the enterprise build (campaign_brief, offer_ladder, audience, post_templates, campaign_types, lead_magnets, dm_flow, landing_page, email_nurture, paid_media, channels, production, governance, qa, kpis, experiments, rollout). Execute with image_generate → instagram_post/composio_action → schedule_task → memory_write.",
+    parameters: {
+      type: "object",
+      properties: {
+        section: {
+          type: "string",
+          enum: Object.keys(MARKETING_SECTIONS),
+          description: "Optional deep module to return instead of the core engine.",
+        },
+      },
+    },
+    run: async (args) => marketingPlaybook(args["section"] != null ? String(args["section"]) : undefined),
   },
 
   tier1_sources: {

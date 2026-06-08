@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { MARKETING_ENGINE, MARKETING_ENGINE_POINTER } from "./marketing";
+import { MARKETING_ENGINE, MARKETING_ENGINE_POINTER, MARKETING_SECTIONS, marketingPlaybook } from "./marketing";
 
 describe("MARKETING_ENGINE — universal post→conversion playbook", () => {
   it("carries the full conversion chain, not just attention", () => {
@@ -35,5 +35,26 @@ describe("MARKETING_ENGINE — universal post→conversion playbook", () => {
   it("the persona pointer routes marketing tasks through the playbook + accuracy rule", () => {
     expect(MARKETING_ENGINE_POINTER).toContain("marketing_playbook");
     expect(MARKETING_ENGINE_POINTER.toLowerCase()).toContain("never fabricate");
+  });
+});
+
+describe("MARKETING_SECTIONS — enterprise deep modules, on demand", () => {
+  it("includes the key enterprise modules", () => {
+    for (const k of ["campaign_brief", "offer_ladder", "post_templates", "email_nurture", "paid_media", "governance", "qa", "kpis", "rollout"]) {
+      expect(MARKETING_SECTIONS[k], `missing section ${k}`).toBeTruthy();
+    }
+  });
+
+  it("compliance modules carry the real obligations (CAN-SPAM / FTC / GDPR / incrementality)", () => {
+    expect(MARKETING_SECTIONS["email_nurture"]!.body).toContain("CAN-SPAM");
+    expect(MARKETING_SECTIONS["governance"]!.body).toContain("FTC");
+    expect(MARKETING_SECTIONS["governance"]!.body).toContain("GDPR");
+    expect(MARKETING_SECTIONS["paid_media"]!.body.toLowerCase()).toContain("incrementality");
+  });
+
+  it("marketingPlaybook() returns core by default and a section when asked", () => {
+    expect(marketingPlaybook()).toBe(MARKETING_ENGINE);
+    expect(marketingPlaybook("campaign_brief")).toContain("Master Campaign Brief");
+    expect(marketingPlaybook("nonsense")).toContain("Available:");
   });
 });
