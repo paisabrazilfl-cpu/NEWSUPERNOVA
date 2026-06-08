@@ -41,6 +41,7 @@ import {
   composioConfigured,
   composioExecuteEnabled,
   composioExecute,
+  composioListConnections,
 } from "./lib/integrations";
 import { embed, embeddingsConfigured, cosineSimilarity, parseEmbedding } from "./lib/embeddings";
 import { pineconeConfigured, pineconeUpsert, pineconeQuery } from "./lib/pinecone";
@@ -1119,10 +1120,41 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
     },
   },
 
+  composio_apps: {
+    name: "composio_apps",
+    description:
+      "List which SaaS apps are LIVE/connected via Composio for this operator (Gmail, Slack, GitHub, Notion, Calendar, Sheets, …) and their connection status. ALWAYS call this before composio_action so you know exactly which apps you can act on — never assume an app is connected.",
+    parameters: { type: "object", properties: {} },
+    run: async () => {
+      if (!composioConfigured()) return "error: Composio is not configured (set COMPOSIO_API_KEY).";
+      let conns: Awaited<ReturnType<typeof composioListConnections>>;
+      try {
+        conns = await composioListConnections();
+      } catch (e) {
+        return `error: could not list Composio connections: ${String(e).slice(0, 200)}`;
+      }
+      const active = conns.filter((c) => /ACTIVE|CONNECTED|ENABLED/i.test(c.status));
+      const execNote = composioExecuteEnabled()
+        ? "Execution is ENABLED — you may call composio_action on the connected apps below."
+        : "Execution is DISABLED (operator must set ALLOW_COMPOSIO_EXECUTE=true). You can see connections but cannot act yet.";
+      if (!conns.length) {
+        return `No Composio apps are connected yet. ${execNote}\nThe operator connects apps in Settings → Connect Apps (Composio).`;
+      }
+      const lines = conns.map((c) => `${/ACTIVE|CONNECTED|ENABLED/i.test(c.status) ? "✓ live" : "• " + c.status}  ${c.toolkit}  (account ${c.id})`);
+      return [
+        `Composio connected apps (${active.length} live of ${conns.length}):`,
+        ...lines,
+        "",
+        execNote,
+        "Use composio_action with the toolkit slug above (e.g. toolkit: 'github') to act on a live app.",
+      ].join("\n");
+    },
+  },
+
   composio_action: {
     name: "composio_action",
     description:
-      "Execute an authenticated action on a connected SaaS app (Gmail, Slack, GitHub, Notion, Calendar, Sheets, CRM, …) via Composio's tool/auth router. Use for real external actions on accounts the operator has connected in Composio. Disabled unless the operator has enabled it.",
+      "Execute an authenticated action on a connected SaaS app (Gmail, Slack, GitHub, Notion, Calendar, Sheets, CRM, …) via Composio's tool/auth router. Use for real external actions on accounts the operator has connected in Composio. Call composio_apps FIRST to confirm the app is live. Disabled unless the operator has enabled it.",
     parameters: {
       type: "object",
       properties: {
@@ -1279,7 +1311,7 @@ export const AGENT_TOOLS: Record<number, string[]> = {
   2: ["code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "http_request", "web_scrape", "web_search", "tier1_sources", "memory_search", "memory_write", "vault_list", "save_artifact", "image_generate", "send_message"], // FORGE — code
   3: ["web_scrape", "web_screenshot", "web_search", "tier1_sources", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "save_artifact", "image_generate", "send_message"], // CRAWLER — browser
   4: ["memory_write", "memory_search", "web_search", "tier1_sources", "web_scrape", "http_request", "calculator", "vault_list", "save_artifact", "image_generate", "send_message"], // VAULT — memory/RAG
-  5: ["http_request", "web_scrape", "web_search", "tier1_sources", "code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_action", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task", "save_artifact", "image_generate", "send_message"], // WIRE — APIs + scheduling
+  5: ["http_request", "web_scrape", "web_search", "tier1_sources", "code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_action", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task", "save_artifact", "image_generate", "send_message"], // WIRE — APIs + scheduling
   6: ["web_scrape", "web_search", "tier1_sources", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "save_artifact", "image_generate", "send_message"], // MR.NICE — social
 };
 
@@ -1326,6 +1358,9 @@ export function buildCapabilityCard(agentId: number): string {
   }
   if (names.includes("image_generate")) {
     card += `\n\nIMAGES: for ANY request for an image/picture/logo/illustration/render/artwork, call image_generate with a detailed prompt — it produces a REAL raster PNG and returns a preview + download link to put in your answer. Do NOT hand-code an SVG or merely describe the image; only produce SVG if the operator explicitly asks for SVG/vector.`;
+  }
+  if (names.includes("composio_apps") || names.includes("composio_action")) {
+    card += `\n\nCONNECTED SaaS APPS (Composio): the operator connects apps (Gmail, Slack, GitHub, Notion, Calendar, Sheets, …) in Settings → Connect Apps. To act on one, FIRST call composio_apps to see which apps are LIVE for this operator right now, THEN call composio_action on a live app. Never assume an app is connected — check composio_apps. If the app you need isn't live, say so and tell the operator to connect it in Settings.`;
   }
   if (agentId === ABBY_ID) {
     card += `\n\nYOUR SWARM (delegate each directive to the right CLAW):\n` +

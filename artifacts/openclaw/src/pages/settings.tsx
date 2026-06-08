@@ -210,16 +210,37 @@ function VaultPanel() {
         </button>
       </div>
 
+      {/* Section sub-nav — Composio ("Connect Apps") is a first-class, permanent tab here. */}
+      <div className="sticky top-0 z-20 border-b border-card-border bg-background/90 backdrop-blur px-4 sm:px-8">
+        <div className="max-w-3xl mx-auto flex gap-1 overflow-x-auto py-2">
+          {[
+            { id: "integrations", label: "Integrations" },
+            { id: "social", label: "Social" },
+            { id: "connect-apps", label: "Connect Apps" },
+            { id: "vault", label: "Vault" },
+          ].map((s) => (
+            <button
+              key={s.id}
+              onClick={() => document.getElementById(s.id)?.scrollIntoView({ behavior: "smooth", block: "start" })}
+              data-testid={`settings-tab-${s.id}`}
+              className="shrink-0 text-xs font-semibold px-3 py-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-card-border/50 transition-colors"
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
       <div className="flex-1 overflow-y-auto p-8 relative z-10">
         <div className="max-w-3xl mx-auto space-y-8">
           {/* Third-party integration status */}
-          <IntegrationsStatus />
+          <div id="integrations" className="scroll-mt-20"><IntegrationsStatus /></div>
 
           {/* Official social integrations */}
-          <SocialIntegrations />
+          <div id="social" className="scroll-mt-20"><SocialIntegrations /></div>
 
-          {/* Composio — connect SaaS apps (Gmail, Slack, GitHub, …) */}
-          <ComposioIntegrations />
+          {/* Composio — connect SaaS apps (Gmail, Slack, GitHub, …). First-class, permanent. */}
+          <div id="connect-apps" className="scroll-mt-20"><ComposioIntegrations /></div>
 
           {/* Security notice */}
           <div className="flex gap-3 rounded-lg border border-[#bf00ff]/30 bg-[#bf00ff]/5 p-4">
@@ -237,8 +258,9 @@ function VaultPanel() {
 
           {/* Add form */}
           <form
+            id="vault"
             onSubmit={handleSubmit}
-            className="rounded-lg border border-card-border bg-card p-6 space-y-4"
+            className="scroll-mt-20 rounded-lg border border-card-border bg-card p-6 space-y-4"
           >
             <div className="flex items-center gap-2 text-foreground font-semibold">
               <Plus className="w-4 h-4 text-[#00e5ff]" />
