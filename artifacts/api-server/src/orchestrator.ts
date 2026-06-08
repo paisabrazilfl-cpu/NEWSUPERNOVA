@@ -283,8 +283,9 @@ export async function executeAgentCommand(opts: {
   command: string;
   payload: string | null;
   channelId: number;
+  sourceContext?: string | null;
 }): Promise<string> {
-  const { commandId, agent, command, payload, channelId } = opts;
+  const { commandId, agent, command, payload, channelId, sourceContext } = opts;
   let taskId: number | null = null;
   try {
     await db
@@ -365,6 +366,9 @@ export async function executeAgentCommand(opts: {
         role: "user",
         content:
           `Directive from ABBY (orchestrator): ${command}\n${payload ? `Payload: ${payload}\n` : ""}` +
+          (sourceContext && sourceContext.trim()
+            ? `\nOPERATOR-PROVIDED SOURCE MATERIAL — this is your primary input. Build directly from it; do NOT memory_search for it (it is right here):\n"""\n${sourceContext.slice(0, 30000)}\n"""\n`
+            : "") +
           (priming ? `\nLive page content already retrieved for you:\n"""\n${priming}\n"""\n` : "") +
           `\nExecute the directive now. Use your tools for anything requiring real data or computation.`,
       },
@@ -555,6 +559,7 @@ async function dispatchDirectives(
   channelId: number,
   priority: string,
   abby: Agent | null,
+  sourceContext?: string | null,
 ): Promise<Array<{ name: string; result: string }>> {
   if (isSwarmPaused()) {
     await postMessage({
@@ -589,6 +594,7 @@ async function dispatchDirectives(
       command: d.directive,
       payload: null,
       channelId,
+      sourceContext,
     });
     return { name: agent.name, result };
   });
@@ -605,8 +611,9 @@ export async function orchestrateGoal(opts: {
   goal: string;
   channelId: number;
   priority: string;
+  sourceContext?: string | null;
 }): Promise<void> {
-  const { goal, channelId, priority } = opts;
+  const { goal, channelId, priority, sourceContext } = opts;
   void sendInngestEvent("swarm/goal.received", { goal, channelId, priority });
   try {
     const agents = await db.select().from(agentsTable);
@@ -633,7 +640,7 @@ export async function orchestrateGoal(opts: {
       .join(", ");
     const planSystem = (AGENT_PERSONAS[ABBY_ID] ?? "You are ABBY, the swarm orchestrator.") + EXECUTION_DOCTRINE + RESEARCH_PLAYBOOKS;
     const planUser = `Operator goal: "${goal}"
-
+${sourceContext && sourceContext.trim() ? `\nThe operator provided this source material to work from (decompose against THIS; the CLAWs will receive it too — do not tell them to search memory for it):\n"""\n${sourceContext.slice(0, 12000)}\n"""\n` : ""}
 Available CLAWs you command: ${roster}.
 
 Decompose this goal into precise, exhaustive, granular directives — ONE per CLAW that is genuinely relevant (skip CLAWs that add nothing). Together the directives must cover EVERY part of the goal; leave nothing implied. Each directive MUST be:
@@ -684,6 +691,7 @@ Respond with ONLY a JSON array (no prose, no code fences) of objects shaped: {"a
       channelId,
       priority,
       abby,
+      sourceContext,
     );
 
     // ── ABBY coordinator pass ──
@@ -725,7 +733,7 @@ Otherwise respond with ONLY a JSON array (no prose, no code fences) of up to 2 f
               .join("\n"),
           messageType: "agent",
         });
-        const more = await dispatchDirectives(followups, claws, channelId, priority, abby);
+        const more = await dispatchDirectives(followups, claws, channelId, priority, abby, sourceContext);
         results.push(...more);
       }
     }
