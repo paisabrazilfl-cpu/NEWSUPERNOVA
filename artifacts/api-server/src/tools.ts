@@ -51,6 +51,24 @@ import { TIER1_SOURCES, tier1SourcesText } from "./lib/sources";
 const STEEL_BASE = "https://api.steel.dev/v1";
 const FIRECRAWL_BASE = "https://api.firecrawl.dev/v1";
 
+/**
+ * Absolute, publicly-reachable base URL for serving saved files. Saved artifacts
+ * and generated images MUST be referenced by an absolute https URL so external
+ * services (e.g. Instagram fetching an image_url to publish) can actually fetch
+ * them — a relative "/api/uploads/ID" becomes a broken "https://api.uploads/ID"
+ * when handed to a third-party API. Render injects RENDER_EXTERNAL_URL.
+ */
+function publicBaseUrl(): string {
+  return (
+    process.env["PUBLIC_BASE_URL"] ||
+    process.env["RENDER_EXTERNAL_URL"] ||
+    "https://bos-aura.onrender.com"
+  ).replace(/\/$/, "");
+}
+function uploadUrl(id: number, download = false): string {
+  return `${publicBaseUrl()}/api/uploads/${id}${download ? "?download=1" : ""}`;
+}
+
 // ─── SSRF guard ──────────────────────────────────────────────────────────────
 // http_request makes outbound calls *from the server runtime*, so an unguarded
 // URL lets a model probe internal services or the cloud metadata endpoint. We
@@ -994,7 +1012,7 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
           .insert(attachmentsTable)
           .values({ filename, mimeType, kind, sizeBytes: bytes, data: base64, extractedText: null })
           .returning();
-        const url = `/api/uploads/${row.id}?download=1`;
+        const url = uploadUrl(row.id, true);
         return `saved "${filename}" (${bytes} bytes, ${mimeType}). Operator download link — INCLUDE THIS in your final answer:\n[Download ${filename}](${url})`;
       } catch (e) {
         return `error: could not save artifact: ${String(e instanceof Error ? e.message : e).slice(0, 200)}`;
@@ -1047,8 +1065,8 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
           .insert(attachmentsTable)
           .values({ filename, mimeType: "image/png", kind: "image", sizeBytes: buf.length, data: b64, extractedText: null })
           .returning();
-        const url = `/api/uploads/${row.id}`;
-        return `generated image "${filename}" (${buf.length} bytes). Show this in your answer:\n![${prompt.slice(0, 60)}](${url})\n[Download ${filename}](${url}?download=1)`;
+        const url = uploadUrl(row.id);
+        return `generated image "${filename}" (${buf.length} bytes). Its PUBLIC image URL (use this directly as image_url when posting to Instagram/social, or as the link in your answer):\n${url}\n\nShow it in your answer:\n![${prompt.slice(0, 60)}](${url})\n[Download ${filename}](${url}?download=1)`;
       } catch (e) {
         return `error: image generation failed: ${String(e instanceof Error ? e.message : e).slice(0, 200)}`;
       } finally {

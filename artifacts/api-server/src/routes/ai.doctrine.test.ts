@@ -88,9 +88,18 @@ describe("requestsConnectedAccountAction — dispatch operator-account requests,
       "send a DM on my Instagram",
       "do I have unread Slack messages",
       "open a GitHub issue on my repo",
+      "Post to my IG right now as a test Ai news 2d image render",
     ]) {
       expect(requestsConnectedAccountAction(m), `should dispatch: "${m}"`).toBe(true);
     }
+  });
+
+  it("an image-post-to-IG request takes the connected-account path, not the generic artifact path", () => {
+    const m = "Post to my IG right now a 2d image render of AI news";
+    // both detectors fire, but the override checks connected-account FIRST/guards
+    // the artifact path, so this routes to the single Composio agent.
+    expect(requestsConnectedAccountAction(m)).toBe(true);
+    expect(requestsImage(m)).toBe(true);
   });
 
   it("does NOT trigger on unrelated conversation", () => {
