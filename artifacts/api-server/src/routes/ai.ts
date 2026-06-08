@@ -398,6 +398,7 @@ router.post("/ai/chat", async (req, res) => {
         "Respond with ONLY minified JSON, no markdown and no prose: " +
         '{"dispatch": true|false, "goal": "<self-contained instruction for the swarm; required if dispatch=true>", "reply": "<your conversational answer; required if dispatch=false>"}. ' +
         "If the request needs real or current information you don't already have, prefer dispatch=true. " +
+        "ALSO dispatch=true whenever the request asks you to PRODUCE or SAVE a downloadable file/artifact (deck, report, PDF, CSV, document, code file), run code, fill/submit a form, or do any multi-step build — those need tools (save_artifact, code, web) that only the CLAWs have, so answering inline cannot actually create a downloadable file. Only answer inline (dispatch=false) for pure conversation or a quick factual answer that needs no tool and no saved file. " +
         "The `reply` must be ABBY's actual answer to the operator AS ABBY — never describe this router, the classification, or that you are deciding anything; the operator must never see routing internals.";
       const decRes = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
         method: "POST",
