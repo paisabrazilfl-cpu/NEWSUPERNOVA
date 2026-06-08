@@ -119,6 +119,13 @@ ALTER TABLE "agent_commands" ADD COLUMN IF NOT EXISTS "model" text;
 ALTER TABLE "agent_commands" ADD COLUMN IF NOT EXISTS "grounding_chars" integer;
 ALTER TABLE "agent_commands" ADD COLUMN IF NOT EXISTS "grounding_hash" text;
 
+-- Reclassify historical restart interruptions: a deploy/redeploy killing
+-- in-flight work was previously marked 'failed', polluting the failure view as
+-- if the CLAW failed. Re-tag them 'interrupted' so they stop counting as agent
+-- failures (the recovery routine now writes 'interrupted' directly).
+UPDATE "agent_commands" SET "status" = 'interrupted'
+  WHERE "status" = 'failed' AND "result" LIKE 'Interrupted by server restart%';
+
 CREATE TABLE IF NOT EXISTS "vault_secrets" (
   "id" serial PRIMARY KEY NOT NULL,
   "name" text NOT NULL UNIQUE,

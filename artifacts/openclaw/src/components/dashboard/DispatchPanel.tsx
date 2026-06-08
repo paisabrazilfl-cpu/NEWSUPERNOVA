@@ -31,6 +31,7 @@ const STATUS_STYLE: Record<string, string> = {
   running: "text-[#00e5ff] bg-[#00e5ff]/10 border-[#00e5ff]/40",
   done: "text-[#00cc88] bg-[#00cc88]/10 border-[#00cc88]/40",
   failed: "text-[#ff2d78] bg-[#ff2d78]/10 border-[#ff2d78]/40",
+  interrupted: "text-amber-400 bg-amber-400/10 border-amber-400/40",
 };
 
 export function DispatchPanel() {
