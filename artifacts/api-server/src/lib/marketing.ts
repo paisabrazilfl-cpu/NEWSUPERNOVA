@@ -66,6 +66,14 @@ CONTENT PILLARS (any niche): Problem · Mistakes · Framework · Proof · Proces
 CTA LADDER (match to intent): Soft ("save this") · Engagement ("comment YES") · Lead ("comment GUIDE") · DM ("DM me AUDIT") · Sales ("book a call") · Retarget ("ready? message me").
 Keyword bank: GUIDE · CHECKLIST · MAP · AUDIT · TEMPLATE · PLAN · SYSTEM · FIX · START · SCALE.
 
+DIFFERENTIATE THE CHANNEL FIRST (each has its own format, length, cadence, compliance — never paste the same content everywhere):
+- SOCIAL POST (Instagram/LinkedIn/X/TikTok/Facebook): use the 6-beat post formula + PLATFORM ADAPTATION; publish via instagram_post / composio_action. Public CTA = comment a keyword → move to DM.
+- EMAIL (regular/direct marketing): use the email_nurture module — clear value-driven subject line, ONE message + ONE CTA, and CAN-SPAM compliance (identify the sender, a valid physical postal address, a working unsubscribe). Send via composio_action on Gmail. CTA = click/reply/book, not "comment".
+- PAID ADS: use the paid_media module — funnel by temperature (cold → retarget → convert) and measure with incrementality, not just platform-reported conversions.
+- SMS: short, consent-based, with a clear opt-out (STOP); reminders/urgent follow-up only.
+- LANDING PAGE / SEO / WEBINAR: see the landing_page, channels, and campaign_types modules.
+Rule: identify whether the task is SOCIAL, EMAIL, PAID, SMS, or WEB first, then apply that channel's play and compliance — they are NOT interchangeable.
+
 PLATFORM ADAPTATION (same machine, tuned; digital is ~61% of marketing spend per Gartner 2025 — distribution discipline matters):
 - Instagram: hook in line 1 (all that shows before "more"); tight paragraphs + emoji rhythm; 8–15 mixed-reach hashtags; scroll-stopping image/carousel/Reel. Signals that matter: SAVES + SHARES + comments + dwell. Pin a first comment with the CTA.
 - LinkedIn: longer story + insight, NO hashtag spam (3–5), reward dwell; CTA = comment/DM, soft; best for B2B authority.

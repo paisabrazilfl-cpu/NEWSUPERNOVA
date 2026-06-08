@@ -25,6 +25,14 @@ describe("MARKETING_ENGINE — universal post→conversion playbook", () => {
     expect(MARKETING_ENGINE).toContain("CTA LADDER");
   });
 
+  it("explicitly differentiates the channel (social vs email vs paid vs sms)", () => {
+    expect(MARKETING_ENGINE).toContain("DIFFERENTIATE THE CHANNEL FIRST");
+    expect(MARKETING_ENGINE).toContain("EMAIL");
+    expect(MARKETING_ENGINE).toContain("CAN-SPAM");
+    expect(MARKETING_ENGINE).toContain("PAID ADS");
+    expect(MARKETING_ENGINE).toContain("SMS");
+  });
+
   it("ties the engine to this swarm's real tools (executable, not just advice)", () => {
     expect(MARKETING_ENGINE).toContain("HOW THIS SWARM RUNS THE ENGINE");
     for (const tool of ["image_generate", "instagram_post", "schedule_task", "memory_write"]) {
