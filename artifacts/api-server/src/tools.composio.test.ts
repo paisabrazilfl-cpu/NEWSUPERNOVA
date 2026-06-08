@@ -31,6 +31,14 @@ describe("Composio: agents know which apps are LIVE", () => {
     expect(TOOL_REGISTRY["composio_action"]!.description.toLowerCase()).toContain("composio_apps");
   });
 
+  it("provides a deterministic instagram_post tool wired to the social/API agents", () => {
+    expect(TOOL_REGISTRY["instagram_post"]).toBeTruthy();
+    expect(TOOL_REGISTRY["instagram_post"]!.description.toLowerCase()).toContain("permalink");
+    for (const id of [ABBY, WIRE, MR_NICE]) {
+      expect(isToolAllowed(id, "instagram_post"), `agent #${id} should have instagram_post`).toBe(true);
+    }
+  });
+
   it("WIRE's capability card instructs checking live Composio apps before acting", () => {
     const card = buildCapabilityCard(WIRE);
     expect(card).toContain("composio_apps");
