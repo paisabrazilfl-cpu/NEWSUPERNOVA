@@ -47,6 +47,7 @@ import { embed, embeddingsConfigured, cosineSimilarity, parseEmbedding } from ".
 import { pineconeConfigured, pineconeUpsert, pineconeQuery } from "./lib/pinecone";
 import { runInSandbox, repoPr, sandboxConfigured, gitWriteConfigured } from "./lib/sandbox";
 import { TIER1_SOURCES, tier1SourcesText } from "./lib/sources";
+import { MARKETING_ENGINE } from "./lib/marketing";
 
 const STEEL_BASE = "https://api.steel.dev/v1";
 const FIRECRAWL_BASE = "https://api.firecrawl.dev/v1";
@@ -944,6 +945,14 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
     run: async (args) => safeCalc(String(args["expression"] ?? "")),
   },
 
+  marketing_playbook: {
+    name: "marketing_playbook",
+    description:
+      "Return the Marketing Engine — the universal plug-and-play post→conversion playbook (works for ANY niche/offer/platform). Call this BEFORE writing ANY marketing content (post, caption, campaign, 'make it go viral', lead magnet, funnel, content calendar) and apply its framework: hook→problem→insight→value→CTA→follow-up, one goal + one CTA keyword, platform-tuned, accuracy-first (research & cite every claim — never fabricate stats/studies/testimonials). Then execute with image_generate → instagram_post/composio_action → schedule_task → memory_write.",
+    parameters: { type: "object", properties: {} },
+    run: async () => MARKETING_ENGINE,
+  },
+
   tier1_sources: {
     name: "tier1_sources",
     description:
@@ -1382,8 +1391,8 @@ export const AGENT_TOOLS: Record<number, string[]> = {
   2: ["code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "http_request", "web_scrape", "web_search", "tier1_sources", "memory_search", "memory_write", "vault_list", "save_artifact", "image_generate", "send_message"], // FORGE — code
   3: ["web_scrape", "web_screenshot", "web_search", "tier1_sources", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "save_artifact", "image_generate", "send_message"], // CRAWLER — browser
   4: ["memory_write", "memory_search", "web_search", "tier1_sources", "web_scrape", "http_request", "calculator", "vault_list", "save_artifact", "image_generate", "send_message"], // VAULT — memory/RAG
-  5: ["http_request", "web_scrape", "web_search", "tier1_sources", "code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_action", "instagram_post", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task", "save_artifact", "image_generate", "send_message"], // WIRE — APIs + scheduling
-  6: ["web_scrape", "web_search", "tier1_sources", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_action", "instagram_post", "save_artifact", "image_generate", "send_message"], // MR.NICE — social
+  5: ["http_request", "web_scrape", "web_search", "tier1_sources", "marketing_playbook", "code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_action", "instagram_post", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task", "save_artifact", "image_generate", "send_message"], // WIRE — APIs + scheduling
+  6: ["web_scrape", "web_search", "tier1_sources", "marketing_playbook", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_action", "instagram_post", "save_artifact", "image_generate", "send_message"], // MR.NICE — social
 };
 
 export function getToolNamesForAgent(agentId: number): string[] {
