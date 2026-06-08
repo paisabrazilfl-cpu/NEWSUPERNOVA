@@ -47,6 +47,7 @@ import {
   type ToolContext,
 } from "./tools";
 import { sendInngestEvent, traceLlmRun } from "./lib/integrations";
+import { groundingProof } from "./lib/grounding";
 
 type Agent = typeof agentsTable.$inferSelect;
 
@@ -286,6 +287,9 @@ export async function executeAgentCommand(opts: {
   sourceContext?: string | null;
 }): Promise<string> {
   const { commandId, agent, command, payload, channelId, sourceContext } = opts;
+  // Grounding proof: prove the operator's source material reached this CLAW
+  // (length + hash only, never the raw content).
+  logger.info({ claw: agent.name, ...groundingProof(sourceContext) }, "claw dispatch grounding");
   let taskId: number | null = null;
   try {
     await db
@@ -614,6 +618,7 @@ export async function orchestrateGoal(opts: {
   sourceContext?: string | null;
 }): Promise<void> {
   const { goal, channelId, priority, sourceContext } = opts;
+  logger.info({ phase: "abby-planning", ...groundingProof(sourceContext) }, "orchestration grounding");
   void sendInngestEvent("swarm/goal.received", { goal, channelId, priority });
   try {
     const agents = await db.select().from(agentsTable);
