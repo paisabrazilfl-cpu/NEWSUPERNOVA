@@ -54083,6 +54083,9 @@ var init_commands = __esm({
       priority: text("priority").notNull().default("normal"),
       status: text("status").notNull().default("queued"),
       result: text("result"),
+      model: text("model"),
+      groundingChars: integer("grounding_chars"),
+      groundingHash: text("grounding_hash"),
       createdAt: timestamp("created_at").notNull().defaultNow(),
       completedAt: timestamp("completed_at")
     });
@@ -88157,10 +88160,12 @@ async function postMessage(opts) {
 }
 async function executeAgentCommand(opts) {
   const { commandId, agent, command, payload, channelId, sourceContext } = opts;
-  logger.info({ claw: agent.name, ...groundingProof(sourceContext) }, "claw dispatch grounding");
+  const proof = groundingProof(sourceContext);
+  const dispatchModel = resolveModel(agent.id, agent.model, void 0);
+  logger.info({ claw: agent.name, model: dispatchModel, ...proof }, "claw dispatch grounding");
   let taskId = null;
   try {
-    await db.update(agentCommandsTable).set({ status: "running" }).where(eq(agentCommandsTable.id, commandId));
+    await db.update(agentCommandsTable).set({ status: "running", model: dispatchModel, groundingChars: proof.chars, groundingHash: proof.hash || null }).where(eq(agentCommandsTable.id, commandId));
     await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, agent.id));
     const [task] = await db.insert(tasksTable).values({
       title: command.slice(0, 140),
@@ -90000,6 +90005,11 @@ CREATE TABLE IF NOT EXISTS "agent_memory" (
 
 -- Backfill the embedding column on databases created before semantic memory.
 ALTER TABLE "agent_memory" ADD COLUMN IF NOT EXISTS "embedding" text;
+
+-- Dispatch observability: model + grounding proof per directive (Dispatch panel).
+ALTER TABLE "agent_commands" ADD COLUMN IF NOT EXISTS "model" text;
+ALTER TABLE "agent_commands" ADD COLUMN IF NOT EXISTS "grounding_chars" integer;
+ALTER TABLE "agent_commands" ADD COLUMN IF NOT EXISTS "grounding_hash" text;
 
 CREATE TABLE IF NOT EXISTS "vault_secrets" (
   "id" serial PRIMARY KEY NOT NULL,
