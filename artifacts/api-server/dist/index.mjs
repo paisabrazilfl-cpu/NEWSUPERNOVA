@@ -87957,7 +87957,7 @@ ${transcript}
       const ackText = "**On it \u2014 checking your connected account now.** The swarm is verifying the connection and pulling what's there; results will stream into this channel.";
       sendEvent({ token: ackText });
       await finishWith(ackText, model, "abby-router");
-      orchestrateGoal({ goal, channelId, priority: "high", sourceContext: dispatchContext }).catch(async (e) => {
+      orchestrateGoal({ goal, channelId, priority: "high", sourceContext: dispatchContext, forceAgentId: 5 }).catch(async (e) => {
         req.log.error({ e }, "orchestrateGoal (connected-account override) failed");
         await db.insert(messagesTable).values({
           channelId,
@@ -88575,7 +88575,7 @@ async function dispatchDirectives(directives, claws, channelId, priority, abby, 
   return settled.filter((r) => r !== null);
 }
 async function orchestrateGoal(opts) {
-  const { goal, channelId, priority, sourceContext } = opts;
+  const { goal, channelId, priority, sourceContext, forceAgentId } = opts;
   logger.info({ phase: "abby-planning", ...groundingProof(sourceContext) }, "orchestration grounding");
   void sendInngestEvent("swarm/goal.received", { goal, channelId, priority });
   try {
@@ -88612,8 +88612,13 @@ Decompose this goal into precise, exhaustive, granular directives \u2014 ONE per
 
 Respond with ONLY a JSON array (no prose, no code fences) of objects shaped: {"agentId": <number>, "directive": "<single, fully-specified instruction>"}. Maximum 5 directives.`;
     const model = resolveModel(ABBY_ID2, abby?.model, void 0);
-    const planRaw = await completeChat(model, planSystem, planUser);
-    let directives = parseDirectives(planRaw, claws);
+    let directives;
+    if (forceAgentId && claws.some((c) => c.id === forceAgentId)) {
+      directives = [{ agentId: forceAgentId, directive: goal }];
+    } else {
+      const planRaw = await completeChat(model, planSystem, planUser);
+      directives = parseDirectives(planRaw, claws);
+    }
     if (directives.length === 0) {
       const url2 = extractUrl(goal);
       const fallback = (url2 ? claws.find((c) => isBrowserAgent(c)) : null) ?? claws.find((c) => c.id === 2) ?? claws[0];
@@ -88641,7 +88646,7 @@ Respond with ONLY a JSON array (no prose, no code fences) of objects shaped: {"a
       abby,
       sourceContext
     );
-    if (results.length && !isSwarmPaused()) {
+    if (results.length && !isSwarmPaused() && !forceAgentId) {
       await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, ABBY_ID2));
       const reviewUser = `Operator goal: "${goal}"
 
