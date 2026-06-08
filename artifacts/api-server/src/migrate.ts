@@ -147,6 +147,15 @@ CREATE TABLE IF NOT EXISTS "attachments" (
   "extracted_text" text,
   "created_at" timestamp DEFAULT now() NOT NULL
 );
+
+-- Indexes for the hot read paths the dashboard polls every few seconds. Without
+-- these, each poll seq-scans + sorts and holds a pool connection longer, which
+-- (under concurrent orchestration writes) caused reads to hang and return empty.
+CREATE INDEX IF NOT EXISTS "messages_channel_ts_idx" ON "messages" ("channel_id", "timestamp");
+CREATE INDEX IF NOT EXISTS "agent_commands_created_idx" ON "agent_commands" ("created_at");
+CREATE INDEX IF NOT EXISTS "tool_calls_agent_idx" ON "tool_calls" ("agent_id");
+CREATE INDEX IF NOT EXISTS "tasks_status_idx" ON "tasks" ("status");
+CREATE INDEX IF NOT EXISTS "agent_memory_agent_idx" ON "agent_memory" ("agent_id");
 `;
 
 const SEED_AGENTS = `

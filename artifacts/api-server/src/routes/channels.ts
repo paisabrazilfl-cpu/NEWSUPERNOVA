@@ -76,11 +76,14 @@ router.get("/:channelId/messages", async (req, res) => {
   const channelId = parseInt(req.params.channelId);
   if (isNaN(channelId)) return res.status(400).json({ error: "Invalid channel ID" });
   try {
-    const messages = await db.select().from(messagesTable)
+    // Fetch the most RECENT 100 (uses the messages_channel_ts_idx), then return
+    // them in chronological order. Ordering ascending + limit returned the
+    // OLDEST 100, so a busy channel's newest messages never appeared.
+    const recent = await db.select().from(messagesTable)
       .where(eq(messagesTable.channelId, channelId))
-      .orderBy(messagesTable.timestamp)
+      .orderBy(desc(messagesTable.timestamp))
       .limit(100);
-    return res.json(messages.map(m => ({
+    return res.json(recent.reverse().map(m => ({
       ...m,
       timestamp: m.timestamp.toISOString(),
     })));
