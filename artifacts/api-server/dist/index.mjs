@@ -85290,48 +85290,58 @@ router6.get("/status", async (req, res) => {
   }
 });
 router6.post("/pause", async (req, res) => {
-  swarmPaused = true;
-  await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.status, "thinking"));
-  await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.status, "executing"));
-  const [agentStats] = await db.select({
-    total: sql`count(*)::int`,
-    active: sql`count(*) filter (where status != 'idle')::int`
-  }).from(agentsTable);
-  const [taskStats] = await db.select({
-    running: sql`count(*) filter (where status = 'running')::int`,
-    completed: sql`count(*) filter (where status = 'completed')::int`
-  }).from(tasksTable);
-  const [msgStats] = await db.select({ total: sql`count(*)::int` }).from(messagesTable);
-  res.json({
-    paused: swarmPaused,
-    activeAgents: agentStats?.active ?? 0,
-    totalAgents: agentStats?.total ?? 0,
-    runningTasks: taskStats?.running ?? 0,
-    completedTasks: taskStats?.completed ?? 0,
-    totalMessages: msgStats?.total ?? 0,
-    uptimeSeconds: Math.floor((Date.now() - startTime) / 1e3)
-  });
+  try {
+    swarmPaused = true;
+    await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.status, "thinking"));
+    await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.status, "executing"));
+    const [agentStats] = await db.select({
+      total: sql`count(*)::int`,
+      active: sql`count(*) filter (where status != 'idle')::int`
+    }).from(agentsTable);
+    const [taskStats] = await db.select({
+      running: sql`count(*) filter (where status = 'running')::int`,
+      completed: sql`count(*) filter (where status = 'completed')::int`
+    }).from(tasksTable);
+    const [msgStats] = await db.select({ total: sql`count(*)::int` }).from(messagesTable);
+    res.json({
+      paused: swarmPaused,
+      activeAgents: agentStats?.active ?? 0,
+      totalAgents: agentStats?.total ?? 0,
+      runningTasks: taskStats?.running ?? 0,
+      completedTasks: taskStats?.completed ?? 0,
+      totalMessages: msgStats?.total ?? 0,
+      uptimeSeconds: Math.floor((Date.now() - startTime) / 1e3)
+    });
+  } catch (err) {
+    req.log.error({ err }, "Failed to pause swarm");
+    res.status(500).json({ error: "Failed to pause swarm" });
+  }
 });
 router6.post("/resume", async (req, res) => {
-  swarmPaused = false;
-  const [agentStats] = await db.select({
-    total: sql`count(*)::int`,
-    active: sql`count(*) filter (where status != 'idle')::int`
-  }).from(agentsTable);
-  const [taskStats] = await db.select({
-    running: sql`count(*) filter (where status = 'running')::int`,
-    completed: sql`count(*) filter (where status = 'completed')::int`
-  }).from(tasksTable);
-  const [msgStats] = await db.select({ total: sql`count(*)::int` }).from(messagesTable);
-  res.json({
-    paused: swarmPaused,
-    activeAgents: agentStats?.active ?? 0,
-    totalAgents: agentStats?.total ?? 0,
-    runningTasks: taskStats?.running ?? 0,
-    completedTasks: taskStats?.completed ?? 0,
-    totalMessages: msgStats?.total ?? 0,
-    uptimeSeconds: Math.floor((Date.now() - startTime) / 1e3)
-  });
+  try {
+    swarmPaused = false;
+    const [agentStats] = await db.select({
+      total: sql`count(*)::int`,
+      active: sql`count(*) filter (where status != 'idle')::int`
+    }).from(agentsTable);
+    const [taskStats] = await db.select({
+      running: sql`count(*) filter (where status = 'running')::int`,
+      completed: sql`count(*) filter (where status = 'completed')::int`
+    }).from(tasksTable);
+    const [msgStats] = await db.select({ total: sql`count(*)::int` }).from(messagesTable);
+    res.json({
+      paused: swarmPaused,
+      activeAgents: agentStats?.active ?? 0,
+      totalAgents: agentStats?.total ?? 0,
+      runningTasks: taskStats?.running ?? 0,
+      completedTasks: taskStats?.completed ?? 0,
+      totalMessages: msgStats?.total ?? 0,
+      uptimeSeconds: Math.floor((Date.now() - startTime) / 1e3)
+    });
+  } catch (err) {
+    req.log.error({ err }, "Failed to resume swarm");
+    res.status(500).json({ error: "Failed to resume swarm" });
+  }
 });
 var swarm_default = router6;
 
@@ -85621,11 +85631,24 @@ async function composioExecute(input) {
     });
     const text2 = await r.text();
     return `Composio \u2192 HTTP ${r.status} ${r.statusText}
-${clip(text2, 4e3)}`;
+${cleanComposioBody(text2)}`;
   } catch (err) {
     return `error: Composio call failed: ${String(err).slice(0, 300)}`;
   } finally {
     clearTimeout(timer2);
+  }
+}
+function cleanComposioBody(text2) {
+  try {
+    const j = JSON.parse(text2);
+    if (j && typeof j === "object" && "headers" in j) {
+      const { headers: _omit, ...rest } = j;
+      void _omit;
+      return clip(JSON.stringify(rest), 4e3);
+    }
+    return clip(JSON.stringify(j), 4e3);
+  } catch {
+    return clip(text2, 4e3);
   }
 }
 function composioBase() {
@@ -88804,7 +88827,9 @@ function fmtCron(j) {
 router8.get("/commands", async (req, res) => {
   try {
     const { agentId, limit = "50" } = req.query;
-    const rows = agentId ? await db.select().from(agentCommandsTable).where(eq(agentCommandsTable.toAgentId, Number(agentId))).orderBy(desc(agentCommandsTable.createdAt)).limit(Number(limit)) : await db.select().from(agentCommandsTable).orderBy(desc(agentCommandsTable.createdAt)).limit(Number(limit));
+    const lim = Math.min(200, Math.max(1, Number.parseInt(limit, 10) || 50));
+    const aid = Number.parseInt(agentId ?? "", 10);
+    const rows = Number.isFinite(aid) ? await db.select().from(agentCommandsTable).where(eq(agentCommandsTable.toAgentId, aid)).orderBy(desc(agentCommandsTable.createdAt)).limit(lim) : await db.select().from(agentCommandsTable).orderBy(desc(agentCommandsTable.createdAt)).limit(lim);
     res.json(rows.map(fmt));
   } catch (err) {
     req.log.error({ err }, "Failed to list commands");
@@ -88991,11 +89016,20 @@ function steelHeaders() {
   if (!key) throw new Error("STEEL_API_KEY is not set");
   return { "Authorization": `Bearer ${key}`, "Content-Type": "application/json" };
 }
+async function steelFetch(path2, init, timeoutMs = 2e4) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    return await fetch(`${STEEL_BASE2}${path2}`, { ...init, signal: ctrl.signal });
+  } finally {
+    clearTimeout(t);
+  }
+}
 router9.get("/steel/sessions", async (req, res) => {
   try {
-    const r = await fetch(`${STEEL_BASE2}/sessions`, { headers: steelHeaders() });
-    const data = await r.json();
-    res.json(data);
+    const r = await steelFetch(`/sessions`, { headers: steelHeaders() });
+    const data = await r.json().catch(() => ({ error: "Steel returned a non-JSON body" }));
+    res.status(r.ok ? 200 : r.status).json(data);
   } catch (err) {
     req.log.error({ err }, "Failed to list Steel sessions");
     res.status(500).json({ error: "Failed to list Steel sessions" });
@@ -89003,9 +89037,9 @@ router9.get("/steel/sessions", async (req, res) => {
 });
 router9.get("/steel/sessions/:id", async (req, res) => {
   try {
-    const r = await fetch(`${STEEL_BASE2}/sessions/${req.params.id}`, { headers: steelHeaders() });
-    const data = await r.json();
-    res.json(data);
+    const r = await steelFetch(`/sessions/${req.params.id}`, { headers: steelHeaders() });
+    const data = await r.json().catch(() => ({ error: "Steel returned a non-JSON body" }));
+    res.status(r.ok ? 200 : r.status).json(data);
   } catch (err) {
     req.log.error({ err }, "Failed to get Steel session");
     res.status(500).json({ error: "Failed to get Steel session" });
@@ -89269,6 +89303,112 @@ var import_express11 = __toESM(require_express2(), 1);
 init_src();
 init_src();
 init_drizzle_orm();
+
+// src/lib/auth.ts
+import {
+  createHmac,
+  scryptSync as scryptSync2,
+  timingSafeEqual,
+  randomBytes as randomBytes2
+} from "node:crypto";
+var SESSION_COOKIE = "openclaw_session";
+var SESSION_TTL_SECONDS = 12 * 60 * 60;
+var cachedKey2 = null;
+function getSigningKey() {
+  if (cachedKey2) return cachedKey2;
+  const secret = process.env["SESSION_SECRET"];
+  if (!secret) {
+    throw new Error(
+      "SESSION_SECRET is required for operator auth \u2014 refusing to operate without it."
+    );
+  }
+  cachedKey2 = scryptSync2(secret, "openclaw-auth-v1", 32);
+  return cachedKey2;
+}
+function b64url(buf) {
+  return Buffer.from(buf).toString("base64url");
+}
+function sign(payload) {
+  return createHmac("sha256", getSigningKey()).update(payload).digest("base64url");
+}
+function verifyPassword(provided) {
+  const expected = process.env["OPERATOR_PASSWORD"];
+  if (!expected || typeof provided !== "string" || provided.length === 0) {
+    return false;
+  }
+  return timingSafeStrEqual(provided, expected);
+}
+function timingSafeStrEqual(a, b) {
+  const ha = createHmac("sha256", TIMING_SALT).update(a).digest();
+  const hb = createHmac("sha256", TIMING_SALT).update(b).digest();
+  return timingSafeEqual(ha, hb);
+}
+var TIMING_SALT = randomBytes2(32);
+function issueSessionToken() {
+  const payload = {
+    sub: "operator",
+    iat: Math.floor(Date.now() / 1e3),
+    exp: Math.floor(Date.now() / 1e3) + SESSION_TTL_SECONDS,
+    nonce: randomBytes2(8).toString("hex")
+  };
+  const body = b64url(JSON.stringify(payload));
+  return `${body}.${sign(body)}`;
+}
+function verifySessionToken(token) {
+  if (!token) return false;
+  if (!process.env["OPERATOR_PASSWORD"]) return false;
+  const parts = token.split(".");
+  if (parts.length !== 2) return false;
+  const [body, mac] = parts;
+  let expectedMac;
+  try {
+    expectedMac = sign(body);
+  } catch {
+    return false;
+  }
+  const macBuf = Buffer.from(mac);
+  const expBuf = Buffer.from(expectedMac);
+  if (macBuf.length !== expBuf.length || !timingSafeEqual(macBuf, expBuf)) {
+    return false;
+  }
+  try {
+    const payload = JSON.parse(Buffer.from(body, "base64url").toString("utf8"));
+    if (payload.sub !== "operator") return false;
+    if (typeof payload.exp !== "number" || payload.exp <= Math.floor(Date.now() / 1e3)) {
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+function sessionCookieOptions() {
+  return {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env["NODE_ENV"] === "production",
+    path: "/",
+    maxAge: SESSION_TTL_SECONDS * 1e3
+  };
+}
+function extractToken(req) {
+  const cookieToken = req.cookies?.[SESSION_COOKIE];
+  if (cookieToken) return cookieToken;
+  const auth = req.headers["authorization"];
+  if (typeof auth === "string" && /^Bearer\s+/i.test(auth)) {
+    return auth.replace(/^Bearer\s+/i, "");
+  }
+  return null;
+}
+function requireOperator(req, res, next) {
+  if (verifySessionToken(extractToken(req))) {
+    next();
+    return;
+  }
+  res.status(401).json({ error: "Unauthorized \u2014 operator sign-in required" });
+}
+
+// src/routes/external.ts
 var router11 = (0, import_express11.Router)();
 var OPENROUTER_BASE2 = llmBaseUrl();
 var AGENT_NAME_MAP = {
@@ -89299,7 +89439,7 @@ function apiKeyAuth(req, res, next) {
     return;
   }
   const provided = req.headers["authorization"]?.replace(/^Bearer\s+/i, "") ?? req.headers["x-api-key"];
-  if (provided !== expectedKey) {
+  if (!provided || !timingSafeStrEqual(provided, expectedKey)) {
     res.status(401).json({ error: "Unauthorized \u2014 provide a valid OPENCLAW_API_KEY" });
     return;
   }
@@ -89444,7 +89584,7 @@ router11.post("/external/v1/chat/completions", async (req, res) => {
           if (t.startsWith("data: ")) {
             try {
               const chunk = JSON.parse(t.slice(6));
-              chunk.model = model;
+              if (chunk && typeof chunk === "object") chunk.model = model;
               sendSSE(chunk);
             } catch {
               res.write(t + "\n\n");
@@ -89512,112 +89652,6 @@ var external_default = router11;
 
 // src/routes/integrations.ts
 var import_express12 = __toESM(require_express2(), 1);
-
-// src/lib/auth.ts
-import {
-  createHmac,
-  scryptSync as scryptSync2,
-  timingSafeEqual,
-  randomBytes as randomBytes2
-} from "node:crypto";
-var SESSION_COOKIE = "openclaw_session";
-var SESSION_TTL_SECONDS = 12 * 60 * 60;
-var cachedKey2 = null;
-function getSigningKey() {
-  if (cachedKey2) return cachedKey2;
-  const secret = process.env["SESSION_SECRET"];
-  if (!secret) {
-    throw new Error(
-      "SESSION_SECRET is required for operator auth \u2014 refusing to operate without it."
-    );
-  }
-  cachedKey2 = scryptSync2(secret, "openclaw-auth-v1", 32);
-  return cachedKey2;
-}
-function b64url(buf) {
-  return Buffer.from(buf).toString("base64url");
-}
-function sign(payload) {
-  return createHmac("sha256", getSigningKey()).update(payload).digest("base64url");
-}
-function verifyPassword(provided) {
-  const expected = process.env["OPERATOR_PASSWORD"];
-  if (!expected || typeof provided !== "string" || provided.length === 0) {
-    return false;
-  }
-  const a = Buffer.from(provided);
-  const b = Buffer.from(expected);
-  if (a.length !== b.length) {
-    timingSafeEqual(b, b);
-    return false;
-  }
-  return timingSafeEqual(a, b);
-}
-function issueSessionToken() {
-  const payload = {
-    sub: "operator",
-    iat: Math.floor(Date.now() / 1e3),
-    exp: Math.floor(Date.now() / 1e3) + SESSION_TTL_SECONDS,
-    nonce: randomBytes2(8).toString("hex")
-  };
-  const body = b64url(JSON.stringify(payload));
-  return `${body}.${sign(body)}`;
-}
-function verifySessionToken(token) {
-  if (!token) return false;
-  if (!process.env["OPERATOR_PASSWORD"]) return false;
-  const parts = token.split(".");
-  if (parts.length !== 2) return false;
-  const [body, mac] = parts;
-  let expectedMac;
-  try {
-    expectedMac = sign(body);
-  } catch {
-    return false;
-  }
-  const macBuf = Buffer.from(mac);
-  const expBuf = Buffer.from(expectedMac);
-  if (macBuf.length !== expBuf.length || !timingSafeEqual(macBuf, expBuf)) {
-    return false;
-  }
-  try {
-    const payload = JSON.parse(Buffer.from(body, "base64url").toString("utf8"));
-    if (payload.sub !== "operator") return false;
-    if (typeof payload.exp !== "number" || payload.exp <= Math.floor(Date.now() / 1e3)) {
-      return false;
-    }
-    return true;
-  } catch {
-    return false;
-  }
-}
-function sessionCookieOptions() {
-  return {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env["NODE_ENV"] === "production",
-    path: "/",
-    maxAge: SESSION_TTL_SECONDS * 1e3
-  };
-}
-function extractToken(req) {
-  const cookieToken = req.cookies?.[SESSION_COOKIE];
-  if (cookieToken) return cookieToken;
-  const auth = req.headers["authorization"];
-  if (typeof auth === "string" && /^Bearer\s+/i.test(auth)) {
-    return auth.replace(/^Bearer\s+/i, "");
-  }
-  return null;
-}
-function requireOperator(req, res, next) {
-  if (verifySessionToken(extractToken(req))) {
-    next();
-    return;
-  }
-  res.status(401).json({ error: "Unauthorized \u2014 operator sign-in required" });
-}
-
-// src/routes/integrations.ts
 var router12 = (0, import_express12.Router)();
 router12.get("/integrations", (_req, res) => {
   const items = integrationStatus();
@@ -89810,6 +89844,25 @@ router15.put("/vault", async (req, res) => {
     return;
   }
   const { name, value, description } = parsed.data;
+  if (!/^[A-Z][A-Z0-9_]*$/.test(name)) {
+    res.status(400).json({ error: "Secret name must be an UPPER_SNAKE_CASE env var identifier (A\u2013Z, 0\u20139, _)." });
+    return;
+  }
+  const PROTECTED = /* @__PURE__ */ new Set([
+    "OPERATOR_PASSWORD",
+    "SESSION_SECRET",
+    "OPENCLAW_API_KEY",
+    "DATABASE_URL",
+    "NODE_ENV",
+    "PATH",
+    "PORT",
+    "BASE_PATH",
+    "ALLOW_COMPOSIO_EXECUTE"
+  ]);
+  if (PROTECTED.has(name)) {
+    res.status(400).json({ error: `'${name}' is a protected runtime variable and cannot be set from the vault.` });
+    return;
+  }
   const enc = encryptSecret(value);
   try {
     const [row] = await db.insert(vaultSecretsTable).values({
@@ -89952,7 +90005,9 @@ router17.get("/uploads/:id", async (req, res) => {
     res.setHeader("Content-Type", row.mimeType);
     res.setHeader("Content-Length", String(buf.length));
     res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
-    res.setHeader("Content-Disposition", `${disposition}; filename="${row.filename.replace(/"/g, "")}"`);
+    const safeName = row.filename.replace(/[\u0000-\u001f\u007f"\\]/g, "").slice(0, 200) || "file";
+    const encName = encodeURIComponent(row.filename).slice(0, 300);
+    res.setHeader("Content-Disposition", `${disposition}; filename="${safeName}"; filename*=UTF-8''${encName}`);
     res.end(buf);
   } catch (err) {
     req.log.error({ err }, "upload: failed to serve attachment");
@@ -90006,7 +90061,10 @@ app.use(
     }
   })
 );
-app.use((0, import_cors.default)());
+var allowedOrigins = (process.env["ALLOWED_ORIGINS"] ?? "").split(",").map((o) => o.trim()).filter(Boolean);
+app.use(
+  allowedOrigins.length ? (0, import_cors.default)({ origin: allowedOrigins, credentials: true }) : (0, import_cors.default)()
+);
 app.use((0, import_cookie_parser.default)());
 app.use(import_express19.default.json({ limit: "30mb" }));
 app.use(import_express19.default.urlencoded({ extended: true, limit: "30mb" }));
