@@ -110,6 +110,22 @@ export function buildLiveReachCard(agentId: number): string {
   );
 }
 
+/**
+ * True when the operator clearly wants a SAVED/DOWNLOADABLE artifact (file, deck,
+ * report, export, pdf/csv/doc). Such requests must dispatch to a tool-capable CLAW
+ * (save_artifact) — the inline chat reply path has no tools and can't create a
+ * downloadable file. Deterministic so it never depends on the router model's guess.
+ */
+export function requestsDownloadableArtifact(message: string): boolean {
+  return (
+    /\b(downloadable|download link)\b/i.test(message) ||
+    /\.(pdf|csv|docx?|xlsx?|pptx?)\b/i.test(message) ||
+    /\b(save|create|make|build|generate|produce|export|download)\b[^.!?\n]{0,40}\b(file|files|pdf|csv|deck|decks|slide|slides|presentation|spreadsheet|document|report|download)\b/i.test(message) ||
+    // image-generation requests also need a tool (image_generate) → dispatch
+    /\b(make|create|generate|design|draw|render|produce)\b[^.!?\n]{0,30}\b(image|images|picture|photo|logo|illustration|graphic|diagram|drawing|icon|mockup|render|artwork|poster|banner)\b/i.test(message)
+  );
+}
+
 // How many prior channel messages to feed back as conversation context.
 const CHAT_HISTORY_LIMIT = 16;
 
@@ -378,6 +394,22 @@ router.post("/ai/chat", async (req, res) => {
     }
   };
 
+  // Dispatch context: the current request PLUS the recent transcript, so the
+  // CLAWs can resolve cross-turn references ("that file", "the brief", "make it a
+  // PDF") and reuse prior content/figures exactly instead of converting the literal
+  // command text. (Fixes: "give me that in PDF" → CLAW had no prior brief.)
+  const dispatchContext = (() => {
+    const lines = history
+      .filter((h) => typeof h.content === "string" && (h.content as string).trim())
+      .map((h) => `${h.role === "user" ? "Operator" : "ABBY"}: ${h.content as string}`);
+    const transcript = lines.join("\n\n");
+    return (
+      (transcript
+        ? `RECENT CONVERSATION (resolve "that file"/"the brief"/"it" from here; reuse prior content & exact figures):\n${transcript}\n\n`
+        : "") + `CURRENT REQUEST: ${message}`
+    );
+  })();
+
   // ── ABBY auto-routing ──────────────────────────────────────────────────────
   // ABBY decides per message: answer conversationally, OR dispatch the real CLAW
   // swarm (orchestrateGoal) to execute with tools. Only ABBY routes; other
@@ -386,6 +418,32 @@ router.post("/ai/chat", async (req, res) => {
   // Skipped when files are attached: the CLAW sandbox can't see the upload, so
   // ABBY answers the image/file directly (vision) rather than dispatching.
   if (resolvedAgentId === ABBY_ID && !hasAttachments) {
+    // Deterministic override: if the operator clearly wants a SAVED/DOWNLOADABLE
+    // artifact (file, deck, report, export, pdf/csv/doc), always dispatch — the
+    // inline chat path has no tools and literally cannot produce a download. Do not
+    // leave this to the router model's judgment (it under-classifies these as chat).
+    if (requestsDownloadableArtifact(message)) {
+      const goal = message.trim();
+      const ackText =
+        "**On it — generating that and saving a downloadable file.** The swarm is building it now; the result and a download link will stream into this channel.";
+      sendEvent({ token: ackText });
+      await finishWith(ackText, model, "abby-router");
+      orchestrateGoal({ goal, channelId, priority: "high", sourceContext: dispatchContext }).catch(async (e) => {
+        req.log.error({ e }, "orchestrateGoal (artifact override) failed");
+        await db
+          .insert(messagesTable)
+          .values({
+            channelId,
+            agentId: agent.id,
+            agentName: agent.name,
+            agentColor: agent.color,
+            content: `Dispatch failed to start: ${String(e).slice(0, 300)}`,
+            messageType: "system",
+          })
+          .catch(() => {});
+      });
+      return;
+    }
     // Decide deterministically: DISPATCH the swarm, or just chat. We must not rely
     // on the model spontaneously calling a tool during a conversational turn — it
     // frequently NARRATES "dispatching…" without acting, leaving every agent idle.
@@ -429,7 +487,7 @@ router.post("/ai/chat", async (req, res) => {
           // function-level, so this is safe and bundles correctly (a dynamic import
           // was unnecessary and harder to verify). Failures are surfaced to the
           // channel so a dispatch can never fail silently.
-          orchestrateGoal({ goal, channelId, priority: "high", sourceContext: message }).catch(async (e) => {
+          orchestrateGoal({ goal, channelId, priority: "high", sourceContext: dispatchContext }).catch(async (e) => {
             req.log.error({ e }, "orchestrateGoal (from chat) failed");
             await db
               .insert(messagesTable)
