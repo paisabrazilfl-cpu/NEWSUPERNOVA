@@ -474,7 +474,9 @@ router.post("/ai/chat", async (req, res) => {
     // artifact (file, deck, report, export, pdf/csv/doc), always dispatch — the
     // inline chat path has no tools and literally cannot produce a download. Do not
     // leave this to the router model's judgment (it under-classifies these as chat).
-    if (requestsDownloadableArtifact(message)) {
+    // BUT skip it for connected-account actions (e.g. "post this image to my IG"):
+    // those must take the single-agent Composio path below, not generic fan-out.
+    if (requestsDownloadableArtifact(message) && !requestsConnectedAccountAction(message)) {
       const goal = message.trim();
       const ackText =
         "**On it — generating that and saving a downloadable file.** The swarm is building it now; the result and a download link will stream into this channel.";
@@ -502,11 +504,11 @@ router.post("/ai/chat", async (req, res) => {
     // router refuse it inline with "I don't have access to your personal account".
     if (requestsConnectedAccountAction(message)) {
       const goal =
-        `${message.trim()}\n\n(Operator request about their OWN connected account. ` +
-        `The operator connects apps via COMPOSIO (Settings → Connect Apps), so CHECK composio_apps FIRST — that is where their accounts actually live (Instagram, Gmail, GitHub, Calendar, Sheets, etc. are connected there). ` +
-        `Then use composio_action on the live app: for a read with no obvious named action, use RAW PROXY mode — pass toolkit + endpoint + method (e.g. toolkit:'instagram', endpoint:'/me/media?fields=id,caption,timestamp', method:'GET'). ` +
-        `IMPORTANT: social_accounts/social_api is a SEPARATE native-OAuth path that is usually EMPTY — do NOT conclude "not connected" from social_accounts alone; the app is almost certainly live in composio_apps. Only say it's not connected after checking composio_apps AND social_accounts. ` +
-        `Report the real data returned (or the exact API error) — never a flat "no access" or "not connected" without having checked Composio.)`;
+        `${message.trim()}\n\n(Operator request to act on their OWN connected account. ` +
+        `Their apps are connected via COMPOSIO — CHECK composio_apps FIRST (Instagram, Gmail, GitHub, Calendar, Sheets, etc. live there). Use composio_action; for raw API calls use PROXY mode (toolkit + endpoint + method, with data in arguments → sent as query params). ` +
+        `social_accounts/social_api is a SEPARATE native path that is usually EMPTY — do NOT conclude "not connected" from it; check composio_apps. ` +
+        `\nIF this involves POSTING AN IMAGE (e.g. an Instagram post): (1) call image_generate — it returns an ABSOLUTE public https image URL; use THAT url directly, do NOT upload to any external host. (2) Publish via composio_action proxy in two steps: endpoint:'/me/media', method:'POST', arguments:{image_url:<that absolute url>, caption:<caption>} → returns a creation id; then endpoint:'/me/media_publish', method:'POST', arguments:{creation_id:<id>}; then GET '/<published_id>?fields=permalink' for the link. Post EXACTLY ONCE. ` +
+        `Report the real data / permalink (or the exact API error) — never a flat "no access", and never fabricate a success or permalink.)`;
       const ackText =
         "**On it — checking your connected account now.** The swarm is verifying the connection and pulling what's there; results will stream into this channel.";
       sendEvent({ token: ackText });
