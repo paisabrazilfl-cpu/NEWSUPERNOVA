@@ -31466,11 +31466,11 @@ var require_parser = __commonJS({
       const fieldCount = reader.int16();
       const message = new messages_1.RowDescriptionMessage(LATEINIT_LENGTH, fieldCount);
       for (let i = 0; i < fieldCount; i++) {
-        message.fields[i] = parseField(reader);
+        message.fields[i] = parseField2(reader);
       }
       return message;
     };
-    var parseField = (reader) => {
+    var parseField2 = (reader) => {
       const name = reader.cstring();
       const tableID = reader.uint32();
       const columnID = reader.int16();
@@ -86719,6 +86719,67 @@ ${MARKETING_ENGINE}`;
 }
 var MARKETING_ENGINE_POINTER = "MARKETING TASKS: for any post/caption/campaign/'make this go viral'/lead-magnet/funnel request, call the marketing_playbook tool and apply that universal engine (hook\u2192problem\u2192insight\u2192value\u2192CTA\u2192follow-up, one goal, one CTA keyword, platform-tuned). For the enterprise build (campaign brief, funnels, landing pages, email, paid, governance/compliance, KPIs, rollout) call marketing_playbook with a `section`. Research and CITE any factual claim \u2014 never fabricate stats, studies, or testimonials. Execute with the real tools: image_generate \u2192 instagram_post/composio_action \u2192 schedule_task \u2192 memory_write.";
 
+// src/lib/cron.ts
+function parseField(field, min, max) {
+  const out = /* @__PURE__ */ new Set();
+  for (const partRaw of field.split(",")) {
+    const part = partRaw.trim();
+    if (!part) continue;
+    let step = 1;
+    let range = part;
+    const slash = part.indexOf("/");
+    if (slash >= 0) {
+      step = Number(part.slice(slash + 1)) || 1;
+      range = part.slice(0, slash);
+    }
+    let lo = min;
+    let hi = max;
+    if (range === "*" || range === "") {
+    } else if (range.includes("-")) {
+      const [a, b] = range.split("-");
+      lo = Number(a);
+      hi = Number(b);
+    } else {
+      lo = hi = Number(range);
+    }
+    if (!Number.isFinite(lo) || !Number.isFinite(hi)) continue;
+    for (let v = lo; v <= hi; v += step) {
+      if (v >= min && v <= max) out.add(v);
+    }
+  }
+  return out;
+}
+function computeNextRun(schedule, from = /* @__PURE__ */ new Date()) {
+  const parts = schedule.trim().split(/\s+/);
+  if (parts.length !== 5) return new Date(from.getTime() + 6e4);
+  const [minF, hourF, domF, monF, dowF] = parts;
+  const mins = parseField(minF, 0, 59);
+  const hours = parseField(hourF, 0, 23);
+  const doms = parseField(domF, 1, 31);
+  const mons = parseField(monF, 1, 12);
+  const dows = parseField(dowF, 0, 6);
+  if (/(^|[,/-])7([,/-]|$)/.test(dowF)) dows.add(0);
+  const domRestricted = domF.trim() !== "*";
+  const dowRestricted = dowF.trim() !== "*";
+  const d = new Date(from.getTime());
+  d.setSeconds(0, 0);
+  d.setMinutes(d.getMinutes() + 1);
+  const MAX_ITER = 367 * 24 * 60;
+  for (let i = 0; i < MAX_ITER; i++) {
+    const monthOk = mons.has(d.getMonth() + 1);
+    const minOk = mins.has(d.getMinutes());
+    const hourOk = hours.has(d.getHours());
+    let dayOk;
+    if (domRestricted && dowRestricted) dayOk = doms.has(d.getDate()) || dows.has(d.getDay());
+    else if (domRestricted) dayOk = doms.has(d.getDate());
+    else if (dowRestricted) dayOk = dows.has(d.getDay());
+    else dayOk = true;
+    if (minOk && hourOk && dayOk && monthOk) return new Date(d.getTime());
+    d.setMinutes(d.getMinutes() + 1);
+  }
+  return new Date(from.getTime() + 6e4);
+}
+
 // src/lib/safety.ts
 var SENSITIVE_RULES = [
   { label: "confidentiality marker", re: /\b(confidential|top[\s-]?secret|classified|internal[\s-]?only|for internal use|not for distribution|do not distribute|do not share|private and confidential|restricted)\b/i },
@@ -87850,9 +87911,7 @@ ${clip3(res.body, 4e3)}`;
       const task = String(args["task"] ?? "").trim();
       if (!name || !schedule || !task) return "error: name, schedule, and task are all required.";
       if (schedule.split(/\s+/).length !== 5) return "error: schedule must be a 5-field cron expression, e.g. '*/30 * * * *'.";
-      const min = schedule.split(/\s+/)[0];
-      const ms = min === "*" ? 6e4 : min.startsWith("*/") ? Math.max(Number(min.slice(2)) * 6e4, 6e4) : 5 * 6e4;
-      const nextRunAt = new Date(Date.now() + ms);
+      const nextRunAt = computeNextRun(schedule);
       try {
         const [row] = await db.insert(cronJobsTable).values({ agentId: ctx.agentId, name, schedule, task, enabled: true, nextRunAt }).returning();
         return `scheduled "${name}" (job #${row?.id ?? "?"}) on '${schedule}', next run ~${nextRunAt.toISOString()}.`;
@@ -89107,14 +89166,6 @@ init_drizzle_orm();
 var ABBY_ID3 = 1;
 var DEFAULT_CHANNEL_ID = 1;
 var SCHEDULER_INTERVAL_MS = 3e4;
-function computeNextRun(schedule) {
-  const now = /* @__PURE__ */ new Date();
-  const parts = schedule.trim().split(/\s+/);
-  if (parts.length !== 5) return new Date(now.getTime() + 6e4);
-  const [min] = parts;
-  const ms = min === "*" ? 6e4 : min.startsWith("*/") ? Number(min.slice(2)) * 6e4 : 5 * 6e4;
-  return new Date(now.getTime() + Math.max(ms, 6e4));
-}
 async function runCronJob(job, channelId = DEFAULT_CHANNEL_ID) {
   await db.update(cronJobsTable).set({ lastRunAt: /* @__PURE__ */ new Date(), runCount: job.runCount + 1, nextRunAt: computeNextRun(job.schedule) }).where(eq(cronJobsTable.id, job.id)).catch((err) => logger.error({ err, jobId: job.id }, "scheduler: bookkeeping update failed"));
   try {
@@ -89173,8 +89224,21 @@ async function tick() {
     void runCronJob(job).finally(() => inFlight.delete(job.id));
   }
 }
+async function normalizeSchedules() {
+  try {
+    const jobs = await db.select().from(cronJobsTable).where(eq(cronJobsTable.enabled, true));
+    for (const j of jobs) {
+      await db.update(cronJobsTable).set({ nextRunAt: computeNextRun(j.schedule) }).where(eq(cronJobsTable.id, j.id)).catch(() => {
+      });
+    }
+    if (jobs.length) logger.info({ count: jobs.length }, "scheduler: normalized next-run times to the corrected cron calculator");
+  } catch (err) {
+    logger.error({ err }, "scheduler: normalizeSchedules failed");
+  }
+}
 function startScheduler() {
   if (timer) return;
+  void normalizeSchedules();
   timer = setInterval(() => {
     void tick();
   }, SCHEDULER_INTERVAL_MS);
