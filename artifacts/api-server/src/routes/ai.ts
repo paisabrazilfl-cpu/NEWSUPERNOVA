@@ -154,6 +154,30 @@ export function requestsImage(message: string): boolean {
   );
 }
 
+// Services the swarm can reach on the operator's OWN connected account — social
+// platforms via their official APIs (MR.NICE) and SaaS apps via Composio (WIRE).
+const CONNECTED_SERVICE =
+  "instagram|insta|ig|facebook|fb|messenger|whatsapp|threads|twitter|tweet|linkedin|tiktok|youtube|gmail|email|e-mail|inbox|outlook|slack|discord|github|notion|calendar|gcal|google ?sheets?|spreadsheet|google ?drive|telegram|reddit|pinterest|snapchat|mailbox|dms?";
+
+/**
+ * True when the operator is asking the swarm to CHECK or ACT ON their own
+ * connected account (e.g. "check my Instagram messages", "any new emails?",
+ * "post to my LinkedIn"). These must DISPATCH — the social/API CLAWs act through
+ * the operator's connected integrations. ABBY must NEVER refuse these inline with
+ * "I don't have access to your personal account": the swarm has reach via
+ * social_api / composio_action, and if an account isn't connected the CLAW says
+ * so honestly. Deterministic so it never depends on the router model guessing.
+ */
+export function requestsConnectedAccountAction(message: string): boolean {
+  const SVC = `(?:${CONNECTED_SERVICE})s?`;
+  return (
+    new RegExp(`\\b(my|our|the)\\b[^.!?\\n]{0,24}\\b${SVC}\\b`, "i").test(message) ||
+    new RegExp(`\\b${SVC}\\b[^.!?\\n]{0,24}\\b(messages?|inbox|dms?|notifications?|posts?|account|feed|followers?|threads?|emails?|unread)\\b`, "i").test(message) ||
+    new RegExp(`\\b(check|read|open|post|send|reply|dm|message|publish|schedule|draft|fetch|pull)\\b[^.!?\\n]{0,24}\\b${SVC}\\b`, "i").test(message) ||
+    new RegExp(`\\b(any|new|unread|recent|latest|got|have|got ?any)\\b[^.!?\\n]{0,16}\\b${SVC}\\b`, "i").test(message)
+  );
+}
+
 // How many prior channel messages to feed back as conversation context.
 const CHAT_HISTORY_LIMIT = 16;
 
@@ -472,6 +496,36 @@ router.post("/ai/chat", async (req, res) => {
       });
       return;
     }
+    // Deterministic override: a request about the operator's OWN connected account
+    // (Instagram, Gmail, LinkedIn, GitHub, calendar, …) must DISPATCH — the swarm
+    // acts through the operator's connected social APIs / Composio. Never let the
+    // router refuse it inline with "I don't have access to your personal account".
+    if (requestsConnectedAccountAction(message)) {
+      const goal =
+        `${message.trim()}\n\n(Operator request about their OWN connected account. ` +
+        `Route to MR.NICE for social platforms via social_accounts/social_api, or WIRE for SaaS apps via composio_apps/composio_action. ` +
+        `First confirm the account is connected (social_accounts / composio_apps), then perform the check/action and report what's really there. ` +
+        `If it is NOT connected, say so plainly and tell the operator to connect it in Settings → Connect Apps — never claim you simply "have no access".)`;
+      const ackText =
+        "**On it — checking your connected account now.** The swarm is verifying the connection and pulling what's there; results will stream into this channel.";
+      sendEvent({ token: ackText });
+      await finishWith(ackText, model, "abby-router");
+      orchestrateGoal({ goal, channelId, priority: "high", sourceContext: dispatchContext }).catch(async (e) => {
+        req.log.error({ e }, "orchestrateGoal (connected-account override) failed");
+        await db
+          .insert(messagesTable)
+          .values({
+            channelId,
+            agentId: agent.id,
+            agentName: agent.name,
+            agentColor: agent.color,
+            content: `Dispatch failed to start: ${String(e).slice(0, 300)}`,
+            messageType: "system",
+          })
+          .catch(() => {});
+      });
+      return;
+    }
     // Decide deterministically: DISPATCH the swarm, or just chat. We must not rely
     // on the model spontaneously calling a tool during a conversational turn — it
     // frequently NARRATES "dispatching…" without acting, leaving every agent idle.
@@ -479,8 +533,9 @@ router.post("/ai/chat", async (req, res) => {
     // through to the normal streaming chat below.
     try {
       const decisionSystem =
-        "You are the router for ABBY, orchestrator of an autonomous agent swarm that can search the web, browse sites, scrape pages, run code, call APIs, and use long-term memory. " +
-        "Classify the operator's latest message: is it an ACTIONABLE TASK that needs the swarm (anything requiring live/current data, web search, browsing, scraping, finding/pricing/looking things up online, code execution, multi-step research) — or just CONVERSATION you can answer yourself (greetings, opinions, explanations, questions about you/the system)? " +
+        "You are the router for ABBY, orchestrator of an autonomous agent swarm that can search the web, browse sites, scrape pages, run code, call APIs, use long-term memory, generate images and downloadable files, AND act on the operator's OWN connected accounts — social platforms via their official APIs (Instagram, Facebook, X, LinkedIn, TikTok, YouTube, …) and SaaS apps via Composio (Gmail, Slack, GitHub, Notion, Google Calendar, Sheets, …). " +
+        "Classify the operator's latest message: is it an ACTIONABLE TASK that needs the swarm (anything requiring live/current data, web search, browsing, scraping, finding/pricing/looking things up online, code execution, multi-step research, OR checking/acting on the operator's own connected account) — or just CONVERSATION you can answer yourself (greetings, opinions, explanations, questions about you/the system)? " +
+        "CRITICAL: if the operator asks about or wants an action on THEIR OWN connected service — e.g. 'check my Instagram messages', 'any new emails?', 'post to my LinkedIn', 'what's on my calendar' — that is ACTIONABLE: dispatch=true with a goal telling the swarm to use the official API / Composio for that account. NEVER answer 'I don't have access to your personal account' — the swarm acts through the operator's connected integrations, and if an account isn't connected the CLAW reports that honestly. " +
         "Respond with ONLY minified JSON, no markdown and no prose: " +
         '{"dispatch": true|false, "goal": "<self-contained instruction for the swarm; required if dispatch=true>", "reply": "<your conversational answer; required if dispatch=false>"}. ' +
         "If the request needs real or current information you don't already have, prefer dispatch=true. " +
