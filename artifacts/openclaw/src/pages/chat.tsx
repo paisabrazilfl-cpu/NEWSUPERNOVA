@@ -672,10 +672,12 @@ function EmptyState({ onNew }: { onNew: () => void }) {
 
 function EmptyConversation({ onPrompt }: { onPrompt: (p: string) => void }) {
   const prompts = [
+    "Use the marketing engine to write + post a lead-gen Instagram post for AI automation, with a real cited stat",
+    "Draft a 7-email nurture sequence (CAN-SPAM compliant) for a real-estate audience",
+    "Build a 30-day social media content calendar for a fitness coaching brand",
     "Generate an ultra realistic image of a husky in the snow",
     "Research the EV market and build a downloadable PDF brief with TAM/SAM/SOM",
     "Scrape news.ycombinator.com and give me the top 5 stories as a table",
-    "Write and run a Python script that prints the first 20 primes",
   ];
   return (
     <div className="flex flex-col items-center justify-center py-20 text-center gap-5">

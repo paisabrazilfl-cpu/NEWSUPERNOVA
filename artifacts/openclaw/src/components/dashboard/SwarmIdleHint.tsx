@@ -4,7 +4,8 @@ import { agentState } from "@/lib/agentState";
 import { GOAL_DRAFT_KEY } from "@/lib/handoff";
 
 const STARTERS = [
-  "Inspect this repo and tell me what's broken.",
+  "Use the marketing engine to write + post a lead-gen Instagram post (with a cited stat).",
+  "Draft a CAN-SPAM-compliant 7-email nurture sequence for my niche.",
   "Research a topic and report back with sources.",
   "Build a small web UI and validate it in the browser.",
 ];
