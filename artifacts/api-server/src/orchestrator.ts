@@ -177,7 +177,7 @@ async function completeChatTurn(
   messages: ChatMessage[],
   tools: Array<Record<string, unknown>>,
 ): Promise<AssistantMessage> {
-  const body: Record<string, unknown> = { model, messages, stream: false, max_tokens: 2048 };
+  const body: Record<string, unknown> = { model, messages, stream: false, max_tokens: 8000 };
   if (tools.length) {
     body["tools"] = tools;
     body["tool_choice"] = "auto";
@@ -396,18 +396,43 @@ export async function executeAgentCommand(opts: {
         break;
       }
 
-      // Record the assistant turn (with its tool requests) before resolving them.
-      messages.push({ role: "assistant", content: assistant.content ?? "", tool_calls: calls });
+      // Parse each tool call's arguments up front. Models (esp. Qwen) sometimes
+      // emit a tool call whose `function.arguments` is truncated/invalid JSON when
+      // the intended output is large (code, HTML decks, save_artifact content).
+      // If that raw string is pushed back into the message history, the provider
+      // rejects the NEXT turn with `400 InternalError.Algo.InvalidParameter
+      // (function.arguments)` — or we throw `SyntaxError: Unexpected end of JSON
+      // input` locally — and the whole directive hard-fails. So we normalize every
+      // recorded call to GUARANTEED-valid JSON, and flag the truncated ones so the
+      // model retries with smaller output instead of poisoning the conversation.
+      const parsed = calls.map((call) => {
+        let args: Record<string, unknown> = {};
+        let truncated = false;
+        const raw = call.function?.arguments;
+        if (raw) {
+          try {
+            args = JSON.parse(raw);
+          } catch {
+            truncated = true;
+          }
+        }
+        return { call, args, truncated };
+      });
+
+      // Record the assistant turn with valid argument JSON so a resend never 400s.
+      messages.push({
+        role: "assistant",
+        content: assistant.content ?? "",
+        tool_calls: parsed.map(({ call, args }): ToolCallReq => ({
+          id: call.id,
+          type: "function",
+          function: { name: call.function.name, arguments: JSON.stringify(args) },
+        })),
+      });
       await db.update(agentsTable).set({ status: "executing" }).where(eq(agentsTable.id, agent.id));
 
-      for (const call of calls) {
+      for (const { call, args: parsedArgs, truncated } of parsed) {
         const name = call.function?.name ?? "unknown";
-        let parsedArgs: Record<string, unknown> = {};
-        try {
-          parsedArgs = call.function?.arguments ? JSON.parse(call.function.arguments) : {};
-        } catch {
-          parsedArgs = {};
-        }
 
         const [tc] = await db
           .insert(toolCallsTable)
@@ -422,7 +447,12 @@ export async function executeAgentCommand(opts: {
         let toolResult: string;
         let ok = true;
         const callKey = `${name}:${JSON.stringify(parsedArgs)}`;
-        if (callCache.has(callKey)) {
+        if (truncated) {
+          // The model's arguments were truncated/invalid JSON (usually too large
+          // for one turn). Don't run with empty args — tell it to retry smaller.
+          ok = false;
+          toolResult = `error: your ${name} call was dropped — its arguments were truncated/invalid JSON, almost always because the content was too large for a single turn. Retry ${name} with smaller arguments: write the file/code in sections, or shorten the payload.`;
+        } else if (callCache.has(callKey)) {
           // Identical call already executed this run — reuse it, don't pay again.
           toolResult = `(deduplicated: you already called ${name} with these exact arguments earlier in this run. Reusing that result — do not repeat it. Use it, or call a different tool / different arguments.)\n\n${callCache.get(callKey)}`;
         } else {
