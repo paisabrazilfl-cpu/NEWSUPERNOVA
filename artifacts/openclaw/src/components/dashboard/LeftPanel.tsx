@@ -7,8 +7,8 @@ import { cn } from "@/lib/utils";
 interface LeftPanelProps {
   activeChannelId: number | null;
   setActiveChannelId: (id: number) => void;
-  setViewMode: (mode: "canvas" | "chat" | "browser") => void;
-  viewMode: "canvas" | "chat" | "browser";
+  setViewMode: (mode: "canvas" | "chat" | "browser" | "dispatch") => void;
+  viewMode: "canvas" | "chat" | "browser" | "dispatch";
   /** Mobile drawer state. On md+ the panel is always inline. */
   open?: boolean;
   onClose?: () => void;
@@ -68,6 +68,16 @@ export function LeftPanel({ activeChannelId, setActiveChannelId, setViewMode, vi
             data-testid="toggle-view-chat"
           >
             Activity
+          </button>
+          <button
+            onClick={() => { setViewMode("dispatch"); onClose?.(); }}
+            className={cn(
+              "flex-1 text-[10px] font-bold px-2 py-1.5 rounded-md transition-all",
+              viewMode === "dispatch" ? "bg-primary/20 text-primary" : "text-muted-foreground hover:text-foreground"
+            )}
+            data-testid="toggle-view-dispatch"
+          >
+            Dispatch
           </button>
           <button
             onClick={() => { setViewMode("browser"); onClose?.(); }}

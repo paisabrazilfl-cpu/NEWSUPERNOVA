@@ -114,6 +114,11 @@ CREATE TABLE IF NOT EXISTS "agent_memory" (
 -- Backfill the embedding column on databases created before semantic memory.
 ALTER TABLE "agent_memory" ADD COLUMN IF NOT EXISTS "embedding" text;
 
+-- Dispatch observability: model + grounding proof per directive (Dispatch panel).
+ALTER TABLE "agent_commands" ADD COLUMN IF NOT EXISTS "model" text;
+ALTER TABLE "agent_commands" ADD COLUMN IF NOT EXISTS "grounding_chars" integer;
+ALTER TABLE "agent_commands" ADD COLUMN IF NOT EXISTS "grounding_hash" text;
+
 CREATE TABLE IF NOT EXISTS "vault_secrets" (
   "id" serial PRIMARY KEY NOT NULL,
   "name" text NOT NULL UNIQUE,
