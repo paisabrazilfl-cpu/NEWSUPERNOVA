@@ -1363,7 +1363,10 @@ export function buildCapabilityCard(agentId: number): string {
     card += `\n\nIMAGES: for ANY request for an image/picture/logo/illustration/render/artwork, call image_generate with a detailed prompt — it produces a REAL raster PNG and returns a preview + download link to put in your answer. Do NOT hand-code an SVG or merely describe the image; only produce SVG if the operator explicitly asks for SVG/vector.`;
   }
   if (names.includes("composio_apps") || names.includes("composio_action")) {
-    card += `\n\nCONNECTED SaaS APPS (Composio): the operator connects apps (Gmail, Slack, GitHub, Notion, Calendar, Sheets, …) in Settings → Connect Apps. To act on one, FIRST call composio_apps to see which apps are LIVE for this operator right now, THEN call composio_action on a live app. Never assume an app is connected — check composio_apps. If the app you need isn't live, say so and tell the operator to connect it in Settings.`;
+    card += `\n\nCONNECTED APPS (Composio): the operator connects their apps — social like Instagram/YouTube/Reddit AND SaaS like Gmail/GitHub/Notion/Calendar/Sheets — in Settings → Connect Apps, which is COMPOSIO. To act on any of them, FIRST call composio_apps to see which are LIVE, THEN call composio_action on a live app. For a read with no obvious named action slug, use composio_action RAW PROXY mode: pass toolkit + endpoint (the app's REST path) + method, e.g. toolkit:'instagram', endpoint:'/me/media?fields=id,caption', method:'GET'.`;
+    if (names.includes("social_accounts")) {
+      card += ` NOTE: social_accounts/social_api is a SEPARATE native-OAuth path that is usually EMPTY for this operator — NEVER conclude an app is "not connected" from social_accounts alone. The operator's accounts live in COMPOSIO, so always check composio_apps before saying anything is unavailable.`;
+    }
   }
   if (agentId === ABBY_ID) {
     card += `\n\nYOUR SWARM (delegate each directive to the right CLAW):\n` +
