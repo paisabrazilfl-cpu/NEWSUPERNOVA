@@ -88105,7 +88105,7 @@ async function completeChat(model, system, user, maxTokens = 800) {
   return out;
 }
 async function completeChatTurn(model, messages, tools) {
-  const body = { model, messages, stream: false, max_tokens: 2048 };
+  const body = { model, messages, stream: false, max_tokens: 8e3 };
   if (tools.length) {
     body["tools"] = tools;
     body["tool_choice"] = "auto";
@@ -88254,16 +88254,31 @@ Execute the directive now. Use your tools for anything requiring real data or co
         finalText = (assistant.content ?? "").trim();
         break;
       }
-      messages.push({ role: "assistant", content: assistant.content ?? "", tool_calls: calls });
-      await db.update(agentsTable).set({ status: "executing" }).where(eq(agentsTable.id, agent.id));
-      for (const call of calls) {
-        const name = call.function?.name ?? "unknown";
-        let parsedArgs = {};
-        try {
-          parsedArgs = call.function?.arguments ? JSON.parse(call.function.arguments) : {};
-        } catch {
-          parsedArgs = {};
+      const parsed = calls.map((call) => {
+        let args = {};
+        let truncated = false;
+        const raw = call.function?.arguments;
+        if (raw) {
+          try {
+            args = JSON.parse(raw);
+          } catch {
+            truncated = true;
+          }
         }
+        return { call, args, truncated };
+      });
+      messages.push({
+        role: "assistant",
+        content: assistant.content ?? "",
+        tool_calls: parsed.map(({ call, args }) => ({
+          id: call.id,
+          type: "function",
+          function: { name: call.function.name, arguments: JSON.stringify(args) }
+        }))
+      });
+      await db.update(agentsTable).set({ status: "executing" }).where(eq(agentsTable.id, agent.id));
+      for (const { call, args: parsedArgs, truncated } of parsed) {
+        const name = call.function?.name ?? "unknown";
         const [tc] = await db.insert(toolCallsTable).values({ agentId: agent.id, toolName: name, args: JSON.stringify(parsedArgs).slice(0, 2e3), status: "running" }).returning();
         await db.insert(monologueLinesTable).values({
           agentId: agent.id,
@@ -88273,7 +88288,10 @@ Execute the directive now. Use your tools for anything requiring real data or co
         let toolResult;
         let ok = true;
         const callKey = `${name}:${JSON.stringify(parsedArgs)}`;
-        if (callCache.has(callKey)) {
+        if (truncated) {
+          ok = false;
+          toolResult = `error: your ${name} call was dropped \u2014 its arguments were truncated/invalid JSON, almost always because the content was too large for a single turn. Retry ${name} with smaller arguments: write the file/code in sections, or shorten the payload.`;
+        } else if (callCache.has(callKey)) {
           toolResult = `(deduplicated: you already called ${name} with these exact arguments earlier in this run. Reusing that result \u2014 do not repeat it. Use it, or call a different tool / different arguments.)
 
 ${callCache.get(callKey)}`;
