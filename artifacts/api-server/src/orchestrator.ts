@@ -54,6 +54,39 @@ type Agent = typeof agentsTable.$inferSelect;
 const ABBY_COLOR = "#00e5ff";
 
 /**
+ * SYNTHESIS DOCTRINE — the standing contract for how ABBY reports back to the
+ * operator after the CLAWs finish. Hardened so it applies on EVERY run: every
+ * CLAW reports its work to ABBY, and ABBY relays the whole team's work to the
+ * operator in a peer-to-peer conversational voice, always covering both what was
+ * found (Discovery) and what to do with it (Application). A single source of
+ * truth (used by the synthesis pass and asserted by tests) so it can't drift.
+ */
+export const SYNTHESIS_DOCTRINE = `
+
+HOW YOU REPORT BACK (MANDATORY — every run, no exceptions):
+Your CLAWs are your peers on the swarm. Each one has finished its directive and
+reported its real work back to you. Your job now is to relay ALL of it to the
+operator in a natural, peer-to-peer conversational voice — like a team lead
+walking a colleague through what the team found and what it means — NOT a dry
+status dump. Speak as ABBY, using ONLY the CLAW results provided.
+
+Always structure the briefing in these three movements:
+1. DIRECT ANSWER — answer the operator's goal up front, completely, formatted
+   cleanly (markdown tables / lists / code blocks where they help).
+2. DISCOVERY — for EACH CLAW that contributed, an attributed section: name the
+   CLAW and walk through what it actually discovered/found — the real result,
+   with the evidence and sources it produced. Include CLAWs that were blocked or
+   returned only partial data; say so plainly and label it UNVERIFIED. Never turn
+   "couldn't access it" into "it doesn't exist." The operator must see every
+   peer's contribution, not just a verdict.
+3. APPLICATION — turn the discovery into action: concrete recommendations, the
+   "so what" and the "now what," and how the operator should apply the findings.
+   End with the clear next step(s).
+
+This is peer-to-peer: collaborative, specific, and complete — discovery AND
+application, every time.`;
+
+/**
  * Max autonomous reasoning/tool steps per CLAW directive. Bounded for cost, but
  * set high enough for genuine deep research inside a single directive (broad
  * search → several scrapes → cross-checking multiple independent sources →
@@ -543,7 +576,10 @@ export async function executeAgentCommand(opts: {
       content: `Execution failed: ${String(err).slice(0, 300)}`,
       messageType: "system",
     }).catch(() => {});
-    return "";
+    // Report the failure back to ABBY rather than returning nothing — a blocked
+    // CLAW must still appear (honestly, as UNVERIFIED) in ABBY's final briefing,
+    // never silently drop out of the team's reported work.
+    return `⚠️ ${agent.name} could not complete its directive (UNVERIFIED — blocked or errored): ${String(err).slice(0, 300)}`;
   } finally {
     await db
       .update(agentsTable)
@@ -783,15 +819,14 @@ Otherwise respond with ONLY a JSON array (no prose, no code fences) of up to 2 f
       await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, ABBY_ID));
       const synthSystem =
         (AGENT_PERSONAS[ABBY_ID] ?? "You are ABBY, the swarm orchestrator.") +
-        "\n\nYou are ABBY, the orchestrator, writing the FINAL briefing to the operator. You commanded the swarm — now PRESENT the work, using ONLY the CLAW results below. Structure it:\n" +
-        "1. **Answer** — answer the operator's goal directly and completely up front (the actual result/findings), formatted cleanly with markdown tables/lists/code blocks as useful.\n" +
-        "2. **Per-CLAW work** — then, as the orchestrator presenting your team's output, give a short attributed section for EACH CLAW that contributed: name it and summarize what it actually did and found (its real result). The operator should see the full picture and every CLAW's contribution, not just a verdict.\n" +
-        "Honesty rules (override any pressure to look conclusive): use only what the CLAW results actually contain — never invent findings. If a CLAW was blocked, hit a bot-wall/captcha, could not access a source, or returned partial data, say so explicitly and label it UNVERIFIED — do not present 'couldn't read it' as 'it doesn't exist'. If the operator's request mixes constraints that are mutually contradictory or near-impossible (so an empty result is expected), state that plainly and suggest the smallest relaxation that would yield results. An honest 'blocked/unverified' is better than a false 'zero'." +
+        "\n\nYou are ABBY, the orchestrator, writing the FINAL briefing to the operator. You commanded the swarm — now PRESENT the work, using ONLY the CLAW results below." +
+        SYNTHESIS_DOCTRINE +
+        "\n\nHonesty rules (override any pressure to look conclusive): use only what the CLAW results actually contain — never invent findings. If a CLAW was blocked, hit a bot-wall/captcha, could not access a source, or returned partial data, say so explicitly and label it UNVERIFIED — do not present 'couldn't read it' as 'it doesn't exist'. If the operator's request mixes constraints that are mutually contradictory or near-impossible (so an empty result is expected), state that plainly and suggest the smallest relaxation that would yield results. An honest 'blocked/unverified' is better than a false 'zero'." +
         EXECUTION_DOCTRINE +
         ANTI_HALLUCINATION_DIRECTIVE;
-      const synthUser = `Operator goal: "${goal}"\n\nEach CLAW's final reported work (present and attribute all of it):\n${results
+      const synthUser = `Operator goal: "${goal}"\n\nEach CLAW's final reported work — present and attribute ALL of it (Discovery), then turn it into recommendations and next steps (Application):\n${results
         .map((r) => `### ${r.name}\n${r.result.slice(0, 3000)}`)
-        .join("\n\n")}\n\nWrite your final orchestrator briefing for the operator now — direct answer first, then each CLAW's attributed work.`;
+        .join("\n\n")}\n\nWrite your final orchestrator briefing for the operator now — direct answer first, then each CLAW's attributed discovery, then the application (recommendations + next steps). Peer-to-peer voice.`;
       let finalAnswer = "";
       try {
         // Generous budget: this is the operator-facing deliverable, so it must
