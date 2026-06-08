@@ -16,6 +16,7 @@ import {
   ANTI_HALLUCINATION_DIRECTIVE,
   RESEARCH_PLAYBOOKS,
   requestsDownloadableArtifact,
+  requestsImage,
 } from "./ai";
 
 describe("requestsDownloadableArtifact — deterministic dispatch for downloads", () => {
@@ -36,6 +37,41 @@ describe("requestsDownloadableArtifact — deterministic dispatch for downloads"
   it("does NOT trigger on pure conversation", () => {
     for (const m of ["who are you?", "save me time on this", "what is VPD?", "summarize this in one line"]) {
       expect(requestsDownloadableArtifact(m)).toBe(false);
+    }
+  });
+
+  it("triggers on image requests routed through it", () => {
+    expect(requestsDownloadableArtifact("ULTRA REALISTIC IMAGE OF A DOG")).toBe(true);
+  });
+});
+
+describe("requestsImage — verb-less image-gen detection", () => {
+  it("triggers on bare/verb-less image requests", () => {
+    for (const m of [
+      "ULTRA REALISTIC IMAGE OF A DOG",
+      "image of a dog",
+      "a photo of a sunset over mountains",
+      "logo for my coffee brand",
+      "an HD render of a sports car",
+      "photorealistic portrait of a cat",
+      "make me a poster",
+      "draw a logo",
+      "give me a picture of a robot",
+      "i want an illustration of a dragon",
+    ]) {
+      expect(requestsImage(m), `should detect image request: "${m}"`).toBe(true);
+    }
+  });
+
+  it("does NOT trigger on non-image conversation", () => {
+    for (const m of [
+      "who are you?",
+      "what is VPD?",
+      "summarize this report in one line",
+      "build a CSV of leads",
+      "explain how the swarm works",
+    ]) {
+      expect(requestsImage(m), `should NOT misfire on: "${m}"`).toBe(false);
     }
   });
 });

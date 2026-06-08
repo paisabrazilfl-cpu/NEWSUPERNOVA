@@ -124,7 +124,33 @@ export function requestsDownloadableArtifact(message: string): boolean {
     /\.(pdf|csv|docx?|xlsx?|pptx?)\b/i.test(message) ||
     /\b(save|create|make|build|generate|produce|export|download)\b[^.!?\n]{0,40}\b(file|files|pdf|csv|deck|decks|slide|slides|presentation|spreadsheet|document|report|download)\b/i.test(message) ||
     // image-generation requests also need a tool (image_generate) → dispatch
-    /\b(make|create|generate|design|draw|render|produce)\b[^.!?\n]{0,30}\b(image|images|picture|photo|logo|illustration|graphic|diagram|drawing|icon|mockup|render|artwork|poster|banner)\b/i.test(message)
+    requestsImage(message)
+  );
+}
+
+const IMAGE_NOUN =
+  "image|images|picture|pictures|photo|photos|photograph|photographs|logo|logos|illustration|illustrations|graphic|graphics|drawing|drawings|icon|icons|mockup|render|rendering|artwork|poster|banner|portrait|wallpaper|avatar|sticker|painting";
+
+/**
+ * True when the operator wants an IMAGE generated. The inline chat path has no
+ * tools and ABBY (with no image-gen ability of its own) will REFUSE — so these
+ * must dispatch to a CLAW that calls the image_generate tool (real PNG). Catches
+ * three shapes, crucially including verb-less requests:
+ *   1. action verb + image noun  — "make an image", "draw a logo"
+ *   2. image noun + of/for/...    — "image of a dog", "logo for my brand"
+ *   3. descriptor + image noun    — "ultra realistic image", "an HD photo"
+ */
+export function requestsImage(message: string): boolean {
+  return (
+    new RegExp(
+      `\\b(make|create|generate|design|draw|render|produce|paint|illustrate|sketch|give me|show me|i want|i need)\\b[^.!?\\n]{0,30}\\b(${IMAGE_NOUN})\\b`,
+      "i",
+    ).test(message) ||
+    new RegExp(`\\b(${IMAGE_NOUN})\\b\\s+(of|for|showing|depicting|with|that)\\b`, "i").test(message) ||
+    new RegExp(
+      `\\b(an?|ultra[- ]?realistic|realistic|photo[- ]?realistic|hyper[- ]?realistic|hd|high[- ]?res|4k|8k|cinematic|detailed)\\b[^.!?\\n]{0,24}\\b(${IMAGE_NOUN})\\b`,
+      "i",
+    ).test(message)
   );
 }
 
