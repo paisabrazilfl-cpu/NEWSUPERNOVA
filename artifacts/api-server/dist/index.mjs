@@ -86520,6 +86520,12 @@ ${c.urls.join("\n")}`).join("\n\n");
 // src/tools.ts
 var STEEL_BASE = "https://api.steel.dev/v1";
 var FIRECRAWL_BASE = "https://api.firecrawl.dev/v1";
+function publicBaseUrl() {
+  return (process.env["PUBLIC_BASE_URL"] || process.env["RENDER_EXTERNAL_URL"] || "https://bos-aura.onrender.com").replace(/\/$/, "");
+}
+function uploadUrl(id, download = false) {
+  return `${publicBaseUrl()}/api/uploads/${id}${download ? "?download=1" : ""}`;
+}
 function ipv4IsPrivate(ip) {
   const parts = ip.split(".").map((p) => parseInt(p, 10));
   if (parts.length !== 4 || parts.some((n) => Number.isNaN(n) || n < 0 || n > 255)) return true;
@@ -87252,7 +87258,7 @@ ${stored}` : stored);
       const kind = /^image\//.test(mimeType) ? "image" : /^text\/|json|xml|javascript/.test(mimeType) ? "text" : "other";
       try {
         const [row] = await db.insert(attachmentsTable).values({ filename, mimeType, kind, sizeBytes: bytes, data: base643, extractedText: null }).returning();
-        const url2 = `/api/uploads/${row.id}?download=1`;
+        const url2 = uploadUrl(row.id, true);
         return `saved "${filename}" (${bytes} bytes, ${mimeType}). Operator download link \u2014 INCLUDE THIS in your final answer:
 [Download ${filename}](${url2})`;
       } catch (e) {
@@ -87301,8 +87307,11 @@ ${stored}` : stored);
         const buf = Buffer.from(b64, "base64");
         const filename = (args["filename"] != null ? String(args["filename"]) : prompt.slice(0, 40).replace(/[^a-z0-9]+/gi, "_")).replace(/\.(png|jpg|jpeg)$/i, "") + ".png";
         const [row] = await db.insert(attachmentsTable).values({ filename, mimeType: "image/png", kind: "image", sizeBytes: buf.length, data: b64, extractedText: null }).returning();
-        const url2 = `/api/uploads/${row.id}`;
-        return `generated image "${filename}" (${buf.length} bytes). Show this in your answer:
+        const url2 = uploadUrl(row.id);
+        return `generated image "${filename}" (${buf.length} bytes). Its PUBLIC image URL (use this directly as image_url when posting to Instagram/social, or as the link in your answer):
+${url2}
+
+Show it in your answer:
 ![${prompt.slice(0, 60)}](${url2})
 [Download ${filename}](${url2}?download=1)`;
       } catch (e) {
@@ -87931,7 +87940,7 @@ ${transcript}
 ` : "") + `CURRENT REQUEST: ${message}`;
   })();
   if (resolvedAgentId === ABBY_ID2 && !hasAttachments) {
-    if (requestsDownloadableArtifact(message)) {
+    if (requestsDownloadableArtifact(message) && !requestsConnectedAccountAction(message)) {
       const goal = message.trim();
       const ackText = "**On it \u2014 generating that and saving a downloadable file.** The swarm is building it now; the result and a download link will stream into this channel.";
       sendEvent({ token: ackText });
@@ -87953,7 +87962,8 @@ ${transcript}
     if (requestsConnectedAccountAction(message)) {
       const goal = `${message.trim()}
 
-(Operator request about their OWN connected account. The operator connects apps via COMPOSIO (Settings \u2192 Connect Apps), so CHECK composio_apps FIRST \u2014 that is where their accounts actually live (Instagram, Gmail, GitHub, Calendar, Sheets, etc. are connected there). Then use composio_action on the live app: for a read with no obvious named action, use RAW PROXY mode \u2014 pass toolkit + endpoint + method (e.g. toolkit:'instagram', endpoint:'/me/media?fields=id,caption,timestamp', method:'GET'). IMPORTANT: social_accounts/social_api is a SEPARATE native-OAuth path that is usually EMPTY \u2014 do NOT conclude "not connected" from social_accounts alone; the app is almost certainly live in composio_apps. Only say it's not connected after checking composio_apps AND social_accounts. Report the real data returned (or the exact API error) \u2014 never a flat "no access" or "not connected" without having checked Composio.)`;
+(Operator request to act on their OWN connected account. Their apps are connected via COMPOSIO \u2014 CHECK composio_apps FIRST (Instagram, Gmail, GitHub, Calendar, Sheets, etc. live there). Use composio_action; for raw API calls use PROXY mode (toolkit + endpoint + method, with data in arguments \u2192 sent as query params). social_accounts/social_api is a SEPARATE native path that is usually EMPTY \u2014 do NOT conclude "not connected" from it; check composio_apps. 
+IF this involves POSTING AN IMAGE (e.g. an Instagram post): (1) call image_generate \u2014 it returns an ABSOLUTE public https image URL; use THAT url directly, do NOT upload to any external host. (2) Publish via composio_action proxy in two steps: endpoint:'/me/media', method:'POST', arguments:{image_url:<that absolute url>, caption:<caption>} \u2192 returns a creation id; then endpoint:'/me/media_publish', method:'POST', arguments:{creation_id:<id>}; then GET '/<published_id>?fields=permalink' for the link. Post EXACTLY ONCE. Report the real data / permalink (or the exact API error) \u2014 never a flat "no access", and never fabricate a success or permalink.)`;
       const ackText = "**On it \u2014 checking your connected account now.** The swarm is verifying the connection and pulling what's there; results will stream into this channel.";
       sendEvent({ token: ackText });
       await finishWith(ackText, model, "abby-router");
