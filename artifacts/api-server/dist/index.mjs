@@ -86524,12 +86524,13 @@ MARKETING ENGINE \u2014 universal plug-and-play post \u2192 conversion machine (
 THE CHAIN (most chase only attention; the money is the full chain):
 Attention \u2192 Trust \u2192 Desire \u2192 Action \u2192 Follow-up \u2192 Conversion.
 Core truth: VIEWS ARE NOT THE BUSINESS. CONVERSATIONS ARE. Optimize for qualified conversations, not likes.
+Operating principle: EVERY POST belongs to a campaign; every campaign to a funnel; every funnel to a business objective. No content for content's sake.
 
 ACCURACY FIRST (non-negotiable \u2014 overrides "make it punchy"):
-- Every factual claim, statistic, study, or result in a post MUST be TRUE and verifiable. RESEARCH it first (web_search / tier1_sources) and keep the source. Punchy \u2260 fabricated.
+- Every factual claim, statistic, study, or result MUST be TRUE and verifiable. RESEARCH it first (web_search / tier1_sources) and keep the source URL. Punchy \u2260 fabricated.
 - NEVER invent stats ("boosts output 300%"), studies ("MIT & Stanford research"), testimonials, or results. A vague "recent studies show" with no real source is a fabrication \u2014 cut it or replace it with a real, cited fact.
-- Hooks may be bold and emotional, but the underlying claim must hold up. Curiosity and FOMO are fine; lying is not.
-- Disclose paid/affiliate/ad relationships (FTC) and respect each platform's ToS. No fake scarcity, no deceptive claims.
+- Hooks may be bold and emotional, but the claim underneath must hold up. Curiosity and FOMO are fine; lying is not.
+- Disclose paid/affiliate/endorsement relationships (FTC) and respect each platform's ToS. No fake scarcity, no deceptive claims.
 
 THE UNIVERSAL POST FORMULA (6 beats):
 Hook \u2192 Problem \u2192 Insight \u2192 Value \u2192 CTA \u2192 Follow-up system.
@@ -86539,61 +86540,176 @@ Hook \u2192 Problem \u2192 Insight \u2192 Value \u2192 CTA \u2192 Follow-up syst
 [VALUE] Here are [3\u20137] things you can use now: 1) \u2026 2) \u2026 3) \u2026
 [CTA] Comment [KEYWORD] and I'll send you [RESOURCE].
 [FOLLOW-UP] (keyword \u2192 DM \u2192 qualify \u2192 offer \u2192 follow up).
+A post is not approved unless it has exactly: ONE audience, ONE pain, ONE message, ONE CTA, ONE next step.
 
-HOOKS (line 1 must earn line 2; front-load the payoff "above the fold"). Proven angles:
+CAMPAIGN KERNEL (every campaign): Audience \u2192 Pain \u2192 Desired Result \u2192 Mechanism \u2192 Proof \u2192 Offer \u2192 CTA \u2192 Follow-up.
+Positioning line: "I help [AUDIENCE] get [RESULT] without [PAIN] using [MECHANISM]."
+
+HOOKS (line 1 must earn line 2; front-load the payoff "above the fold"):
 - Curiosity gap: "Nobody in [niche] is talking about this\u2026"
 - Contrarian / pattern interrupt: "Unpopular opinion: more [obvious thing] won't fix it."
-- Specificity: "I cut [metric] by [exact number] in [timeframe] with one change." (only if TRUE)
+- Specificity: "I cut [metric] by [exact number] in [timeframe] with one change." (only if TRUE & cited)
 - Loss/cost framing: "You're quietly losing [X] because of [Y]."
 - Desired-outcome: "Here's how to get [result] without [pain]."
 - Identity: "If you're a [audience] who [trait], read this."
 Test 3 hook angles per idea: FEAR vs DESIRE vs CURIOSITY. Keep the one that earns saves/comments/DMs.
 
-PSYCHOLOGY TRIGGERS (use truthfully; name the lever you're pulling):
-Curiosity gap (open loop you close in the post) \xB7 Specificity/concreteness (real numbers beat vague) \xB7 Social proof (real results/quotes) \xB7 Loss aversion & FOMO (real stakes) \xB7 Authority (real credentials/sources) \xB7 Reciprocity (give value free first) \xB7 Identity/belonging ("for people who\u2026") \xB7 Pattern interrupt (break the scroll).
+PSYCHOLOGY TRIGGERS (use truthfully; name the lever): curiosity gap (open loop you close) \xB7 specificity (real numbers) \xB7 social proof (real results/quotes) \xB7 loss aversion & FOMO (real stakes) \xB7 authority (real credentials/sources) \xB7 reciprocity (free value first) \xB7 identity/belonging ("for people who\u2026") \xB7 pattern interrupt.
+
+AUDIENCE AWARENESS (match message to stage): Unaware \u2192 educational hook | Problem-aware \u2192 problem/agitation | Solution-aware \u2192 comparison/framework | Product-aware \u2192 proof/objection handling | Ready-to-buy \u2192 direct offer + booking. (For B2B/high-consideration, most buyers aren't in-market now \u2014 the LinkedIn B2B Institute "95-5 rule" \u2014 so build memory & trust before they're ready.)
 
 POST GOAL \u2014 pick ONE per post (don't make every post sell; rotate):
-Attention \u2192 curiosity/contrarian \u2192 comment keyword | Trust \u2192 education/breakdown \u2192 "save this" | Leads \u2192 checklist/template \u2192 comment keyword | Sell \u2192 offer post \u2192 DM / book call | Retarget \u2192 case study/proof \u2192 apply/book.
+Attention \u2192 curiosity/contrarian \u2192 comment keyword | Trust \u2192 education \u2192 "save this" | Leads \u2192 checklist/template \u2192 comment keyword | Sell \u2192 offer \u2192 DM/book call | Retarget \u2192 case study \u2192 apply/book.
 
-CONTENT PILLARS (any niche): Problem \xB7 Mistakes \xB7 Framework \xB7 Proof \xB7 Tools/Templates \xB7 Contrarian \xB7 Offer.
-
-POST TYPES (templates): Curiosity \xB7 Problem-Agitate-Solution \xB7 Mistakes (N mistakes) \xB7 Before/After \xB7 Checklist \xB7 Contrarian \xB7 Direct Offer. Match the type to the chosen goal.
+CONTENT PILLARS (any niche): Problem \xB7 Mistakes \xB7 Framework \xB7 Proof \xB7 Process \xB7 Opinion/POV \xB7 Offer. Weekly mix: 2 problem, 2 framework, 1 mistake, 1 proof/process, 1 offer.
 
 CTA LADDER (match to intent): Soft ("save this") \xB7 Engagement ("comment YES") \xB7 Lead ("comment GUIDE") \xB7 DM ("DM me AUDIT") \xB7 Sales ("book a call") \xB7 Retarget ("ready? message me").
 Keyword bank: GUIDE \xB7 CHECKLIST \xB7 MAP \xB7 AUDIT \xB7 TEMPLATE \xB7 PLAN \xB7 SYSTEM \xB7 FIX \xB7 START \xB7 SCALE.
 
-PLATFORM ADAPTATION (same machine, tuned):
-- Instagram: hook in line 1 (it's all that shows before "more"); tight paragraphs + emoji rhythm; 8\u201315 mixed-reach hashtags (few huge, several mid, a few niche); image/carousel/Reel that stops the scroll. Engagement signals that matter: SAVES + SHARES + comments + dwell. Put the CTA keyword clearly; pin a first comment.
-- LinkedIn: longer text OK, story + insight, NO hashtag spam (3\u20135), reward dwell time; CTA = comment/DM, soft.
-- X/Threads: brevity, strong first line, 1 idea; thread for depth.
-- TikTok/Reels/Shorts: first 2 seconds = hook on screen + spoken; optimize watch-time & loops; trend-aware.
+PLATFORM ADAPTATION (same machine, tuned; digital is ~61% of marketing spend per Gartner 2025 \u2014 distribution discipline matters):
+- Instagram: hook in line 1 (all that shows before "more"); tight paragraphs + emoji rhythm; 8\u201315 mixed-reach hashtags; scroll-stopping image/carousel/Reel. Signals that matter: SAVES + SHARES + comments + dwell. Pin a first comment with the CTA.
+- LinkedIn: longer story + insight, NO hashtag spam (3\u20135), reward dwell; CTA = comment/DM, soft; best for B2B authority.
+- X/Threads: brevity, strong first line, one idea; thread for depth.
+- TikTok/Reels/Shorts: first 2 seconds = on-screen + spoken hook; optimize watch-time & loops; trend-aware.
+As AI floods feeds with generic content (HubSpot 2026), win on a sharp point of view, trust, and distinctiveness \u2014 not volume.
 
 THE FUNNEL: Post \u2192 comment/DM keyword \u2192 send resource \u2192 ask ONE qualifying question \u2192 identify pain \u2192 offer next step \u2192 book/sell/send link \u2192 follow up.
-DM flow (generic, human, not pushy): 1) "Here's the [resource]. Quick Q \u2014 what are you working on right now?" 2) "Got it. What's the biggest thing you're trying to fix?" 3) "Makes sense \u2014 the main bottleneck is probably [X]; next step is [Y]." 4) "Want me to send the next step?" \u2192 booking/product/application link.
 
-OFFER LADDER (every post points to one rung): Free value (checklist/guide/audit) \u2192 Low-ticket (mini course/template pack) \u2192 Core (service/product) \u2192 Premium (done-for-you) \u2192 Recurring (retainer/subscription).
-LEAD MAGNETS: checklist \xB7 beginner guide \xB7 advanced playbook \xB7 mistake list \xB7 calculator/scorecard \xB7 template \xB7 case-study breakdown \xB7 buyer's guide \xB7 roadmap. Default winner: "The [Niche] Improvement Checklist: the 5 biggest bottlenecks holding back your results."
+OFFER LADDER (every post points to one rung): Free value \u2192 Lead magnet \u2192 Low-ticket \u2192 Core offer \u2192 Premium (done-for-you) \u2192 Recurring (retainer/subscription).
 
-WEEKLY CALENDAR (mix, don't only sell): Mon problem \xB7 Tue education \xB7 Wed checklist/template (leads) \xB7 Thu contrarian (authority) \xB7 Fri proof/case study \xB7 Sat direct offer \xB7 Sun story/recap. Target mix: 2 education, 2 lead-gen, 1 proof, 1 offer, 1 personal.
-
-KPIs (track weekly; conversations > likes): impressions (hook?) \xB7 saves (value?) \xB7 comments (CTA?) \xB7 DMs (intent?) \xB7 link clicks \xB7 leads \xB7 calls booked \xB7 sales \xB7 follow-up replies. Test ONE variable at a time (hook OR CTA OR offer).
+KPIs (track weekly; conversations > likes): impressions (hook?) \xB7 saves (value?) \xB7 comments (CTA?) \xB7 DMs (intent?) \xB7 clicks \xB7 leads \xB7 calls booked \xB7 sales \xB7 follow-up replies. Test ONE variable at a time. Don't scale on platform-reported conversions alone \u2014 corroborate with CRM/sales data and incrementality/holdout testing (Google) to see what happened BECAUSE of the marketing.
 
 HOW THIS SWARM RUNS THE ENGINE (use the real tools, end to end):
 1) Pick ONE audience + ONE pain + ONE desired result + ONE offer-ladder rung.
-2) RESEARCH the angle and any claim (web_search / tier1_sources) \u2014 get a real, citable fact. No claim ships unverified.
+2) RESEARCH the angle and EVERY claim (web_search / tier1_sources) \u2014 get a real, citable fact. Nothing ships unverified.
 3) WRITE the post with the formula + a tested hook + ONE goal + ONE CTA keyword.
 4) image_generate a scroll-stopping on-brand visual (it returns an absolute public URL).
 5) PUBLISH: instagram_post(image_url, caption) for IG; composio_action for other connected apps. Post once.
 6) SCHEDULE the calendar with schedule_task (recurring cron) so the engine runs itself.
 7) TRACK what worked with memory_write (hook angle, CTA, saves/DMs) and feed it back into the next round.
 
-POSITIONING LINE (fill in): "I help [AUDIENCE] get [RESULT] without [PAIN] using [METHOD]."
-
-MASTER TEMPLATE (any niche):
-"Most people in [NICHE] think [COMMON BELIEF]. But that's why they struggle with [PROBLEM]. The real issue is [ROOT CAUSE]. The ones getting [DESIRED RESULT] do this instead: 1) \u2026 2) \u2026 3) \u2026 4) \u2026 5) \u2026 I made a [RESOURCE] that breaks it down \u2014 comment [KEYWORD] and I'll send it."
+DEEPER MODULES \u2014 call marketing_playbook with a section for the enterprise build:
+campaign_brief \xB7 offer_ladder \xB7 audience \xB7 post_templates \xB7 campaign_types \xB7 lead_magnets \xB7 dm_flow \xB7 landing_page \xB7 email_nurture \xB7 paid_media \xB7 channels \xB7 production \xB7 governance \xB7 qa \xB7 kpis \xB7 experiments \xB7 rollout.
 
 ONE-SENTENCE ENGINE: Expose a real painful problem, teach a true better way, offer a useful resource, start a conversation, qualify the lead, move them to the next step \u2014 and track conversations, not likes.`;
-var MARKETING_ENGINE_POINTER = "MARKETING TASKS: for any post/caption/campaign/'make this go viral' request, call the marketing_playbook tool and apply that universal engine (hook\u2192problem\u2192insight\u2192value\u2192CTA\u2192follow-up, one goal, one CTA keyword, platform-tuned). Research and CITE any factual claim \u2014 never fabricate stats, studies, or testimonials. Then execute with the real tools: image_generate \u2192 instagram_post/composio_action \u2192 schedule_task \u2192 memory_write.";
+var MARKETING_SECTIONS = {
+  campaign_brief: {
+    title: "Master Campaign Brief",
+    body: `Every campaign must have a brief. Fill in:
+CAMPAIGN NAME \xB7 OBJECTIVE (Awareness/Leads/Bookings/Sales/Retention) \xB7 AUDIENCE \xB7 PAIN \xB7 DESIRED RESULT \xB7 MECHANISM \xB7 OFFER \xB7 LEAD MAGNET \xB7 CTA + keyword \xB7 CHANNELS \xB7 CONTENT ASSETS (posts/videos/carousels/emails/landing/ads) \xB7 PROOF (case studies/stats/testimonials/demos) \xB7 COMPLIANCE NOTES (claims/disclosures/privacy) \xB7 KPIs (primary/secondary) \xB7 TIMELINE (launch/review/optimize) \xB7 OWNER.
+Rule: every post belongs to a campaign, every campaign to a funnel, every funnel to a business objective.`
+  },
+  offer_ladder: {
+    title: "Offer Ladder",
+    body: `Free value (post/checklist/mini-audit) \u2192 Lead magnet (PDF/calculator/template/scorecard) \u2192 Low-ticket (template pack/workshop/starter kit) \u2192 Core (main service/product) \u2192 Premium (done-for-you/enterprise) \u2192 Recurring (retainer/subscription/support).
+For each campaign define: Primary CTA \xB7 Secondary CTA \xB7 Lead magnet \xB7 Sales offer \xB7 Upsell \xB7 Retention path. Every post points to ONE rung.`
+  },
+  audience: {
+    title: "Audience Intelligence",
+    body: `Segment by awareness: Unaware \xB7 Problem-aware \xB7 Solution-aware \xB7 Product-aware \xB7 Ready-to-buy \u2014 and match content to the stage.
+Before producing, answer: who is this for? what do they want? what are they afraid of? what are they tired of? what have they tried? what do they misunderstand? what proof do they need? what objection stops them? what words do they already use? what result makes them act now?`
+  },
+  post_templates: {
+    title: "Plug-and-Play Post Templates",
+    body: `1) CURIOSITY: "Most people think [BELIEF]. The real opportunity is [HIDDEN TRUTH]\u2026 the ones getting [RESULT] do: 1) 2) 3). Comment [KEYWORD]."
+2) PROBLEM-AGITATE-SOLUTION: "If you're dealing with [PROBLEM], it's not [SURFACE EXCUSE]. The real issue is [ROOT CAUSE]. That costs you: [PAIN 1-3]. The fix: [SOLUTION]. Comment [KEYWORD]."
+3) MISTAKE LIST: "5 mistakes [AUDIENCE] make with [TOPIC]: 1-5. Not effort \u2014 wrong system. Comment [KEYWORD]."
+4) BEFORE/AFTER: "Before: [bad state]. After: [desired result]. The difference: [OLD WAY] vs [NEW WAY]. Comment [KEYWORD]."
+5) AUTHORITY LEVELS: "[N] levels to [TOPIC]: L1\u2026L4. Most are stuck at L[x]; the results start at L[y]. Comment [KEYWORD]."
+6) CONTRARIAN: "Unpopular opinion: [BELIEF] isn't the solution. It's [BETTER BELIEF], because [REASON]. Comment [KEYWORD]."
+7) DIRECT OFFER: "I help [AUDIENCE] get [RESULT] without [PAIN]. Best fit if: [qualifiers]. DM/comment [KEYWORD]."`
+  },
+  campaign_types: {
+    title: "Campaign Library",
+    body: `Awareness (reach \u2192 follow/save) \xB7 Education (trust \u2192 download) \xB7 Lead magnet (capture \u2192 comment keyword) \xB7 Webinar (deep education \u2192 register) \xB7 Audit (qualify \u2192 book audit) \xB7 Case study (proof \u2192 request breakdown) \xB7 Offer (sales \u2192 apply/book) \xB7 Retargeting (warm \u2192 book call) \xB7 Reactivation (old leads \u2192 reply/schedule) \xB7 Referral (advocates \u2192 refer).
+Each needs: name \xB7 audience \xB7 objective \xB7 offer \xB7 CTA \xB7 channels \xB7 assets \xB7 owner \xB7 deadline \xB7 KPI \xB7 review date.`
+  },
+  lead_magnets: {
+    title: "Lead Magnets",
+    body: `Checklist (fast opt-ins) \xB7 Template (engagement) \xB7 Scorecard (audit selling) \xB7 Calculator (ROI/value) \xB7 Playbook (enterprise) \xB7 Roadmap (strategy) \xB7 Buyer's guide (comparison) \xB7 Mistakes guide (problem-aware) \xB7 Case-study breakdown (warm) \xB7 Swipe file (creators/agencies).
+Formula: "The [AUDIENCE] [OUTCOME] Checklist: Find the [N] Bottlenecks Blocking [RESULT]."`
+  },
+  dm_flow: {
+    title: "Comment-to-DM Flow",
+    body: `Public CTA: "Comment [KEYWORD] and I'll send it."
+DM1 (open): "Appreciate the comment \u2014 here's the [RESOURCE]. Before I send the best version, what are you working on right now?"
+DM2 (qualify): "Got it. What's the biggest thing you're trying to improve right now?"
+DM3 (diagnose): "Makes sense \u2014 the bottleneck is probably [BOTTLENECK]; the usual fix is [PATH]."
+DM4 (next step): "I can help you map this. Want me to send the next step?"
+DM5 (convert): "Here's the next step: [LINK] \u2014 it'll show what's working, what's leaking, what to fix first." Human, not pushy.`
+  },
+  landing_page: {
+    title: "Landing Page",
+    body: `Sections: hero headline \xB7 subhead \xB7 pain/problem \xB7 promise/result \xB7 what they get \xB7 who it's for \xB7 how it works \xB7 proof \xB7 FAQ \xB7 CTA \xB7 compliance/disclaimer.
+Headline formula: "Get [RESULT] Without [PAIN] Using [METHOD]."
+Lead-gen fields: name, email, business/project type, main problem (optional phone/budget/timeline). Enterprise qualification: company, role, team size, current tools, lead volume, budget range, decision timeline, primary bottleneck.`
+  },
+  email_nurture: {
+    title: "Email Nurture (+ CAN-SPAM)",
+    body: `7-email sequence: 1) deliver asset 2) educate (real problem) 3) agitate (where results leak) 4) framework 5) proof 6) handle objections 7) offer/booking.
+COMPLIANCE (CAN-SPAM): no deceptive headers/subject lines, clearly identify the sender, include a valid physical postal address, and give a working opt-out/unsubscribe in every commercial email.`
+  },
+  paid_media: {
+    title: "Paid Media (+ incrementality)",
+    body: `Funnel: Cold awareness \u2192 Lead magnet \u2192 Retargeting \u2192 Conversion \u2192 Reactivation.
+Creative by stage: cold = problem/curiosity \xB7 lead = checklist/template \xB7 retarget = proof/case study \xB7 conversion = offer/direct CTA \xB7 reactivation = new angle/bonus.
+MEASUREMENT: don't scale on platform-reported conversions alone. Hierarchy = platform metrics + CRM data + sales data + holdout/incrementality testing + revenue quality. Incrementality measures what happened BECAUSE of the ads, not just what a dashboard credited.`
+  },
+  channels: {
+    title: "Channel Role Matrix",
+    body: `Give every channel ONE job; don't blindly cross-post.
+LinkedIn = B2B authority/founder-led \xB7 Instagram = visual education/Reels/brand \xB7 TikTok = fast awareness/trend testing \xB7 YouTube = searchable authority/demos/long-form trust \xB7 Facebook = local/groups/retargeting \xB7 X = opinions/thought leadership \xB7 Email = nurture/conversion/retention \xB7 SMS = reminders/urgent follow-up \xB7 Webinars = education + high-ticket \xB7 Blog/SEO = search capture/long-term authority \xB7 Paid search = high-intent capture \xB7 Retargeting = warm conversion.`
+  },
+  production: {
+    title: "Production Workflow & Team",
+    body: `Workflow: Brief \u2192 research \u2192 angle \u2192 copy draft \u2192 creative draft \u2192 COMPLIANCE REVIEW \u2192 approval \u2192 schedule \u2192 publish \u2192 community mgmt \u2192 reporting \u2192 optimization.
+Roles (or hats one operator wears): Strategist \xB7 Brand \xB7 Content Lead \xB7 Copywriter \xB7 Designer \xB7 Video Editor \xB7 Media Buyer \xB7 Marketing Ops (CRM/automation/tracking) \xB7 Analyst \xB7 Community Manager \xB7 Sales \xB7 Compliance Reviewer \xB7 PM.
+RACI each task (Responsible/Accountable/Consulted/Informed) so nothing ships unreviewed.`
+  },
+  governance: {
+    title: "Governance & Compliance",
+    body: `Tag every claim: factual \xB7 opinion \xB7 projection \xB7 customer result \xB7 comparative \xB7 legal/medical/financial.
+Review gates: income claim \u2192 proof + disclaimer \xB7 health \u2192 medical/legal review \xB7 legal \u2192 attorney review \xB7 financial \u2192 compliance \xB7 performance \u2192 data source \xB7 customer result \u2192 permission + context \xB7 testimonial/sponsored \u2192 FTC disclosure.
+FTC: influencers/endorsers must clearly disclose material brand relationships. GDPR: if you collect/process personal data of EU/EEA individuals, GDPR obligations likely apply (lawful basis, consent, data rights, transfers). When in doubt, escalate to legal \u2014 do not publish an unverified or non-compliant claim.`
+  },
+  qa: {
+    title: "QA Checklists",
+    body: `POST: one audience \xB7 one hook \xB7 one pain \xB7 one insight \xB7 one CTA \xB7 no unsupported claim \xB7 no misleading promise \xB7 no fake urgency \xB7 brand voice \xB7 CTA link/keyword works \xB7 UTM if needed \xB7 approved for channel.
+LANDING PAGE: clear headline/offer \xB7 CTA above fold \xB7 mobile works \xB7 form works \xB7 thank-you page \xB7 tracking installed \xB7 privacy/disclaimer \xB7 acceptable speed \xB7 CRM routing.
+FUNNEL: post CTA works \xB7 DM response works \xB7 lead magnet delivers \xB7 email triggers \xB7 CRM record created \xB7 sales notified \xB7 booking link works \xB7 follow-up task created \xB7 reporting source captured.`
+  },
+  kpis: {
+    title: "KPI Hierarchy & Scorecard",
+    body: `Hierarchy: Business (revenue/profit/CAC/LTV) \u2192 Sales (calls booked/show/close) \u2192 Funnel (leads/conv/opt-in) \u2192 Content (saves/shares/comments/CTR) \u2192 Paid (CPA/ROAS/CPM/CPC/freq) \u2192 Email (open/CTR/reply/unsub) \u2192 Ops (assets produced/approvals/turnaround).
+Weekly scorecard: posts published, comments, DMs started, leads, calls booked, calls showed, deals closed, revenue, top post, worst post, best hook, best CTA, next test.`
+  },
+  experiments: {
+    title: "Experimentation",
+    body: `Test ONE variable at a time: hook (fear/desire/curiosity) \xB7 CTA (comment/DM/link) \xB7 lead magnet \xB7 creative (text/video/carousel) \xB7 audience (broad/niche) \xB7 offer (free vs paid audit) \xB7 landing (short/long) \xB7 follow-up (fast DM vs email).
+Template: hypothesis \xB7 audience \xB7 variable \xB7 control \xB7 variant \xB7 success metric \xB7 start/end \xB7 result \xB7 decision.
+Decision logic: Scale = clear improvement \xB7 Hold = inconclusive \xB7 Kill = worse \xB7 Retest = promising but noisy.`
+  },
+  rollout: {
+    title: "30 / 60 / 90 Rollout",
+    body: `Days 1\u201330 (Foundation): define offer ladder + audience segments + brand voice; build 5 pillars + 3 lead magnets + a landing page; install CRM tracking; launch first ~20 posts; start DM follow-up; build weekly dashboard.
+Days 31\u201360 (Production): 5\u20137 posts/week; 2 lead-gen campaigns; test 3 hooks + 3 CTAs; launch email nurture; start retargeting; build case studies; weekly optimization meeting.
+Days 61\u201390 (Scale): double down on winners; build paid campaigns; add webinar/workshop; sales enablement; lead scoring; reactivation sequence; referral campaign; monthly insights report.`
+  }
+};
+function marketingPlaybook(section) {
+  if (section) {
+    const key = section.trim().toLowerCase().replace(/[^a-z]/g, "_");
+    const hit = MARKETING_SECTIONS[key] ?? Object.entries(MARKETING_SECTIONS).find(([k]) => key.includes(k) || k.includes(key))?.[1];
+    if (hit) return `MARKETING ENGINE \u2014 ${hit.title}
+
+${hit.body}`;
+    return `Unknown section "${section}". Available: ${Object.keys(MARKETING_SECTIONS).join(", ")}.
+
+${MARKETING_ENGINE}`;
+  }
+  return MARKETING_ENGINE;
+}
+var MARKETING_ENGINE_POINTER = "MARKETING TASKS: for any post/caption/campaign/'make this go viral'/lead-magnet/funnel request, call the marketing_playbook tool and apply that universal engine (hook\u2192problem\u2192insight\u2192value\u2192CTA\u2192follow-up, one goal, one CTA keyword, platform-tuned). For the enterprise build (campaign brief, funnels, landing pages, email, paid, governance/compliance, KPIs, rollout) call marketing_playbook with a `section`. Research and CITE any factual claim \u2014 never fabricate stats, studies, or testimonials. Execute with the real tools: image_generate \u2192 instagram_post/composio_action \u2192 schedule_task \u2192 memory_write.";
 
 // src/tools.ts
 var STEEL_BASE = "https://api.steel.dev/v1";
@@ -87267,9 +87383,18 @@ ${stored}` : stored);
   },
   marketing_playbook: {
     name: "marketing_playbook",
-    description: "Return the Marketing Engine \u2014 the universal plug-and-play post\u2192conversion playbook (works for ANY niche/offer/platform). Call this BEFORE writing ANY marketing content (post, caption, campaign, 'make it go viral', lead magnet, funnel, content calendar) and apply its framework: hook\u2192problem\u2192insight\u2192value\u2192CTA\u2192follow-up, one goal + one CTA keyword, platform-tuned, accuracy-first (research & cite every claim \u2014 never fabricate stats/studies/testimonials). Then execute with image_generate \u2192 instagram_post/composio_action \u2192 schedule_task \u2192 memory_write.",
-    parameters: { type: "object", properties: {} },
-    run: async () => MARKETING_ENGINE
+    description: "Return the Marketing Engine \u2014 the universal plug-and-play post\u2192conversion playbook (ANY niche/offer/platform). Call with NO args BEFORE writing any marketing content for the core engine: hook\u2192problem\u2192insight\u2192value\u2192CTA\u2192follow-up, one goal + one CTA keyword, platform-tuned, accuracy-first (research & cite every claim \u2014 never fabricate stats/studies/testimonials). Pass a `section` for the enterprise build (campaign_brief, offer_ladder, audience, post_templates, campaign_types, lead_magnets, dm_flow, landing_page, email_nurture, paid_media, channels, production, governance, qa, kpis, experiments, rollout). Execute with image_generate \u2192 instagram_post/composio_action \u2192 schedule_task \u2192 memory_write.",
+    parameters: {
+      type: "object",
+      properties: {
+        section: {
+          type: "string",
+          enum: Object.keys(MARKETING_SECTIONS),
+          description: "Optional deep module to return instead of the core engine."
+        }
+      }
+    },
+    run: async (args) => marketingPlaybook(args["section"] != null ? String(args["section"]) : void 0)
   },
   tier1_sources: {
     name: "tier1_sources",
