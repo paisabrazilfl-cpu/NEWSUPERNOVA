@@ -29,7 +29,17 @@ app.use(
     },
   }),
 );
-app.use(cors());
+// CORS: the dashboard is served same-origin in production, so cross-origin
+// browser access isn't needed. When ALLOWED_ORIGINS is set (comma-separated),
+// lock to that allowlist with credentials so a stray site can't read the API in
+// a browser. Unset → permissive (dev / unconfigured deploys), unchanged behavior.
+const allowedOrigins = (process.env["ALLOWED_ORIGINS"] ?? "")
+  .split(",").map((o) => o.trim()).filter(Boolean);
+app.use(
+  allowedOrigins.length
+    ? cors({ origin: allowedOrigins, credentials: true })
+    : cors(),
+);
 app.use(cookieParser());
 // Limit is generous so base64 image/file uploads (POST /api/uploads) fit; the
 // upload route itself caps the decoded size at 20 MB.

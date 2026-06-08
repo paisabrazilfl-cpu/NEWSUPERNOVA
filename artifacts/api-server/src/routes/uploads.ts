@@ -111,7 +111,12 @@ router.get("/uploads/:id", async (req, res) => {
     res.setHeader("Content-Type", row.mimeType);
     res.setHeader("Content-Length", String(buf.length));
     res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
-    res.setHeader("Content-Disposition", `${disposition}; filename="${row.filename.replace(/"/g, "")}"`);
+    // Sanitize the operator-supplied filename for the header: drop quotes,
+    // backslashes and control chars (newlines would allow header injection), and
+    // add an RFC 5987 UTF-8 form for non-ASCII names.
+    const safeName = row.filename.replace(/[\u0000-\u001f\u007f"\\]/g, "").slice(0, 200) || "file";
+    const encName = encodeURIComponent(row.filename).slice(0, 300);
+    res.setHeader("Content-Disposition", `${disposition}; filename="${safeName}"; filename*=UTF-8''${encName}`);
     res.end(buf);
   } catch (err) {
     req.log.error({ err }, "upload: failed to serve attachment");

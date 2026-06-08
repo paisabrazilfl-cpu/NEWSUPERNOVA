@@ -377,11 +377,31 @@ export async function composioExecute(input: {
       signal: ctrl.signal,
     });
     const text = await r.text();
-    return `Composio → HTTP ${r.status} ${r.statusText}\n${clip(text, 4000)}`;
+    return `Composio → HTTP ${r.status} ${r.statusText}\n${cleanComposioBody(text)}`;
   } catch (err) {
     return `error: Composio call failed: ${String(err).slice(0, 300)}`;
   } finally {
     clearTimeout(timer);
+  }
+}
+
+/**
+ * Composio's proxy wraps the app payload as { data, status, headers } where
+ * `headers` is a huge block of proxy-status tokens / fb-debug noise. Strip it so
+ * the agent (and the operator) see just the real data — cleaner output, fewer
+ * tokens, no confusing junk. Also surface the inner upstream status when present.
+ */
+function cleanComposioBody(text: string): string {
+  try {
+    const j = JSON.parse(text) as Record<string, unknown>;
+    if (j && typeof j === "object" && "headers" in j) {
+      const { headers: _omit, ...rest } = j;
+      void _omit;
+      return clip(JSON.stringify(rest), 4000);
+    }
+    return clip(JSON.stringify(j), 4000);
+  } catch {
+    return clip(text, 4000);
   }
 }
 

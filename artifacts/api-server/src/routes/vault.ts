@@ -30,6 +30,24 @@ router.put("/vault", async (req, res) => {
     return;
   }
   const { name, value, description } = parsed.data;
+
+  // A vault name becomes a process.env key (so integrations turn on live), so it
+  // must be a real env-var identifier and must NOT clobber security-critical or
+  // runtime vars — otherwise a stored secret could rotate the session key (which
+  // bricks every other encrypted secret), change the operator password, or alter
+  // PATH/NODE_ENV.
+  if (!/^[A-Z][A-Z0-9_]*$/.test(name)) {
+    res.status(400).json({ error: "Secret name must be an UPPER_SNAKE_CASE env var identifier (A–Z, 0–9, _)." });
+    return;
+  }
+  const PROTECTED = new Set([
+    "OPERATOR_PASSWORD", "SESSION_SECRET", "OPENCLAW_API_KEY", "DATABASE_URL",
+    "NODE_ENV", "PATH", "PORT", "BASE_PATH", "ALLOW_COMPOSIO_EXECUTE",
+  ]);
+  if (PROTECTED.has(name)) {
+    res.status(400).json({ error: `'${name}' is a protected runtime variable and cannot be set from the vault.` });
+    return;
+  }
   const enc = encryptSecret(value);
 
   try {

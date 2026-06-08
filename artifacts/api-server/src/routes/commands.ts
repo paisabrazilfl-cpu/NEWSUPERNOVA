@@ -31,12 +31,15 @@ function fmtCron(j: typeof cronJobsTable.$inferSelect) {
 router.get("/commands", async (req, res) => {
   try {
     const { agentId, limit = "50" } = req.query as Record<string, string>;
-    const rows = agentId
+    // Bound the limit (avoid NaN → DB error and unbounded scans).
+    const lim = Math.min(200, Math.max(1, Number.parseInt(limit, 10) || 50));
+    const aid = Number.parseInt(agentId ?? "", 10);
+    const rows = Number.isFinite(aid)
       ? await db.select().from(agentCommandsTable)
-          .where(eq(agentCommandsTable.toAgentId, Number(agentId)))
-          .orderBy(desc(agentCommandsTable.createdAt)).limit(Number(limit))
+          .where(eq(agentCommandsTable.toAgentId, aid))
+          .orderBy(desc(agentCommandsTable.createdAt)).limit(lim)
       : await db.select().from(agentCommandsTable)
-          .orderBy(desc(agentCommandsTable.createdAt)).limit(Number(limit));
+          .orderBy(desc(agentCommandsTable.createdAt)).limit(lim);
     res.json(rows.map(fmt));
   } catch (err) {
     req.log.error({ err }, "Failed to list commands");
