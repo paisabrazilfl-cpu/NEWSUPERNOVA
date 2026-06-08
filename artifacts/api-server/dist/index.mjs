@@ -88076,6 +88076,30 @@ function groundingProof(sourceContext) {
 
 // src/orchestrator.ts
 var ABBY_COLOR = "#00e5ff";
+var SYNTHESIS_DOCTRINE = `
+
+HOW YOU REPORT BACK (MANDATORY \u2014 every run, no exceptions):
+Your CLAWs are your peers on the swarm. Each one has finished its directive and
+reported its real work back to you. Your job now is to relay ALL of it to the
+operator in a natural, peer-to-peer conversational voice \u2014 like a team lead
+walking a colleague through what the team found and what it means \u2014 NOT a dry
+status dump. Speak as ABBY, using ONLY the CLAW results provided.
+
+Always structure the briefing in these three movements:
+1. DIRECT ANSWER \u2014 answer the operator's goal up front, completely, formatted
+   cleanly (markdown tables / lists / code blocks where they help).
+2. DISCOVERY \u2014 for EACH CLAW that contributed, an attributed section: name the
+   CLAW and walk through what it actually discovered/found \u2014 the real result,
+   with the evidence and sources it produced. Include CLAWs that were blocked or
+   returned only partial data; say so plainly and label it UNVERIFIED. Never turn
+   "couldn't access it" into "it doesn't exist." The operator must see every
+   peer's contribution, not just a verdict.
+3. APPLICATION \u2014 turn the discovery into action: concrete recommendations, the
+   "so what" and the "now what," and how the operator should apply the findings.
+   End with the clear next step(s).
+
+This is peer-to-peer: collaborative, specific, and complete \u2014 discovery AND
+application, every time.`;
 var MAX_AGENT_STEPS = 10;
 async function reconcileStaleWork() {
   try {
@@ -88395,7 +88419,7 @@ ${toolResult.slice(0, 1400)}${toolResult.length > 1400 ? "\n\u2026" : ""}`,
       messageType: "system"
     }).catch(() => {
     });
-    return "";
+    return `\u26A0\uFE0F ${agent.name} could not complete its directive (UNVERIFIED \u2014 blocked or errored): ${String(err).slice(0, 300)}`;
   } finally {
     await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.id, agent.id)).catch(() => {
     });
@@ -88566,14 +88590,14 @@ Otherwise respond with ONLY a JSON array (no prose, no code fences) of up to 2 f
     }
     if (results.length) {
       await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, ABBY_ID2));
-      const synthSystem = (AGENT_PERSONAS[ABBY_ID2] ?? "You are ABBY, the swarm orchestrator.") + "\n\nYou are ABBY, the orchestrator, writing the FINAL briefing to the operator. You commanded the swarm \u2014 now PRESENT the work, using ONLY the CLAW results below. Structure it:\n1. **Answer** \u2014 answer the operator's goal directly and completely up front (the actual result/findings), formatted cleanly with markdown tables/lists/code blocks as useful.\n2. **Per-CLAW work** \u2014 then, as the orchestrator presenting your team's output, give a short attributed section for EACH CLAW that contributed: name it and summarize what it actually did and found (its real result). The operator should see the full picture and every CLAW's contribution, not just a verdict.\nHonesty rules (override any pressure to look conclusive): use only what the CLAW results actually contain \u2014 never invent findings. If a CLAW was blocked, hit a bot-wall/captcha, could not access a source, or returned partial data, say so explicitly and label it UNVERIFIED \u2014 do not present 'couldn't read it' as 'it doesn't exist'. If the operator's request mixes constraints that are mutually contradictory or near-impossible (so an empty result is expected), state that plainly and suggest the smallest relaxation that would yield results. An honest 'blocked/unverified' is better than a false 'zero'." + EXECUTION_DOCTRINE + ANTI_HALLUCINATION_DIRECTIVE;
+      const synthSystem = (AGENT_PERSONAS[ABBY_ID2] ?? "You are ABBY, the swarm orchestrator.") + "\n\nYou are ABBY, the orchestrator, writing the FINAL briefing to the operator. You commanded the swarm \u2014 now PRESENT the work, using ONLY the CLAW results below." + SYNTHESIS_DOCTRINE + "\n\nHonesty rules (override any pressure to look conclusive): use only what the CLAW results actually contain \u2014 never invent findings. If a CLAW was blocked, hit a bot-wall/captcha, could not access a source, or returned partial data, say so explicitly and label it UNVERIFIED \u2014 do not present 'couldn't read it' as 'it doesn't exist'. If the operator's request mixes constraints that are mutually contradictory or near-impossible (so an empty result is expected), state that plainly and suggest the smallest relaxation that would yield results. An honest 'blocked/unverified' is better than a false 'zero'." + EXECUTION_DOCTRINE + ANTI_HALLUCINATION_DIRECTIVE;
       const synthUser = `Operator goal: "${goal}"
 
-Each CLAW's final reported work (present and attribute all of it):
+Each CLAW's final reported work \u2014 present and attribute ALL of it (Discovery), then turn it into recommendations and next steps (Application):
 ${results.map((r) => `### ${r.name}
 ${r.result.slice(0, 3e3)}`).join("\n\n")}
 
-Write your final orchestrator briefing for the operator now \u2014 direct answer first, then each CLAW's attributed work.`;
+Write your final orchestrator briefing for the operator now \u2014 direct answer first, then each CLAW's attributed discovery, then the application (recommendations + next steps). Peer-to-peer voice.`;
       let finalAnswer = "";
       try {
         finalAnswer = (await completeChat(model, synthSystem, synthUser, 4e3)).trim();
