@@ -88047,13 +88047,13 @@ var MAX_AGENT_STEPS = 10;
 async function reconcileStaleWork() {
   try {
     const now = /* @__PURE__ */ new Date();
-    await db.update(agentCommandsTable).set({ status: "failed", result: "Interrupted by server restart.", completedAt: now }).where(eq(agentCommandsTable.status, "running"));
-    await db.update(tasksTable).set({ status: "failed", completedAt: now }).where(eq(tasksTable.status, "running"));
+    await db.update(agentCommandsTable).set({ status: "interrupted", result: "Interrupted by server restart (deploy or redeploy) \u2014 not an agent failure.", completedAt: now }).where(eq(agentCommandsTable.status, "running"));
+    await db.update(tasksTable).set({ status: "interrupted", completedAt: now }).where(eq(tasksTable.status, "running"));
     await db.update(toolCallsTable).set({ status: "error", completedAt: now }).where(eq(toolCallsTable.status, "running"));
     for (const status of ["thinking", "executing", "waiting"]) {
       await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.status, status));
     }
-    logger.info("reconcileStaleWork: cleared interrupted orchestration state");
+    logger.info("reconcileStaleWork: marked interrupted orchestration state");
   } catch (err) {
     logger.error({ err }, "reconcileStaleWork failed");
   }
@@ -90038,6 +90038,13 @@ ALTER TABLE "agent_memory" ADD COLUMN IF NOT EXISTS "embedding" text;
 ALTER TABLE "agent_commands" ADD COLUMN IF NOT EXISTS "model" text;
 ALTER TABLE "agent_commands" ADD COLUMN IF NOT EXISTS "grounding_chars" integer;
 ALTER TABLE "agent_commands" ADD COLUMN IF NOT EXISTS "grounding_hash" text;
+
+-- Reclassify historical restart interruptions: a deploy/redeploy killing
+-- in-flight work was previously marked 'failed', polluting the failure view as
+-- if the CLAW failed. Re-tag them 'interrupted' so they stop counting as agent
+-- failures (the recovery routine now writes 'interrupted' directly).
+UPDATE "agent_commands" SET "status" = 'interrupted'
+  WHERE "status" = 'failed' AND "result" LIKE 'Interrupted by server restart%';
 
 CREATE TABLE IF NOT EXISTS "vault_secrets" (
   "id" serial PRIMARY KEY NOT NULL,
