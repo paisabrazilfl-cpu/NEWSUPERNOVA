@@ -49,6 +49,7 @@ import { runInSandbox, repoPr, sandboxConfigured, gitWriteConfigured } from "./l
 import { TIER1_SOURCES, tier1SourcesText } from "./lib/sources";
 import { marketingPlaybook, MARKETING_SECTIONS } from "./lib/marketing";
 import { blockIfSensitiveForPublic } from "./lib/safety";
+import { checkPostAllowed, recordPost } from "./lib/postLimit";
 
 const STEEL_BASE = "https://api.steel.dev/v1";
 const FIRECRAWL_BASE = "https://api.firecrawl.dev/v1";
@@ -1255,6 +1256,9 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
       if (!/^https:\/\/\S+/i.test(imageUrl)) {
         return "error: image_url must be an absolute https URL that Instagram can fetch (use the URL image_generate returns, e.g. https://<host>/api/uploads/<id>). A relative path will not work.";
       }
+      // SAFEGUARD: enforce the daily cap + spacing so the feed never gets spammed.
+      const limited = await checkPostAllowed("instagram");
+      if (limited) return limited;
       const pick = (s: string): Record<string, unknown> | null => {
         const nl = s.indexOf("\n");
         try { return JSON.parse(nl >= 0 ? s.slice(nl + 1) : s) as Record<string, unknown>; } catch { return null; }
@@ -1281,6 +1285,7 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
       // Step 3 — fetch the permalink as proof it's live.
       const r3 = await composioExecute({ toolkit: "instagram", endpoint: `/${publishedId}?fields=permalink`, method: "GET" });
       const permalink = ((pick(r3)?.["data"] as Record<string, unknown>)?.["permalink"]) as string | undefined;
+      await recordPost("instagram", "", permalink ?? String(publishedId)); // count toward the daily cap + spacing
       return `✅ Instagram post is LIVE. media_id=${publishedId} (container ${creationId}).${permalink ? `\npermalink: ${permalink}` : "\n(permalink fetch returned no link, but publish succeeded)"}`;
     },
   },

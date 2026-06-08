@@ -155,7 +155,15 @@ CREATE INDEX IF NOT EXISTS "messages_channel_ts_idx" ON "messages" ("channel_id"
 CREATE INDEX IF NOT EXISTS "agent_commands_created_idx" ON "agent_commands" ("created_at");
 CREATE INDEX IF NOT EXISTS "tool_calls_agent_idx" ON "tool_calls" ("agent_id");
 CREATE INDEX IF NOT EXISTS "tasks_status_idx" ON "tasks" ("status");
-CREATE INDEX IF NOT EXISTS "agent_memory_agent_idx" ON "agent_memory" ("agent_id");
+-- Social posting log — powers the per-platform daily cap + spacing limiter.
+CREATE TABLE IF NOT EXISTS "social_posts" (
+  "id" serial PRIMARY KEY NOT NULL,
+  "platform" text NOT NULL,
+  "account" text,
+  "permalink" text,
+  "created_at" timestamp DEFAULT now() NOT NULL
+);
+CREATE INDEX IF NOT EXISTS "social_posts_platform_created_idx" ON "social_posts" ("platform", "created_at");
 `;
 
 const SEED_AGENTS = `
