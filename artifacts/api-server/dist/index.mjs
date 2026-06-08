@@ -86517,6 +86517,84 @@ function tier1SourcesText(category) {
 ${c.urls.join("\n")}`).join("\n\n");
 }
 
+// src/lib/marketing.ts
+var MARKETING_ENGINE = `
+MARKETING ENGINE \u2014 universal plug-and-play post \u2192 conversion machine (any niche/offer/platform).
+
+THE CHAIN (most chase only attention; the money is the full chain):
+Attention \u2192 Trust \u2192 Desire \u2192 Action \u2192 Follow-up \u2192 Conversion.
+Core truth: VIEWS ARE NOT THE BUSINESS. CONVERSATIONS ARE. Optimize for qualified conversations, not likes.
+
+ACCURACY FIRST (non-negotiable \u2014 overrides "make it punchy"):
+- Every factual claim, statistic, study, or result in a post MUST be TRUE and verifiable. RESEARCH it first (web_search / tier1_sources) and keep the source. Punchy \u2260 fabricated.
+- NEVER invent stats ("boosts output 300%"), studies ("MIT & Stanford research"), testimonials, or results. A vague "recent studies show" with no real source is a fabrication \u2014 cut it or replace it with a real, cited fact.
+- Hooks may be bold and emotional, but the underlying claim must hold up. Curiosity and FOMO are fine; lying is not.
+- Disclose paid/affiliate/ad relationships (FTC) and respect each platform's ToS. No fake scarcity, no deceptive claims.
+
+THE UNIVERSAL POST FORMULA (6 beats):
+Hook \u2192 Problem \u2192 Insight \u2192 Value \u2192 CTA \u2192 Follow-up system.
+[HOOK] Most people think [COMMON BELIEF].
+[PROBLEM] But the real issue is [HIDDEN PROBLEM] \u2014 costing [PAIN].
+[INSIGHT] The ones winning do [BETTER METHOD].
+[VALUE] Here are [3\u20137] things you can use now: 1) \u2026 2) \u2026 3) \u2026
+[CTA] Comment [KEYWORD] and I'll send you [RESOURCE].
+[FOLLOW-UP] (keyword \u2192 DM \u2192 qualify \u2192 offer \u2192 follow up).
+
+HOOKS (line 1 must earn line 2; front-load the payoff "above the fold"). Proven angles:
+- Curiosity gap: "Nobody in [niche] is talking about this\u2026"
+- Contrarian / pattern interrupt: "Unpopular opinion: more [obvious thing] won't fix it."
+- Specificity: "I cut [metric] by [exact number] in [timeframe] with one change." (only if TRUE)
+- Loss/cost framing: "You're quietly losing [X] because of [Y]."
+- Desired-outcome: "Here's how to get [result] without [pain]."
+- Identity: "If you're a [audience] who [trait], read this."
+Test 3 hook angles per idea: FEAR vs DESIRE vs CURIOSITY. Keep the one that earns saves/comments/DMs.
+
+PSYCHOLOGY TRIGGERS (use truthfully; name the lever you're pulling):
+Curiosity gap (open loop you close in the post) \xB7 Specificity/concreteness (real numbers beat vague) \xB7 Social proof (real results/quotes) \xB7 Loss aversion & FOMO (real stakes) \xB7 Authority (real credentials/sources) \xB7 Reciprocity (give value free first) \xB7 Identity/belonging ("for people who\u2026") \xB7 Pattern interrupt (break the scroll).
+
+POST GOAL \u2014 pick ONE per post (don't make every post sell; rotate):
+Attention \u2192 curiosity/contrarian \u2192 comment keyword | Trust \u2192 education/breakdown \u2192 "save this" | Leads \u2192 checklist/template \u2192 comment keyword | Sell \u2192 offer post \u2192 DM / book call | Retarget \u2192 case study/proof \u2192 apply/book.
+
+CONTENT PILLARS (any niche): Problem \xB7 Mistakes \xB7 Framework \xB7 Proof \xB7 Tools/Templates \xB7 Contrarian \xB7 Offer.
+
+POST TYPES (templates): Curiosity \xB7 Problem-Agitate-Solution \xB7 Mistakes (N mistakes) \xB7 Before/After \xB7 Checklist \xB7 Contrarian \xB7 Direct Offer. Match the type to the chosen goal.
+
+CTA LADDER (match to intent): Soft ("save this") \xB7 Engagement ("comment YES") \xB7 Lead ("comment GUIDE") \xB7 DM ("DM me AUDIT") \xB7 Sales ("book a call") \xB7 Retarget ("ready? message me").
+Keyword bank: GUIDE \xB7 CHECKLIST \xB7 MAP \xB7 AUDIT \xB7 TEMPLATE \xB7 PLAN \xB7 SYSTEM \xB7 FIX \xB7 START \xB7 SCALE.
+
+PLATFORM ADAPTATION (same machine, tuned):
+- Instagram: hook in line 1 (it's all that shows before "more"); tight paragraphs + emoji rhythm; 8\u201315 mixed-reach hashtags (few huge, several mid, a few niche); image/carousel/Reel that stops the scroll. Engagement signals that matter: SAVES + SHARES + comments + dwell. Put the CTA keyword clearly; pin a first comment.
+- LinkedIn: longer text OK, story + insight, NO hashtag spam (3\u20135), reward dwell time; CTA = comment/DM, soft.
+- X/Threads: brevity, strong first line, 1 idea; thread for depth.
+- TikTok/Reels/Shorts: first 2 seconds = hook on screen + spoken; optimize watch-time & loops; trend-aware.
+
+THE FUNNEL: Post \u2192 comment/DM keyword \u2192 send resource \u2192 ask ONE qualifying question \u2192 identify pain \u2192 offer next step \u2192 book/sell/send link \u2192 follow up.
+DM flow (generic, human, not pushy): 1) "Here's the [resource]. Quick Q \u2014 what are you working on right now?" 2) "Got it. What's the biggest thing you're trying to fix?" 3) "Makes sense \u2014 the main bottleneck is probably [X]; next step is [Y]." 4) "Want me to send the next step?" \u2192 booking/product/application link.
+
+OFFER LADDER (every post points to one rung): Free value (checklist/guide/audit) \u2192 Low-ticket (mini course/template pack) \u2192 Core (service/product) \u2192 Premium (done-for-you) \u2192 Recurring (retainer/subscription).
+LEAD MAGNETS: checklist \xB7 beginner guide \xB7 advanced playbook \xB7 mistake list \xB7 calculator/scorecard \xB7 template \xB7 case-study breakdown \xB7 buyer's guide \xB7 roadmap. Default winner: "The [Niche] Improvement Checklist: the 5 biggest bottlenecks holding back your results."
+
+WEEKLY CALENDAR (mix, don't only sell): Mon problem \xB7 Tue education \xB7 Wed checklist/template (leads) \xB7 Thu contrarian (authority) \xB7 Fri proof/case study \xB7 Sat direct offer \xB7 Sun story/recap. Target mix: 2 education, 2 lead-gen, 1 proof, 1 offer, 1 personal.
+
+KPIs (track weekly; conversations > likes): impressions (hook?) \xB7 saves (value?) \xB7 comments (CTA?) \xB7 DMs (intent?) \xB7 link clicks \xB7 leads \xB7 calls booked \xB7 sales \xB7 follow-up replies. Test ONE variable at a time (hook OR CTA OR offer).
+
+HOW THIS SWARM RUNS THE ENGINE (use the real tools, end to end):
+1) Pick ONE audience + ONE pain + ONE desired result + ONE offer-ladder rung.
+2) RESEARCH the angle and any claim (web_search / tier1_sources) \u2014 get a real, citable fact. No claim ships unverified.
+3) WRITE the post with the formula + a tested hook + ONE goal + ONE CTA keyword.
+4) image_generate a scroll-stopping on-brand visual (it returns an absolute public URL).
+5) PUBLISH: instagram_post(image_url, caption) for IG; composio_action for other connected apps. Post once.
+6) SCHEDULE the calendar with schedule_task (recurring cron) so the engine runs itself.
+7) TRACK what worked with memory_write (hook angle, CTA, saves/DMs) and feed it back into the next round.
+
+POSITIONING LINE (fill in): "I help [AUDIENCE] get [RESULT] without [PAIN] using [METHOD]."
+
+MASTER TEMPLATE (any niche):
+"Most people in [NICHE] think [COMMON BELIEF]. But that's why they struggle with [PROBLEM]. The real issue is [ROOT CAUSE]. The ones getting [DESIRED RESULT] do this instead: 1) \u2026 2) \u2026 3) \u2026 4) \u2026 5) \u2026 I made a [RESOURCE] that breaks it down \u2014 comment [KEYWORD] and I'll send it."
+
+ONE-SENTENCE ENGINE: Expose a real painful problem, teach a true better way, offer a useful resource, start a conversation, qualify the lead, move them to the next step \u2014 and track conversations, not likes.`;
+var MARKETING_ENGINE_POINTER = "MARKETING TASKS: for any post/caption/campaign/'make this go viral' request, call the marketing_playbook tool and apply that universal engine (hook\u2192problem\u2192insight\u2192value\u2192CTA\u2192follow-up, one goal, one CTA keyword, platform-tuned). Research and CITE any factual claim \u2014 never fabricate stats, studies, or testimonials. Then execute with the real tools: image_generate \u2192 instagram_post/composio_action \u2192 schedule_task \u2192 memory_write.";
+
 // src/tools.ts
 var STEEL_BASE = "https://api.steel.dev/v1";
 var FIRECRAWL_BASE = "https://api.firecrawl.dev/v1";
@@ -87187,6 +87265,12 @@ ${stored}` : stored);
     },
     run: async (args) => safeCalc(String(args["expression"] ?? ""))
   },
+  marketing_playbook: {
+    name: "marketing_playbook",
+    description: "Return the Marketing Engine \u2014 the universal plug-and-play post\u2192conversion playbook (works for ANY niche/offer/platform). Call this BEFORE writing ANY marketing content (post, caption, campaign, 'make it go viral', lead magnet, funnel, content calendar) and apply its framework: hook\u2192problem\u2192insight\u2192value\u2192CTA\u2192follow-up, one goal + one CTA keyword, platform-tuned, accuracy-first (research & cite every claim \u2014 never fabricate stats/studies/testimonials). Then execute with image_generate \u2192 instagram_post/composio_action \u2192 schedule_task \u2192 memory_write.",
+    parameters: { type: "object", properties: {} },
+    run: async () => MARKETING_ENGINE
+  },
   tier1_sources: {
     name: "tier1_sources",
     description: "Return the vetted Tier-1 (authoritative, primary) source URLs to research from \u2014 government/regulatory, primary institutions, peer-reviewed journals & standards bodies, official company/platform docs, Tier-1 wire services, and recognized data authorities. Call this BEFORE web research so you start from serious sources, then web_scrape/http_request those URLs. Optionally pass a category to filter.",
@@ -87598,9 +87682,9 @@ var AGENT_TOOLS = {
   // CRAWLER — browser
   4: ["memory_write", "memory_search", "web_search", "tier1_sources", "web_scrape", "http_request", "calculator", "vault_list", "save_artifact", "image_generate", "send_message"],
   // VAULT — memory/RAG
-  5: ["http_request", "web_scrape", "web_search", "tier1_sources", "code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_action", "instagram_post", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task", "save_artifact", "image_generate", "send_message"],
+  5: ["http_request", "web_scrape", "web_search", "tier1_sources", "marketing_playbook", "code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_action", "instagram_post", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task", "save_artifact", "image_generate", "send_message"],
   // WIRE — APIs + scheduling
-  6: ["web_scrape", "web_search", "tier1_sources", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_action", "instagram_post", "save_artifact", "image_generate", "send_message"]
+  6: ["web_scrape", "web_search", "tier1_sources", "marketing_playbook", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_action", "instagram_post", "save_artifact", "image_generate", "send_message"]
   // MR.NICE — social
 };
 function getToolNamesForAgent(agentId) {
@@ -87705,7 +87789,9 @@ VOICE: terse, high signal density, results-first, zero filler. When useful, clos
   3: `You are CRAWLER, the browser and web-intelligence specialist of the ABBY CLAW swarm. You search the live web, navigate sites, scrape pages, and capture screenshots via the Steel browser. Work from real fetched content, cite the URLs you used, and report findings concisely and accurately.`,
   4: `You are VAULT, the memory and RAG specialist of the ABBY CLAW swarm. You manage the swarm's Postgres-backed vector memory \u2014 writing embedded entries and retrieving them by real cosine-similarity semantic search (with keyword fallback). Be precise and accurate; ground every answer in what is actually stored.`,
   5: `You are WIRE, the API-integration specialist of the ABBY CLAW swarm. You connect external services, webhooks, and REST APIs, and schedule recurring work. You understand auth flows, rate limits, and data pipelines. Make the real call and report the real response; be direct and technical.`,
-  6: `You are MR.NICE, the social and communications specialist of the ABBY CLAW swarm. You manage social platforms and human-facing messaging through their official APIs. You are sharp, persuasive, and tone-aware \u2014 but you act on real account data and report what actually happened.`
+  6: `You are MR.NICE, the social and communications specialist of the ABBY CLAW swarm. You manage social platforms and human-facing messaging through their official APIs. You are sharp, persuasive, and tone-aware \u2014 but you act on real account data and report what actually happened.
+
+${MARKETING_ENGINE_POINTER}`
 };
 var CHAT_MODE_DIRECTIVE = `
 
