@@ -356,11 +356,25 @@ export async function composioExecute(input: {
     };
   } else if (input.endpoint && input.method) {
     url = `${base}/tools/execute/proxy`;
+    // Composio's proxy takes a `parameters` array ({name,value,type}). Agents
+    // naturally pass key/value via `arguments` (e.g. image_url, caption) — convert
+    // those into query parameters so they actually reach the app's API. Without
+    // this they were silently dropped (IG: "The parameter image_url is required").
+    let parameters: Array<Record<string, unknown>> | undefined = Array.isArray(input.parameters)
+      ? (input.parameters as Array<Record<string, unknown>>)
+      : undefined;
+    if (!parameters && input.arguments && Object.keys(input.arguments).length) {
+      parameters = Object.entries(input.arguments).map(([name, value]) => ({
+        name,
+        value: typeof value === "string" ? value : JSON.stringify(value),
+        type: "query",
+      }));
+    }
     payload = {
       endpoint: input.endpoint,
       method: input.method.toUpperCase(),
       ...(accId ? { connected_account_id: accId } : {}),
-      ...(Array.isArray(input.parameters) ? { parameters: input.parameters } : {}),
+      ...(parameters ? { parameters } : {}),
       ...(input.body != null ? { body: input.body } : {}),
     };
   } else {
