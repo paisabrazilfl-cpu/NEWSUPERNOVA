@@ -1,5 +1,5 @@
 import { useListTasks, getListTasksQueryKey } from "@workspace/api-client-react";
-import { LayoutGrid, Clock, PlayCircle, CheckCircle2, XCircle, PauseCircle } from "lucide-react";
+import { LayoutGrid, Clock, PlayCircle, CheckCircle2, XCircle, PauseCircle, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export default function Tasks() {
@@ -9,7 +9,7 @@ export default function Tasks() {
   });
 
   // Surface active work first: running → queued → paused → newest of the rest.
-  const rank: Record<string, number> = { running: 0, queued: 1, paused: 2, failed: 3, completed: 4 };
+  const rank: Record<string, number> = { running: 0, queued: 1, paused: 2, failed: 3, interrupted: 5, completed: 4 };
   const sorted = [...tasks].sort(
     (a, b) => (rank[a.status] ?? 9) - (rank[b.status] ?? 9) || b.id - a.id,
   );
@@ -25,6 +25,7 @@ export default function Tasks() {
       case 'running': return <PlayCircle className="w-4 h-4 text-primary animate-pulse" />;
       case 'completed': return <CheckCircle2 className="w-4 h-4 text-green-500" />;
       case 'failed': return <XCircle className="w-4 h-4 text-destructive" />;
+      case 'interrupted': return <RotateCcw className="w-4 h-4 text-amber-500" />;
       case 'paused': return <PauseCircle className="w-4 h-4 text-accent" />;
       default: return null;
     }
@@ -59,7 +60,7 @@ export default function Tasks() {
               {live > 0 ? `${live} active` : "idle"}
             </span>
             <span className="text-muted-foreground hidden sm:inline">
-              {counts["running"] ?? 0} running · {counts["queued"] ?? 0} queued · {counts["completed"] ?? 0} done · {counts["failed"] ?? 0} failed
+              {counts["running"] ?? 0} running · {counts["queued"] ?? 0} queued · {counts["completed"] ?? 0} done · {counts["failed"] ?? 0} failed{counts["interrupted"] ? ` · ${counts["interrupted"]} interrupted` : ""}
             </span>
           </div>
         )}
@@ -115,7 +116,7 @@ export default function Tasks() {
                       <td className="p-4">
                         <div className="flex items-center gap-3">
                           <div className="h-1.5 flex-1 bg-background rounded-full overflow-hidden border border-card-border">
-                            <div className={cn("h-full transition-all duration-500", task.status === 'completed' ? "bg-green-500" : task.status === 'failed' ? "bg-destructive" : "bg-primary")} style={{ width: `${task.progress || 0}%` }} />
+                            <div className={cn("h-full transition-all duration-500", task.status === 'completed' ? "bg-green-500" : task.status === 'failed' ? "bg-destructive" : (task.status as string) === 'interrupted' ? "bg-amber-500" : "bg-primary")} style={{ width: `${task.progress || 0}%` }} />
                           </div>
                           <span className="text-xs font-mono w-8 text-right">{task.progress || 0}%</span>
                         </div>
@@ -144,7 +145,7 @@ export default function Tasks() {
                     <span className="font-mono text-muted-foreground">{task.progress || 0}%</span>
                   </div>
                   <div className="h-1.5 bg-background rounded-full overflow-hidden border border-card-border">
-                    <div className={cn("h-full transition-all duration-500", task.status === 'completed' ? "bg-green-500" : task.status === 'failed' ? "bg-destructive" : "bg-primary")} style={{ width: `${task.progress || 0}%` }} />
+                    <div className={cn("h-full transition-all duration-500", task.status === 'completed' ? "bg-green-500" : task.status === 'failed' ? "bg-destructive" : (task.status as string) === 'interrupted' ? "bg-amber-500" : "bg-primary")} style={{ width: `${task.progress || 0}%` }} />
                   </div>
                 </div>
               ))}

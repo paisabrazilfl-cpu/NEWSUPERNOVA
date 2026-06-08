@@ -65,25 +65,27 @@ const MAX_AGENT_STEPS = 10;
 /**
  * Crash/restart recovery. Execution is in-process and fire-and-forget, so a
  * restart mid-run can leave commands/tasks stuck `running` and agents stuck in a
- * non-idle status. On boot we fail those orphans and reset agent status so the
- * dashboard never shows phantom "thinking" agents or perpetually running work.
+ * non-idle status. On boot we mark those orphans as `interrupted` (NOT `failed` —
+ * a deploy/restart killing in-flight work is infrastructure, not an agent
+ * failure, and must not pollute the failure view or the failure count) and reset
+ * agent status so the dashboard never shows phantom "thinking" agents.
  */
 export async function reconcileStaleWork(): Promise<void> {
   try {
     const now = new Date();
     await db
       .update(agentCommandsTable)
-      .set({ status: "failed", result: "Interrupted by server restart.", completedAt: now })
+      .set({ status: "interrupted", result: "Interrupted by server restart (deploy or redeploy) — not an agent failure.", completedAt: now })
       .where(eq(agentCommandsTable.status, "running"));
     await db
       .update(tasksTable)
-      .set({ status: "failed", completedAt: now })
+      .set({ status: "interrupted", completedAt: now })
       .where(eq(tasksTable.status, "running"));
     await db.update(toolCallsTable).set({ status: "error", completedAt: now }).where(eq(toolCallsTable.status, "running"));
     for (const status of ["thinking", "executing", "waiting"]) {
       await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.status, status));
     }
-    logger.info("reconcileStaleWork: cleared interrupted orchestration state");
+    logger.info("reconcileStaleWork: marked interrupted orchestration state");
   } catch (err) {
     logger.error({ err }, "reconcileStaleWork failed");
   }
