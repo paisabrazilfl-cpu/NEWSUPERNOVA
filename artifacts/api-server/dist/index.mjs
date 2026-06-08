@@ -87497,7 +87497,7 @@ DELIVERABLE FILES: whenever you produce a file the operator should keep (report,
   if (names.includes("image_generate")) {
     card += `
 
-IMAGES: to create an image/picture/logo/diagram, call image_generate with a detailed prompt \u2014 it saves the image and returns a markdown preview + download link to include in your answer.`;
+IMAGES: for ANY request for an image/picture/logo/illustration/render/artwork, call image_generate with a detailed prompt \u2014 it produces a REAL raster PNG and returns a preview + download link to put in your answer. Do NOT hand-code an SVG or merely describe the image; only produce SVG if the operator explicitly asks for SVG/vector.`;
   }
   if (agentId === ABBY_ID) {
     card += `
