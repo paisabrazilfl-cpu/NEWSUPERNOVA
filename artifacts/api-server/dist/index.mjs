@@ -87430,6 +87430,54 @@ The operator connects apps in Settings \u2192 Connect Apps (Composio).`;
       });
     }
   },
+  instagram_post: {
+    name: "instagram_post",
+    description: "Publish ONE image post to the operator's connected Instagram, end to end. Pass `image_url` (an ABSOLUTE public https URL \u2014 use exactly the URL image_generate returns) and `caption`. This does the whole Instagram flow server-side and correctly: create media container \u2192 publish \u2192 fetch permalink, and returns the live permalink. ALWAYS use this for 'post to my Instagram' instead of hand-driving composio_action \u2014 it can't be malformed. Posts exactly once.",
+    parameters: {
+      type: "object",
+      properties: {
+        image_url: { type: "string", description: "Absolute public https URL of the image (the URL image_generate returns)." },
+        caption: { type: "string", description: "The post caption (hook + body + hashtags)." }
+      },
+      required: ["image_url"]
+    },
+    run: async (args) => {
+      if (!composioConfigured()) return "error: Composio is not configured (set COMPOSIO_API_KEY).";
+      if (!composioExecuteEnabled()) return "error: Composio execution is disabled (operator must set ALLOW_COMPOSIO_EXECUTE=true).";
+      const imageUrl = String(args["image_url"] ?? "").trim();
+      const caption = args["caption"] != null ? String(args["caption"]) : "";
+      if (!/^https:\/\/\S+/i.test(imageUrl)) {
+        return "error: image_url must be an absolute https URL that Instagram can fetch (use the URL image_generate returns, e.g. https://<host>/api/uploads/<id>). A relative path will not work.";
+      }
+      const pick2 = (s) => {
+        const nl = s.indexOf("\n");
+        try {
+          return JSON.parse(nl >= 0 ? s.slice(nl + 1) : s);
+        } catch {
+          return null;
+        }
+      };
+      const dataId = (j) => j?.["data"]?.["id"];
+      const r1 = await composioExecute({ toolkit: "instagram", endpoint: "/me/media", method: "POST", arguments: { image_url: imageUrl, caption } });
+      const creationId = dataId(pick2(r1));
+      if (!creationId) return `error: Instagram did not create the media container.
+${r1.slice(0, 600)}`;
+      let publishedId;
+      let last = "";
+      for (let attempt = 0; attempt < 4 && !publishedId; attempt++) {
+        if (attempt > 0) await new Promise((res) => setTimeout(res, 3e3));
+        const r2 = await composioExecute({ toolkit: "instagram", endpoint: "/me/media_publish", method: "POST", arguments: { creation_id: String(creationId) } });
+        last = r2;
+        publishedId = dataId(pick2(r2));
+      }
+      if (!publishedId) return `error: Instagram container ${creationId} was created but publish failed.
+${last.slice(0, 600)}`;
+      const r3 = await composioExecute({ toolkit: "instagram", endpoint: `/${publishedId}?fields=permalink`, method: "GET" });
+      const permalink = pick2(r3)?.["data"]?.["permalink"];
+      return `\u2705 Instagram post is LIVE. media_id=${publishedId} (container ${creationId}).${permalink ? `
+permalink: ${permalink}` : "\n(permalink fetch returned no link, but publish succeeded)"}`;
+    }
+  },
   social_api: {
     name: "social_api",
     description: "Call the OFFICIAL API of a connected social platform on the operator's own authorized account. OAuth and the access token are fully managed by Replit \u2014 you never see or handle the token. Use this for real reads (profile, media, insights, comments) and writes (publishing) instead of any browser/password login. Run social_accounts first to confirm the platform is connected.",
@@ -87550,9 +87598,9 @@ var AGENT_TOOLS = {
   // CRAWLER — browser
   4: ["memory_write", "memory_search", "web_search", "tier1_sources", "web_scrape", "http_request", "calculator", "vault_list", "save_artifact", "image_generate", "send_message"],
   // VAULT — memory/RAG
-  5: ["http_request", "web_scrape", "web_search", "tier1_sources", "code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_action", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task", "save_artifact", "image_generate", "send_message"],
+  5: ["http_request", "web_scrape", "web_search", "tier1_sources", "code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_action", "instagram_post", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task", "save_artifact", "image_generate", "send_message"],
   // WIRE — APIs + scheduling
-  6: ["web_scrape", "web_search", "tier1_sources", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_action", "save_artifact", "image_generate", "send_message"]
+  6: ["web_scrape", "web_search", "tier1_sources", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_action", "instagram_post", "save_artifact", "image_generate", "send_message"]
   // MR.NICE — social
 };
 function getToolNamesForAgent(agentId) {
@@ -87606,6 +87654,9 @@ IMAGES: for ANY request for an image/picture/logo/illustration/render/artwork, c
 CONNECTED APPS (Composio): the operator connects their apps \u2014 social like Instagram/YouTube/Reddit AND SaaS like Gmail/GitHub/Notion/Calendar/Sheets \u2014 in Settings \u2192 Connect Apps, which is COMPOSIO. To act on any of them, FIRST call composio_apps to see which are LIVE, THEN call composio_action on a live app. For a read with no obvious named action slug, use composio_action RAW PROXY mode: pass toolkit + endpoint (the app's REST path) + method, e.g. toolkit:'instagram', endpoint:'/me/media?fields=id,caption', method:'GET'.`;
     if (names.includes("social_accounts")) {
       card += ` NOTE: social_accounts/social_api is a SEPARATE native-OAuth path that is usually EMPTY for this operator \u2014 NEVER conclude an app is "not connected" from social_accounts alone. The operator's accounts live in COMPOSIO, so always check composio_apps before saying anything is unavailable.`;
+    }
+    if (names.includes("instagram_post")) {
+      card += ` TO POST AN IMAGE TO INSTAGRAM: call image_generate (it returns an ABSOLUTE public https URL), then call instagram_post with that exact image_url + your caption. instagram_post does the full create\u2192publish\u2192permalink flow server-side and returns the live link \u2014 do NOT hand-build the /me/media calls yourself, and NEVER upload the image to an external host (imgbb/imgur/etc.); the image_generate URL is already public.`;
     }
   }
   if (agentId === ABBY_ID) {
@@ -87963,7 +88014,7 @@ ${transcript}
       const goal = `${message.trim()}
 
 (Operator request to act on their OWN connected account. Their apps are connected via COMPOSIO \u2014 CHECK composio_apps FIRST (Instagram, Gmail, GitHub, Calendar, Sheets, etc. live there). Use composio_action; for raw API calls use PROXY mode (toolkit + endpoint + method, with data in arguments \u2192 sent as query params). social_accounts/social_api is a SEPARATE native path that is usually EMPTY \u2014 do NOT conclude "not connected" from it; check composio_apps. 
-IF this involves POSTING AN IMAGE (e.g. an Instagram post): (1) call image_generate \u2014 it returns an ABSOLUTE public https image URL; use THAT url directly, do NOT upload to any external host. (2) Publish via composio_action proxy in two steps: endpoint:'/me/media', method:'POST', arguments:{image_url:<that absolute url>, caption:<caption>} \u2192 returns a creation id; then endpoint:'/me/media_publish', method:'POST', arguments:{creation_id:<id>}; then GET '/<published_id>?fields=permalink' for the link. Post EXACTLY ONCE. Report the real data / permalink (or the exact API error) \u2014 never a flat "no access", and never fabricate a success or permalink.)`;
+IF this involves POSTING AN IMAGE TO INSTAGRAM: do it in TWO tool calls only \u2014 (1) image_generate to make the 2D image (it returns an ABSOLUTE public https URL), then (2) instagram_post with image_url=<that exact URL> and caption=<the caption>. instagram_post performs the whole create\u2192publish\u2192permalink flow and returns the live link. Do NOT hand-build /me/media calls and do NOT upload the image anywhere else. Post EXACTLY ONCE. Report the real data / permalink (or the exact API error) \u2014 never a flat "no access", and never fabricate a success or permalink.)`;
       const ackText = "**On it \u2014 checking your connected account now.** The swarm is verifying the connection and pulling what's there; results will stream into this channel.";
       sendEvent({ token: ackText });
       await finishWith(ackText, model, "abby-router");
