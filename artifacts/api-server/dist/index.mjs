@@ -86743,6 +86743,51 @@ function blockIfSensitiveForPublic(content, channel = "a public account") {
   return `\u{1F6AB} BLOCKED \u2014 refusing to publish to ${channel}: the content looks CONFIDENTIAL/SENSITIVE (flagged: ${flags.join("; ")}). Nothing was posted. Public posts are irreversible \u2014 confidential, privileged, deal, or credential material must never auto-publish. If this text is genuinely cleared for public release, remove the sensitive wording (or post it manually) and try again.`;
 }
 
+// src/lib/postLimit.ts
+init_src();
+var MAX_PER_DAY = Number(process.env["SOCIAL_MAX_POSTS_PER_DAY"] ?? 12);
+var MIN_SPACING_MIN = Number(process.env["SOCIAL_MIN_SPACING_MINUTES"] ?? 90);
+function decidePostAllowed(opts) {
+  const max = opts.maxPerDay ?? MAX_PER_DAY;
+  const spacingMin = opts.minSpacingMin ?? MIN_SPACING_MIN;
+  const platform = opts.platform ?? "social";
+  if (opts.countLast24h >= max) {
+    return `\u{1F6D1} Daily ${platform} post limit reached (${max}/day). Nothing was posted \u2014 the cap rolls over 24h after each post. Queue it for later.`;
+  }
+  if (opts.last) {
+    const elapsedMin = (opts.now.getTime() - opts.last.getTime()) / 6e4;
+    if (elapsedMin < spacingMin) {
+      const wait = Math.ceil(spacingMin - elapsedMin);
+      return `\u{1F6D1} Posts are spaced out (min ${spacingMin} min apart to avoid spamming). Last ${platform} post was ${Math.floor(elapsedMin)} min ago \u2014 next allowed in ~${wait} min. Nothing was posted.`;
+    }
+  }
+  return null;
+}
+async function checkPostAllowed(platform) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT count(*)::int AS n, max(created_at) AS last
+         FROM social_posts
+        WHERE platform = $1 AND created_at > now() - interval '24 hours'`,
+      [platform]
+    );
+    const countLast24h = Number(rows[0]?.n ?? 0);
+    const last = rows[0]?.last ? new Date(rows[0].last) : null;
+    return decidePostAllowed({ countLast24h, last, now: /* @__PURE__ */ new Date(), platform });
+  } catch {
+    return null;
+  }
+}
+async function recordPost(platform, account, permalink) {
+  try {
+    await pool.query(
+      `INSERT INTO social_posts (platform, account, permalink) VALUES ($1, $2, $3)`,
+      [platform, account || null, permalink || null]
+    );
+  } catch {
+  }
+}
+
 // src/tools.ts
 var STEEL_BASE = "https://api.steel.dev/v1";
 var FIRECRAWL_BASE = "https://api.firecrawl.dev/v1";
@@ -87701,6 +87746,8 @@ The operator connects apps in Settings \u2192 Connect Apps (Composio).`;
       if (!/^https:\/\/\S+/i.test(imageUrl)) {
         return "error: image_url must be an absolute https URL that Instagram can fetch (use the URL image_generate returns, e.g. https://<host>/api/uploads/<id>). A relative path will not work.";
       }
+      const limited = await checkPostAllowed("instagram");
+      if (limited) return limited;
       const pick2 = (s) => {
         const nl = s.indexOf("\n");
         try {
@@ -87726,6 +87773,7 @@ ${r1.slice(0, 600)}`;
 ${last.slice(0, 600)}`;
       const r3 = await composioExecute({ toolkit: "instagram", endpoint: `/${publishedId}?fields=permalink`, method: "GET" });
       const permalink = pick2(r3)?.["data"]?.["permalink"];
+      await recordPost("instagram", "", permalink ?? String(publishedId));
       return `\u2705 Instagram post is LIVE. media_id=${publishedId} (container ${creationId}).${permalink ? `
 permalink: ${permalink}` : "\n(permalink fetch returned no link, but publish succeeded)"}`;
     }
@@ -90589,7 +90637,15 @@ CREATE INDEX IF NOT EXISTS "messages_channel_ts_idx" ON "messages" ("channel_id"
 CREATE INDEX IF NOT EXISTS "agent_commands_created_idx" ON "agent_commands" ("created_at");
 CREATE INDEX IF NOT EXISTS "tool_calls_agent_idx" ON "tool_calls" ("agent_id");
 CREATE INDEX IF NOT EXISTS "tasks_status_idx" ON "tasks" ("status");
-CREATE INDEX IF NOT EXISTS "agent_memory_agent_idx" ON "agent_memory" ("agent_id");
+-- Social posting log \u2014 powers the per-platform daily cap + spacing limiter.
+CREATE TABLE IF NOT EXISTS "social_posts" (
+  "id" serial PRIMARY KEY NOT NULL,
+  "platform" text NOT NULL,
+  "account" text,
+  "permalink" text,
+  "created_at" timestamp DEFAULT now() NOT NULL
+);
+CREATE INDEX IF NOT EXISTS "social_posts_platform_created_idx" ON "social_posts" ("platform", "created_at");
 `;
 var SEED_AGENTS = `
 INSERT INTO agents (name, role, description, status, color, avatar_initials, model, capabilities)
