@@ -86566,6 +86566,14 @@ CONTENT PILLARS (any niche): Problem \xB7 Mistakes \xB7 Framework \xB7 Proof \xB
 CTA LADDER (match to intent): Soft ("save this") \xB7 Engagement ("comment YES") \xB7 Lead ("comment GUIDE") \xB7 DM ("DM me AUDIT") \xB7 Sales ("book a call") \xB7 Retarget ("ready? message me").
 Keyword bank: GUIDE \xB7 CHECKLIST \xB7 MAP \xB7 AUDIT \xB7 TEMPLATE \xB7 PLAN \xB7 SYSTEM \xB7 FIX \xB7 START \xB7 SCALE.
 
+DIFFERENTIATE THE CHANNEL FIRST (each has its own format, length, cadence, compliance \u2014 never paste the same content everywhere):
+- SOCIAL POST (Instagram/LinkedIn/X/TikTok/Facebook): use the 6-beat post formula + PLATFORM ADAPTATION; publish via instagram_post / composio_action. Public CTA = comment a keyword \u2192 move to DM.
+- EMAIL (regular/direct marketing): use the email_nurture module \u2014 clear value-driven subject line, ONE message + ONE CTA, and CAN-SPAM compliance (identify the sender, a valid physical postal address, a working unsubscribe). Send via composio_action on Gmail. CTA = click/reply/book, not "comment".
+- PAID ADS: use the paid_media module \u2014 funnel by temperature (cold \u2192 retarget \u2192 convert) and measure with incrementality, not just platform-reported conversions.
+- SMS: short, consent-based, with a clear opt-out (STOP); reminders/urgent follow-up only.
+- LANDING PAGE / SEO / WEBINAR: see the landing_page, channels, and campaign_types modules.
+Rule: identify whether the task is SOCIAL, EMAIL, PAID, SMS, or WEB first, then apply that channel's play and compliance \u2014 they are NOT interchangeable.
+
 PLATFORM ADAPTATION (same machine, tuned; digital is ~61% of marketing spend per Gartner 2025 \u2014 distribution discipline matters):
 - Instagram: hook in line 1 (all that shows before "more"); tight paragraphs + emoji rhythm; 8\u201315 mixed-reach hashtags; scroll-stopping image/carousel/Reel. Signals that matter: SAVES + SHARES + comments + dwell. Pin a first comment with the CTA.
 - LinkedIn: longer story + insight, NO hashtag spam (3\u20135), reward dwell; CTA = comment/DM, soft; best for B2B authority.
