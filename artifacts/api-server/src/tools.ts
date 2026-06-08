@@ -1001,6 +1001,61 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
     },
   },
 
+  image_generate: {
+    name: "image_generate",
+    description:
+      "Generate an IMAGE from a text prompt and save it as a downloadable file; returns a markdown image preview plus a download link. Use whenever the operator asks for an image, picture, logo, illustration, diagram, icon, mockup, poster, or banner. Needs OPENAI_API_KEY (or IMAGE_API_KEY).",
+    parameters: {
+      type: "object",
+      properties: {
+        prompt: { type: "string", description: "What to draw — describe the image in detail." },
+        size: { type: "string", enum: ["1024x1024", "1536x1024", "1024x1536"], description: "Image size (default 1024x1024)." },
+        filename: { type: "string", description: "Optional output filename, e.g. 'logo.png'." },
+      },
+      required: ["prompt"],
+    },
+    run: async (args) => {
+      const apiKey = process.env["OPENAI_API_KEY"] || process.env["IMAGE_API_KEY"];
+      if (!apiKey) return "error: image generation is not configured (set OPENAI_API_KEY).";
+      const prompt = String(args["prompt"] ?? "").trim();
+      if (!prompt) return "error: prompt is required.";
+      const allowed = new Set(["1024x1024", "1536x1024", "1024x1536"]);
+      const size = allowed.has(String(args["size"])) ? String(args["size"]) : "1024x1024";
+      const base = (process.env["IMAGE_BASE_URL"] ?? "https://api.openai.com/v1").replace(/\/$/, "");
+      const model = process.env["IMAGE_MODEL"] ?? "gpt-image-1";
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 90000);
+      try {
+        const r = await fetch(`${base}/images/generations`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ model, prompt, size, n: 1 }),
+          signal: ctrl.signal,
+        });
+        const data = (await r.json()) as { data?: Array<{ b64_json?: string; url?: string }>; error?: { message?: string } };
+        if (!r.ok) return `error: image API ${r.status}: ${data?.error?.message ?? "request failed"}`;
+        let b64 = data.data?.[0]?.b64_json ?? "";
+        if (!b64 && data.data?.[0]?.url) {
+          const img = await fetch(data.data[0].url);
+          b64 = Buffer.from(await img.arrayBuffer()).toString("base64");
+        }
+        if (!b64) return "error: image API returned no image data.";
+        const buf = Buffer.from(b64, "base64");
+        const filename = (args["filename"] != null ? String(args["filename"]) : prompt.slice(0, 40).replace(/[^a-z0-9]+/gi, "_")).replace(/\.(png|jpg|jpeg)$/i, "") + ".png";
+        const [row] = await db
+          .insert(attachmentsTable)
+          .values({ filename, mimeType: "image/png", kind: "image", sizeBytes: buf.length, data: b64, extractedText: null })
+          .returning();
+        const url = `/api/uploads/${row.id}`;
+        return `generated image "${filename}" (${buf.length} bytes). Show this in your answer:\n![${prompt.slice(0, 60)}](${url})\n[Download ${filename}](${url}?download=1)`;
+      } catch (e) {
+        return `error: image generation failed: ${String(e instanceof Error ? e.message : e).slice(0, 200)}`;
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+  },
+
   send_message: {
     name: "send_message",
     description:
@@ -1221,11 +1276,11 @@ const ALL_TOOLS = Object.keys(TOOL_REGISTRY);
 
 export const AGENT_TOOLS: Record<number, string[]> = {
   1: ALL_TOOLS, // ABBY — full authority
-  2: ["code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "http_request", "web_scrape", "web_search", "tier1_sources", "memory_search", "memory_write", "vault_list", "save_artifact", "send_message"], // FORGE — code
-  3: ["web_scrape", "web_screenshot", "web_search", "tier1_sources", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "save_artifact", "send_message"], // CRAWLER — browser
-  4: ["memory_write", "memory_search", "web_search", "tier1_sources", "web_scrape", "http_request", "calculator", "vault_list", "save_artifact", "send_message"], // VAULT — memory/RAG
-  5: ["http_request", "web_scrape", "web_search", "tier1_sources", "code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_action", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task", "save_artifact", "send_message"], // WIRE — APIs + scheduling
-  6: ["web_scrape", "web_search", "tier1_sources", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "save_artifact", "send_message"], // MR.NICE — social
+  2: ["code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "http_request", "web_scrape", "web_search", "tier1_sources", "memory_search", "memory_write", "vault_list", "save_artifact", "image_generate", "send_message"], // FORGE — code
+  3: ["web_scrape", "web_screenshot", "web_search", "tier1_sources", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "save_artifact", "image_generate", "send_message"], // CRAWLER — browser
+  4: ["memory_write", "memory_search", "web_search", "tier1_sources", "web_scrape", "http_request", "calculator", "vault_list", "save_artifact", "image_generate", "send_message"], // VAULT — memory/RAG
+  5: ["http_request", "web_scrape", "web_search", "tier1_sources", "code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_action", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task", "save_artifact", "image_generate", "send_message"], // WIRE — APIs + scheduling
+  6: ["web_scrape", "web_search", "tier1_sources", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "save_artifact", "image_generate", "send_message"], // MR.NICE — social
 };
 
 export function getToolNamesForAgent(agentId: number): string[] {
@@ -1267,7 +1322,10 @@ export function buildCapabilityCard(agentId: number): string {
     card += `\n\nINTERACTIVE AUTOMATION: web_scrape is read-only and won't render JS-heavy or multi-step pages. When a task needs to actually fill/submit a web form or read a JS-rendered page, use sandbox_exec to run Playwright in the cloud VM (install chromium, navigate, fill, click, submit). To produce or fill official PDF forms (e.g. AcroForm fields), use sandbox_exec with reportlab/fpdf2/fillpdf/pypdf and return the output file path. Generate/prepare documents and demonstrate the flow — never submit a person's legal/financial filing on their behalf.`;
   }
   if (names.includes("save_artifact")) {
-    card += `\n\nDELIVERABLE FILES: whenever you produce a file the operator should keep (report, CSV, code, JSON, or a generated PDF), call save_artifact to store it and get a real download URL, then put that [Download …](url) link in your final answer. Do NOT claim a file exists or name a file you didn't save — an unsaved file is not downloadable and counts as a fabrication.`;
+    card += `\n\nDELIVERABLE FILES: whenever you produce a file the operator should keep (report, CSV, code, JSON, or a generated PDF), call save_artifact to store it and get a real download URL, then put that [Download …](url) link in your final answer. Do NOT claim a file exists or name a file you didn't save — an unsaved file is not downloadable and counts as a fabrication. To make a PDF: generate it in sandbox_exec (reportlab/fpdf2), base64 it, then save_artifact with encoding 'base64'.`;
+  }
+  if (names.includes("image_generate")) {
+    card += `\n\nIMAGES: to create an image/picture/logo/diagram, call image_generate with a detailed prompt — it saves the image and returns a markdown preview + download link to include in your answer.`;
   }
   if (agentId === ABBY_ID) {
     card += `\n\nYOUR SWARM (delegate each directive to the right CLAW):\n` +

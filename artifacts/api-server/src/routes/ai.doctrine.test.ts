@@ -15,7 +15,30 @@ import {
   EXECUTION_DOCTRINE,
   ANTI_HALLUCINATION_DIRECTIVE,
   RESEARCH_PLAYBOOKS,
+  requestsDownloadableArtifact,
 } from "./ai";
+
+describe("requestsDownloadableArtifact — deterministic dispatch for downloads", () => {
+  it("triggers on clear artifact/download requests", () => {
+    for (const m of [
+      "save it as a downloadable markdown file with a download link",
+      "create a deck for this and give me the download",
+      "build a 24-slide presentation",
+      "generate a CSV report",
+      "make a PDF of the brief",
+      "export this to a .docx",
+      "give me a downloadable file",
+    ]) {
+      expect(requestsDownloadableArtifact(m)).toBe(true);
+    }
+  });
+
+  it("does NOT trigger on pure conversation", () => {
+    for (const m of ["who are you?", "save me time on this", "what is VPD?", "summarize this in one line"]) {
+      expect(requestsDownloadableArtifact(m)).toBe(false);
+    }
+  });
+});
 
 // The fabricated "cognition" theater that was removed. None of it may come back
 // to any agent persona — these are prompt strings with no implementing code.
