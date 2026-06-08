@@ -511,7 +511,11 @@ router.post("/ai/chat", async (req, res) => {
         "**On it — checking your connected account now.** The swarm is verifying the connection and pulling what's there; results will stream into this channel.";
       sendEvent({ token: ackText });
       await finishWith(ackText, model, "abby-router");
-      orchestrateGoal({ goal, channelId, priority: "high", sourceContext: dispatchContext }).catch(async (e) => {
+      // Force onto WIRE (#5) — the API connector holds the Composio tools AND
+      // web_search + image_generate, so it does the whole flow in ONE agent.
+      // Prevents fan-out to non-Composio CLAWs and duplicate actions (e.g. a post
+      // published twice).
+      orchestrateGoal({ goal, channelId, priority: "high", sourceContext: dispatchContext, forceAgentId: 5 }).catch(async (e) => {
         req.log.error({ e }, "orchestrateGoal (connected-account override) failed");
         await db
           .insert(messagesTable)
