@@ -11,6 +11,9 @@ export const agentCommandsTable = pgTable("agent_commands", {
   priority: text("priority").notNull().default("normal"),
   status: text("status").notNull().default("queued"),
   result: text("result"),
+  model: text("model"),
+  groundingChars: integer("grounding_chars"),
+  groundingHash: text("grounding_hash"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   completedAt: timestamp("completed_at"),
 });

@@ -288,13 +288,15 @@ export async function executeAgentCommand(opts: {
 }): Promise<string> {
   const { commandId, agent, command, payload, channelId, sourceContext } = opts;
   // Grounding proof: prove the operator's source material reached this CLAW
-  // (length + hash only, never the raw content).
-  logger.info({ claw: agent.name, ...groundingProof(sourceContext) }, "claw dispatch grounding");
+  // (length + hash only, never the raw content). Persisted for the Dispatch panel.
+  const proof = groundingProof(sourceContext);
+  const dispatchModel = resolveModel(agent.id, agent.model, undefined);
+  logger.info({ claw: agent.name, model: dispatchModel, ...proof }, "claw dispatch grounding");
   let taskId: number | null = null;
   try {
     await db
       .update(agentCommandsTable)
-      .set({ status: "running" })
+      .set({ status: "running", model: dispatchModel, groundingChars: proof.chars, groundingHash: proof.hash || null })
       .where(eq(agentCommandsTable.id, commandId));
     await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, agent.id));
 

@@ -9,10 +9,11 @@ import { SwarmStatusStrip } from "@/components/dashboard/SwarmStatusStrip";
 import { SwarmIdleHint } from "@/components/dashboard/SwarmIdleHint";
 import { SwarmDispatch } from "@/components/dashboard/SwarmDispatch";
 import { SteelBrowser } from "@/components/dashboard/SteelBrowser";
+import { DispatchPanel } from "@/components/dashboard/DispatchPanel";
 
 export default function Dashboard() {
   const [activeChannelId, setActiveChannelId] = useState<number | null>(null);
-  const [viewMode, setViewMode] = useState<"canvas" | "chat" | "browser">("canvas");
+  const [viewMode, setViewMode] = useState<"canvas" | "chat" | "browser" | "dispatch">("canvas");
   const [selectedAgentId, setSelectedAgentId] = useState<number | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
   const [dispatchDraft, setDispatchDraft] = useState("");
@@ -20,6 +21,7 @@ export default function Dashboard() {
   const views: { id: typeof viewMode; label: string }[] = [
     { id: "canvas", label: "Swarm" },
     { id: "chat", label: "Activity" },
+    { id: "dispatch", label: "Dispatch" },
     { id: "browser", label: "Browser" },
   ];
 
@@ -69,6 +71,7 @@ export default function Dashboard() {
         <div className="flex-1 relative min-h-0">
           {viewMode === "canvas" && <SwarmCanvas onAgentClick={setSelectedAgentId} />}
           {viewMode === "chat" && <ChatStream channelId={activeChannelId} />}
+          {viewMode === "dispatch" && <DispatchPanel />}
           {viewMode === "browser" && <SteelBrowser />}
         </div>
 
