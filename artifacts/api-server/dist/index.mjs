@@ -87199,6 +87199,58 @@ ${stored}` : stored);
       }
     }
   },
+  image_generate: {
+    name: "image_generate",
+    description: "Generate an IMAGE from a text prompt and save it as a downloadable file; returns a markdown image preview plus a download link. Use whenever the operator asks for an image, picture, logo, illustration, diagram, icon, mockup, poster, or banner. Needs OPENAI_API_KEY (or IMAGE_API_KEY).",
+    parameters: {
+      type: "object",
+      properties: {
+        prompt: { type: "string", description: "What to draw \u2014 describe the image in detail." },
+        size: { type: "string", enum: ["1024x1024", "1536x1024", "1024x1536"], description: "Image size (default 1024x1024)." },
+        filename: { type: "string", description: "Optional output filename, e.g. 'logo.png'." }
+      },
+      required: ["prompt"]
+    },
+    run: async (args) => {
+      const apiKey = process.env["OPENAI_API_KEY"] || process.env["IMAGE_API_KEY"];
+      if (!apiKey) return "error: image generation is not configured (set OPENAI_API_KEY).";
+      const prompt = String(args["prompt"] ?? "").trim();
+      if (!prompt) return "error: prompt is required.";
+      const allowed = /* @__PURE__ */ new Set(["1024x1024", "1536x1024", "1024x1536"]);
+      const size = allowed.has(String(args["size"])) ? String(args["size"]) : "1024x1024";
+      const base = (process.env["IMAGE_BASE_URL"] ?? "https://api.openai.com/v1").replace(/\/$/, "");
+      const model = process.env["IMAGE_MODEL"] ?? "gpt-image-1";
+      const ctrl = new AbortController();
+      const timer2 = setTimeout(() => ctrl.abort(), 9e4);
+      try {
+        const r = await fetch(`${base}/images/generations`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ model, prompt, size, n: 1 }),
+          signal: ctrl.signal
+        });
+        const data = await r.json();
+        if (!r.ok) return `error: image API ${r.status}: ${data?.error?.message ?? "request failed"}`;
+        let b64 = data.data?.[0]?.b64_json ?? "";
+        if (!b64 && data.data?.[0]?.url) {
+          const img = await fetch(data.data[0].url);
+          b64 = Buffer.from(await img.arrayBuffer()).toString("base64");
+        }
+        if (!b64) return "error: image API returned no image data.";
+        const buf = Buffer.from(b64, "base64");
+        const filename = (args["filename"] != null ? String(args["filename"]) : prompt.slice(0, 40).replace(/[^a-z0-9]+/gi, "_")).replace(/\.(png|jpg|jpeg)$/i, "") + ".png";
+        const [row] = await db.insert(attachmentsTable).values({ filename, mimeType: "image/png", kind: "image", sizeBytes: buf.length, data: b64, extractedText: null }).returning();
+        const url2 = `/api/uploads/${row.id}`;
+        return `generated image "${filename}" (${buf.length} bytes). Show this in your answer:
+![${prompt.slice(0, 60)}](${url2})
+[Download ${filename}](${url2}?download=1)`;
+      } catch (e) {
+        return `error: image generation failed: ${String(e instanceof Error ? e.message : e).slice(0, 200)}`;
+      } finally {
+        clearTimeout(timer2);
+      }
+    }
+  },
   send_message: {
     name: "send_message",
     description: "Post a message into the live operator channel feed as yourself. Use to report progress, surface a finding, or coordinate with the operator and the other CLAWs. The message appears immediately in the Discord-style chat stream.",
@@ -87391,15 +87443,15 @@ var ALL_TOOLS = Object.keys(TOOL_REGISTRY);
 var AGENT_TOOLS = {
   1: ALL_TOOLS,
   // ABBY — full authority
-  2: ["code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "http_request", "web_scrape", "web_search", "tier1_sources", "memory_search", "memory_write", "vault_list", "save_artifact", "send_message"],
+  2: ["code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "http_request", "web_scrape", "web_search", "tier1_sources", "memory_search", "memory_write", "vault_list", "save_artifact", "image_generate", "send_message"],
   // FORGE — code
-  3: ["web_scrape", "web_screenshot", "web_search", "tier1_sources", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "save_artifact", "send_message"],
+  3: ["web_scrape", "web_screenshot", "web_search", "tier1_sources", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "save_artifact", "image_generate", "send_message"],
   // CRAWLER — browser
-  4: ["memory_write", "memory_search", "web_search", "tier1_sources", "web_scrape", "http_request", "calculator", "vault_list", "save_artifact", "send_message"],
+  4: ["memory_write", "memory_search", "web_search", "tier1_sources", "web_scrape", "http_request", "calculator", "vault_list", "save_artifact", "image_generate", "send_message"],
   // VAULT — memory/RAG
-  5: ["http_request", "web_scrape", "web_search", "tier1_sources", "code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_action", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task", "save_artifact", "send_message"],
+  5: ["http_request", "web_scrape", "web_search", "tier1_sources", "code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_action", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task", "save_artifact", "image_generate", "send_message"],
   // WIRE — APIs + scheduling
-  6: ["web_scrape", "web_search", "tier1_sources", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "save_artifact", "send_message"]
+  6: ["web_scrape", "web_search", "tier1_sources", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "save_artifact", "image_generate", "send_message"]
   // MR.NICE — social
 };
 function getToolNamesForAgent(agentId) {
@@ -87440,7 +87492,12 @@ INTERACTIVE AUTOMATION: web_scrape is read-only and won't render JS-heavy or mul
   if (names.includes("save_artifact")) {
     card += `
 
-DELIVERABLE FILES: whenever you produce a file the operator should keep (report, CSV, code, JSON, or a generated PDF), call save_artifact to store it and get a real download URL, then put that [Download \u2026](url) link in your final answer. Do NOT claim a file exists or name a file you didn't save \u2014 an unsaved file is not downloadable and counts as a fabrication.`;
+DELIVERABLE FILES: whenever you produce a file the operator should keep (report, CSV, code, JSON, or a generated PDF), call save_artifact to store it and get a real download URL, then put that [Download \u2026](url) link in your final answer. Do NOT claim a file exists or name a file you didn't save \u2014 an unsaved file is not downloadable and counts as a fabrication. To make a PDF: generate it in sandbox_exec (reportlab/fpdf2), base64 it, then save_artifact with encoding 'base64'.`;
+  }
+  if (names.includes("image_generate")) {
+    card += `
+
+IMAGES: to create an image/picture/logo/diagram, call image_generate with a detailed prompt \u2014 it saves the image and returns a markdown preview + download link to include in your answer.`;
   }
   if (agentId === ABBY_ID) {
     card += `
@@ -87537,6 +87594,10 @@ LIVE REACH (scanned now, at the start of this turn \u2014 trust this over any as
 - Integrations ONLINE: ${live.length ? live.join(", ") : "none"}.
 - Integrations OFFLINE (not configured): ${off.length ? off.join(", ") : "none"}.
 Only rely on what is ONLINE. If the operator asks for something that needs an offline integration, say plainly it isn't connected yet and which key enables it \u2014 never pretend an offline capability works.`;
+}
+function requestsDownloadableArtifact(message) {
+  return /\b(downloadable|download link)\b/i.test(message) || /\.(pdf|csv|docx?|xlsx?|pptx?)\b/i.test(message) || /\b(save|create|make|build|generate|produce|export|download)\b[^.!?\n]{0,40}\b(file|files|pdf|csv|deck|decks|slide|slides|presentation|spreadsheet|document|report|download)\b/i.test(message) || // image-generation requests also need a tool (image_generate) → dispatch
+  /\b(make|create|generate|design|draw|render|produce)\b[^.!?\n]{0,30}\b(image|images|picture|photo|logo|illustration|graphic|diagram|drawing|icon|mockup|render|artwork|poster|banner)\b/i.test(message);
 }
 var CHAT_HISTORY_LIMIT = 16;
 var ABBY_ID2 = 1;
@@ -87744,7 +87805,34 @@ ${a.extractedText}` });
       return false;
     }
   };
+  const dispatchContext = (() => {
+    const lines = history.filter((h) => typeof h.content === "string" && h.content.trim()).map((h) => `${h.role === "user" ? "Operator" : "ABBY"}: ${h.content}`);
+    const transcript = lines.join("\n\n");
+    return (transcript ? `RECENT CONVERSATION (resolve "that file"/"the brief"/"it" from here; reuse prior content & exact figures):
+${transcript}
+
+` : "") + `CURRENT REQUEST: ${message}`;
+  })();
   if (resolvedAgentId === ABBY_ID2 && !hasAttachments) {
+    if (requestsDownloadableArtifact(message)) {
+      const goal = message.trim();
+      const ackText = "**On it \u2014 generating that and saving a downloadable file.** The swarm is building it now; the result and a download link will stream into this channel.";
+      sendEvent({ token: ackText });
+      await finishWith(ackText, model, "abby-router");
+      orchestrateGoal({ goal, channelId, priority: "high", sourceContext: dispatchContext }).catch(async (e) => {
+        req.log.error({ e }, "orchestrateGoal (artifact override) failed");
+        await db.insert(messagesTable).values({
+          channelId,
+          agentId: agent.id,
+          agentName: agent.name,
+          agentColor: agent.color,
+          content: `Dispatch failed to start: ${String(e).slice(0, 300)}`,
+          messageType: "system"
+        }).catch(() => {
+        });
+      });
+      return;
+    }
     try {
       const decisionSystem = `You are the router for ABBY, orchestrator of an autonomous agent swarm that can search the web, browse sites, scrape pages, run code, call APIs, and use long-term memory. Classify the operator's latest message: is it an ACTIONABLE TASK that needs the swarm (anything requiring live/current data, web search, browsing, scraping, finding/pricing/looking things up online, code execution, multi-step research) \u2014 or just CONVERSATION you can answer yourself (greetings, opinions, explanations, questions about you/the system)? Respond with ONLY minified JSON, no markdown and no prose: {"dispatch": true|false, "goal": "<self-contained instruction for the swarm; required if dispatch=true>", "reply": "<your conversational answer; required if dispatch=false>"}. If the request needs real or current information you don't already have, prefer dispatch=true. ALSO dispatch=true whenever the request asks you to PRODUCE or SAVE a downloadable file/artifact (deck, report, PDF, CSV, document, code file), run code, fill/submit a form, or do any multi-step build \u2014 those need tools (save_artifact, code, web) that only the CLAWs have, so answering inline cannot actually create a downloadable file. Only answer inline (dispatch=false) for pure conversation or a quick factual answer that needs no tool and no saved file. The \`reply\` must be ABBY's actual answer to the operator AS ABBY \u2014 never describe this router, the classification, or that you are deciding anything; the operator must never see routing internals.`;
       const decRes = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
@@ -87776,7 +87864,7 @@ Goal: ${goal}
 The agents are starting now; their work and results will stream into this channel.`;
           sendEvent({ token: ackText });
           await finishWith(ackText, model, "abby-router");
-          orchestrateGoal({ goal, channelId, priority: "high", sourceContext: message }).catch(async (e) => {
+          orchestrateGoal({ goal, channelId, priority: "high", sourceContext: dispatchContext }).catch(async (e) => {
             req.log.error({ e }, "orchestrateGoal (from chat) failed");
             await db.insert(messagesTable).values({
               channelId,
