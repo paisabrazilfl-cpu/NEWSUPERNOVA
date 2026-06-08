@@ -28,11 +28,11 @@ var __export = (target, all) => {
   for (var name in all)
     __defProp(target, name, { get: all[name], enumerable: true });
 };
-var __copyProps = (to, from, except2, desc3) => {
+var __copyProps = (to, from, except2, desc2) => {
   if (from && typeof from === "object" || typeof from === "function") {
     for (let key of __getOwnPropNames(from))
       if (!__hasOwnProp.call(to, key) && key !== except2)
-        __defProp(to, key, { get: () => from[key], enumerable: !(desc3 = __getOwnPropDesc(from, key)) || desc3.enumerable });
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc2 = __getOwnPropDesc(from, key)) || desc2.enumerable });
   }
   return to;
 };
@@ -1355,10 +1355,10 @@ var require_http_errors = __commonJS({
       return ServerError;
     }
     function nameFunc(func, name) {
-      var desc3 = Object.getOwnPropertyDescriptor(func, "name");
-      if (desc3 && desc3.configurable) {
-        desc3.value = name;
-        Object.defineProperty(func, "name", desc3);
+      var desc2 = Object.getOwnPropertyDescriptor(func, "name");
+      if (desc2 && desc2.configurable) {
+        desc2.value = name;
+        Object.defineProperty(func, "name", desc2);
       }
     }
     function populateConstructorExports(exports2, codes, HttpError) {
@@ -16802,14 +16802,14 @@ var require_get = __commonJS({
         throw e;
       }
     }
-    var desc3 = !!hasProtoAccessor && gOPD && gOPD(
+    var desc2 = !!hasProtoAccessor && gOPD && gOPD(
       Object.prototype,
       /** @type {keyof typeof Object.prototype} */
       "__proto__"
     );
     var $Object = Object;
     var $getPrototypeOf = $Object.getPrototypeOf;
-    module.exports = desc3 && typeof desc3.get === "function" ? callBind([desc3.get]) : typeof $getPrototypeOf === "function" ? (
+    module.exports = desc2 && typeof desc2.get === "function" ? callBind([desc2.get]) : typeof $getPrototypeOf === "function" ? (
       /** @type {import('./get')} */
       function getDunder(value) {
         return $getPrototypeOf(value == null ? value : $Object(value));
@@ -17159,10 +17159,10 @@ var require_get_intrinsic = __commonJS({
             return void undefined2;
           }
           if ($gOPD && i + 1 >= parts.length) {
-            var desc3 = $gOPD(value, part);
-            isOwn = !!desc3;
-            if (isOwn && "get" in desc3 && !("originalValue" in desc3.get)) {
-              value = desc3.get;
+            var desc2 = $gOPD(value, part);
+            isOwn = !!desc2;
+            if (isOwn && "get" in desc2 && !("originalValue" in desc2.get)) {
+              value = desc2.get;
             } else {
               value = value[part];
             }
@@ -30543,12 +30543,12 @@ var require_result = __commonJS({
         }
         const row = {};
         for (let i = 0; i < fieldDescriptions.length; i++) {
-          const desc3 = fieldDescriptions[i];
-          row[desc3.name] = null;
+          const desc2 = fieldDescriptions[i];
+          row[desc2.name] = null;
           if (this._types) {
-            this._parsers[i] = this._types.getTypeParser(desc3.dataTypeID, desc3.format || "text");
+            this._parsers[i] = this._types.getTypeParser(desc2.dataTypeID, desc2.format || "text");
           } else {
-            this._parsers[i] = types3.getTypeParser(desc3.dataTypeID, desc3.format || "text");
+            this._parsers[i] = types3.getTypeParser(desc2.dataTypeID, desc2.format || "text");
           }
         }
         this._prebuiltEmptyResultObject = { ...row };
@@ -54264,7 +54264,12 @@ var init_src = __esm({
         "DATABASE_URL must be set. Did you forget to provision a database?"
       );
     }
-    pool = new Pool3({ connectionString: process.env.DATABASE_URL });
+    pool = new Pool3({
+      connectionString: process.env.DATABASE_URL,
+      max: Number(process.env.PG_POOL_MAX ?? 20),
+      idleTimeoutMillis: 3e4,
+      connectionTimeoutMillis: 1e4
+    });
     db = drizzle(pool, { schema: schema_exports });
   }
 });
@@ -56108,8 +56113,8 @@ var require_wrappers = __commonJS({
       const f = messageDesc.fields[0];
       return isWrapperTypeName(messageDesc.typeName) && f !== void 0 && f.fieldKind == "scalar" && f.name == "value" && f.number == 1;
     }
-    function hasCustomJsonRepresentation(desc3) {
-      switch (desc3.typeName) {
+    function hasCustomJsonRepresentation(desc2) {
+      switch (desc2.typeName) {
         case "google.protobuf.Any":
         case "google.protobuf.Timestamp":
         case "google.protobuf.Duration":
@@ -56119,7 +56124,7 @@ var require_wrappers = __commonJS({
         case "google.protobuf.ListValue":
           return true;
         default:
-          return isWrapperDesc(desc3);
+          return isWrapperDesc(desc2);
       }
     }
     function isWrapperTypeName(name) {
@@ -56252,19 +56257,19 @@ var require_create = __commonJS({
     }
     var tokenZeroMessageField = /* @__PURE__ */ Symbol();
     var messagePrototypes = /* @__PURE__ */ new WeakMap();
-    function createZeroMessage(desc3) {
+    function createZeroMessage(desc2) {
       let msg;
-      if (!needsPrototypeChain(desc3)) {
+      if (!needsPrototypeChain(desc2)) {
         msg = {
-          $typeName: desc3.typeName
+          $typeName: desc2.typeName
         };
-        for (const member of desc3.members) {
+        for (const member of desc2.members) {
           if (member.kind == "oneof" || member.presence == IMPLICIT) {
             msg[member.localName] = createZeroField(member);
           }
         }
       } else {
-        const cached2 = messagePrototypes.get(desc3);
+        const cached2 = messagePrototypes.get(desc2);
         let prototype;
         let members;
         if (cached2) {
@@ -56272,7 +56277,7 @@ var require_create = __commonJS({
         } else {
           prototype = {};
           members = /* @__PURE__ */ new Set();
-          for (const member of desc3.members) {
+          for (const member of desc2.members) {
             if (member.kind == "oneof") {
               continue;
             }
@@ -56285,11 +56290,11 @@ var require_create = __commonJS({
             members.add(member);
             prototype[member.localName] = createZeroField(member);
           }
-          messagePrototypes.set(desc3, { prototype, members });
+          messagePrototypes.set(desc2, { prototype, members });
         }
         msg = Object.create(prototype);
-        msg.$typeName = desc3.typeName;
-        for (const member of desc3.members) {
+        msg.$typeName = desc2.typeName;
+        for (const member of desc2.members) {
           if (members.has(member)) {
             continue;
           }
@@ -56308,14 +56313,14 @@ var require_create = __commonJS({
       }
       return msg;
     }
-    function needsPrototypeChain(desc3) {
-      switch (desc3.file.edition) {
+    function needsPrototypeChain(desc2) {
+      switch (desc2.file.edition) {
         case EDITION_PROTO3:
           return false;
         case EDITION_PROTO2:
           return true;
         default:
-          return desc3.fields.some((f) => f.presence != IMPLICIT && f.fieldKind != "message" && !f.oneof);
+          return desc2.fields.some((f) => f.presence != IMPLICIT && f.fieldKind != "message" && !f.oneof);
       }
     }
     function createZeroField(field) {
@@ -57023,8 +57028,8 @@ var require_reflect_check = __commonJS({
           return typeof val;
       }
     }
-    function formatReflectMessage(desc3) {
-      return `ReflectMessage (${desc3.typeName})`;
+    function formatReflectMessage(desc2) {
+      return `ReflectMessage (${desc2.typeName})`;
     }
     function formatReflectList(field) {
       switch (field.listKind) {
@@ -57726,23 +57731,23 @@ var require_names = __commonJS({
     exports.protoCamelCase = protoCamelCase;
     exports.protoSnakeCase = protoSnakeCase;
     exports.safeObjectProperty = safeObjectProperty;
-    function qualifiedName(desc3) {
-      switch (desc3.kind) {
+    function qualifiedName(desc2) {
+      switch (desc2.kind) {
         case "field":
         case "oneof":
         case "rpc":
-          return desc3.parent.typeName + "." + desc3.name;
+          return desc2.parent.typeName + "." + desc2.name;
         case "enum_value": {
-          const p = desc3.parent.parent ? desc3.parent.parent.typeName : desc3.parent.file.proto.package;
-          return p + (p.length > 0 ? "." : "") + desc3.name;
+          const p = desc2.parent.parent ? desc2.parent.parent.typeName : desc2.parent.file.proto.package;
+          return p + (p.length > 0 ? "." : "") + desc2.name;
         }
         case "service":
         case "message":
         case "enum":
         case "extension":
-          return desc3.typeName;
+          return desc2.typeName;
         case "file":
-          return desc3.proto.name;
+          return desc2.proto.name;
       }
     }
     function protoCamelCase(snakeCase) {
@@ -58000,24 +58005,24 @@ var require_nested_types = __commonJS({
     exports.nestedTypes = nestedTypes;
     exports.usedTypes = usedTypes;
     exports.parentTypes = parentTypes;
-    function* nestedTypes(desc3) {
-      switch (desc3.kind) {
+    function* nestedTypes(desc2) {
+      switch (desc2.kind) {
         case "file":
-          for (const message of desc3.messages) {
+          for (const message of desc2.messages) {
             yield message;
             yield* nestedTypes(message);
           }
-          yield* desc3.enums;
-          yield* desc3.services;
-          yield* desc3.extensions;
+          yield* desc2.enums;
+          yield* desc2.services;
+          yield* desc2.extensions;
           break;
         case "message":
-          for (const message of desc3.nestedMessages) {
+          for (const message of desc2.nestedMessages) {
             yield message;
             yield* nestedTypes(message);
           }
-          yield* desc3.nestedEnums;
-          yield* desc3.nestedExtensions;
+          yield* desc2.nestedEnums;
+          yield* desc2.nestedExtensions;
           break;
       }
     }
@@ -58038,29 +58043,29 @@ var require_nested_types = __commonJS({
         }
       }
     }
-    function parentTypes(desc3) {
+    function parentTypes(desc2) {
       const parents = [];
-      while (desc3.kind !== "file") {
-        const p = parent(desc3);
-        desc3 = p;
+      while (desc2.kind !== "file") {
+        const p = parent(desc2);
+        desc2 = p;
         parents.push(p);
       }
       return parents;
     }
-    function parent(desc3) {
+    function parent(desc2) {
       var _a;
-      switch (desc3.kind) {
+      switch (desc2.kind) {
         case "enum_value":
         case "field":
         case "oneof":
         case "rpc":
-          return desc3.parent;
+          return desc2.parent;
         case "service":
-          return desc3.file;
+          return desc2.file;
         case "extension":
         case "enum":
         case "message":
-          return (_a = desc3.parent) !== null && _a !== void 0 ? _a : desc3.file;
+          return (_a = desc2.parent) !== null && _a !== void 0 ? _a : desc2.file;
       }
     }
   }
@@ -58085,12 +58090,12 @@ var require_registry = __commonJS({
     }
     function createMutableRegistry(...input) {
       const reg = initBaseRegistry(input);
-      return Object.assign(Object.assign({}, reg), { remove(desc3) {
+      return Object.assign(Object.assign({}, reg), { remove(desc2) {
         var _a;
-        if (desc3.kind == "extension") {
-          (_a = reg.extendees.get(desc3.extendee.typeName)) === null || _a === void 0 ? void 0 : _a.delete(desc3.number);
+        if (desc2.kind == "extension") {
+          (_a = reg.extendees.get(desc2.extendee.typeName)) === null || _a === void 0 ? void 0 : _a.delete(desc2.number);
         }
-        reg.types.delete(desc3.typeName);
+        reg.types.delete(desc2.typeName);
       } });
     }
     function createFileRegistry(...args) {
@@ -58169,19 +58174,19 @@ var require_registry = __commonJS({
             }
           }
         },
-        add(desc3) {
-          if (desc3.kind == "extension") {
-            let numberToExt = extendees.get(desc3.extendee.typeName);
+        add(desc2) {
+          if (desc2.kind == "extension") {
+            let numberToExt = extendees.get(desc2.extendee.typeName);
             if (!numberToExt) {
               extendees.set(
-                desc3.extendee.typeName,
+                desc2.extendee.typeName,
                 // biome-ignore lint/suspicious/noAssignInExpressions: no
                 numberToExt = /* @__PURE__ */ new Map()
               );
             }
-            numberToExt.set(desc3.number, desc3);
+            numberToExt.set(desc2.number, desc2);
           }
-          types3.set(desc3.typeName, desc3);
+          types3.set(desc2.typeName, desc2);
         },
         get(typeName) {
           return types3.get(typeName);
@@ -58350,10 +58355,10 @@ var require_registry = __commonJS({
         get(typeName) {
           return mapEntriesStore.get(typeName);
         },
-        add(desc3) {
+        add(desc2) {
           var _a2;
-          assert2(((_a2 = desc3.proto.options) === null || _a2 === void 0 ? void 0 : _a2.mapEntry) === true);
-          mapEntriesStore.set(desc3.typeName, desc3);
+          assert2(((_a2 = desc2.proto.options) === null || _a2 === void 0 ? void 0 : _a2.mapEntry) === true);
+          mapEntriesStore.set(desc2.typeName, desc2);
         }
       };
       for (const enumProto of proto2.enumType) {
@@ -58375,22 +58380,22 @@ var require_registry = __commonJS({
       }
       reg.addFile(file2, true);
     }
-    function addExtensions(desc3, reg) {
-      switch (desc3.kind) {
+    function addExtensions(desc2, reg) {
+      switch (desc2.kind) {
         case "file":
-          for (const proto2 of desc3.proto.extension) {
-            const ext = newField(proto2, desc3, reg);
-            desc3.extensions.push(ext);
+          for (const proto2 of desc2.proto.extension) {
+            const ext = newField(proto2, desc2, reg);
+            desc2.extensions.push(ext);
             reg.add(ext);
           }
           break;
         case "message":
-          for (const proto2 of desc3.proto.extension) {
-            const ext = newField(proto2, desc3, reg);
-            desc3.nestedExtensions.push(ext);
+          for (const proto2 of desc2.proto.extension) {
+            const ext = newField(proto2, desc2, reg);
+            desc2.nestedExtensions.push(ext);
             reg.add(ext);
           }
-          for (const message of desc3.nestedMessages) {
+          for (const message of desc2.nestedMessages) {
             addExtensions(message, reg);
           }
           break;
@@ -58424,7 +58429,7 @@ var require_registry = __commonJS({
     function addEnum(proto2, file2, parent, reg) {
       var _a, _b, _c, _d, _e;
       const sharedPrefix = findEnumSharedPrefix(proto2.name, proto2.value);
-      const desc3 = {
+      const desc2 = {
         kind: "enum",
         proto: proto2,
         deprecated: (_b = (_a = proto2.options) === null || _a === void 0 ? void 0 : _a.deprecated) !== null && _b !== void 0 ? _b : false,
@@ -58440,31 +58445,31 @@ var require_registry = __commonJS({
           return `enum ${this.typeName}`;
         }
       };
-      desc3.open = isEnumOpen(desc3);
-      reg.add(desc3);
+      desc2.open = isEnumOpen(desc2);
+      reg.add(desc2);
       for (const p of proto2.value) {
         const name = p.name;
-        desc3.values.push(
+        desc2.values.push(
           // biome-ignore lint/suspicious/noAssignInExpressions: no
-          desc3.value[p.number] = {
+          desc2.value[p.number] = {
             kind: "enum_value",
             proto: p,
             deprecated: (_d = (_c = p.options) === null || _c === void 0 ? void 0 : _c.deprecated) !== null && _d !== void 0 ? _d : false,
-            parent: desc3,
+            parent: desc2,
             name,
             localName: (0, names_js_1.safeObjectProperty)(sharedPrefix == void 0 ? name : name.substring(sharedPrefix.length)),
             number: p.number,
             toString() {
-              return `enum value ${desc3.typeName}.${name}`;
+              return `enum value ${desc2.typeName}.${name}`;
             }
           }
         );
       }
-      ((_e = parent === null || parent === void 0 ? void 0 : parent.nestedEnums) !== null && _e !== void 0 ? _e : file2.enums).push(desc3);
+      ((_e = parent === null || parent === void 0 ? void 0 : parent.nestedEnums) !== null && _e !== void 0 ? _e : file2.enums).push(desc2);
     }
     function addMessage(proto2, file2, parent, reg, mapEntries) {
       var _a, _b, _c, _d;
-      const desc3 = {
+      const desc2 = {
         kind: "message",
         proto: proto2,
         deprecated: (_b = (_a = proto2.options) === null || _a === void 0 ? void 0 : _a.deprecated) !== null && _b !== void 0 ? _b : false,
@@ -58484,21 +58489,21 @@ var require_registry = __commonJS({
         }
       };
       if (((_c = proto2.options) === null || _c === void 0 ? void 0 : _c.mapEntry) === true) {
-        mapEntries.add(desc3);
+        mapEntries.add(desc2);
       } else {
-        ((_d = parent === null || parent === void 0 ? void 0 : parent.nestedMessages) !== null && _d !== void 0 ? _d : file2.messages).push(desc3);
-        reg.add(desc3);
+        ((_d = parent === null || parent === void 0 ? void 0 : parent.nestedMessages) !== null && _d !== void 0 ? _d : file2.messages).push(desc2);
+        reg.add(desc2);
       }
       for (const enumProto of proto2.enumType) {
-        addEnum(enumProto, file2, desc3, reg);
+        addEnum(enumProto, file2, desc2, reg);
       }
       for (const messageProto of proto2.nestedType) {
-        addMessage(messageProto, file2, desc3, reg, mapEntries);
+        addMessage(messageProto, file2, desc2, reg, mapEntries);
       }
     }
     function addService(proto2, file2, reg) {
       var _a, _b;
-      const desc3 = {
+      const desc2 = {
         kind: "service",
         proto: proto2,
         deprecated: (_b = (_a = proto2.options) === null || _a === void 0 ? void 0 : _a.deprecated) !== null && _b !== void 0 ? _b : false,
@@ -58511,12 +58516,12 @@ var require_registry = __commonJS({
           return `service ${this.typeName}`;
         }
       };
-      file2.services.push(desc3);
-      reg.add(desc3);
+      file2.services.push(desc2);
+      reg.add(desc2);
       for (const methodProto of proto2.method) {
-        const method = newMethod(methodProto, desc3, reg);
-        desc3.methods.push(method);
-        desc3.method[method.localName] = method;
+        const method = newMethod(methodProto, desc2, reg);
+        desc2.methods.push(method);
+        desc2.method[method.localName] = method;
       }
     }
     function newMethod(proto2, parent, reg) {
@@ -58798,11 +58803,11 @@ var require_registry = __commonJS({
       assert2(key && key.fieldKind == "scalar" && key.scalar != descriptors_js_1.ScalarType.BYTES && key.scalar != descriptors_js_1.ScalarType.FLOAT && key.scalar != descriptors_js_1.ScalarType.DOUBLE && value && value.fieldKind != "list" && value.fieldKind != "map");
       return { key, value };
     }
-    function isEnumOpen(desc3) {
+    function isEnumOpen(desc2) {
       var _a;
       return OPEN == resolveFeature("enumType", {
-        proto: desc3.proto,
-        parent: (_a = desc3.parent) !== null && _a !== void 0 ? _a : desc3.file
+        proto: desc2.proto,
+        parent: (_a = desc2.parent) !== null && _a !== void 0 ? _a : desc2.file
       });
     }
     function isDelimitedEncoding(proto2, parent) {
@@ -58957,9 +58962,9 @@ var require_enum = __commonJS({
       const e = paths.pop();
       return paths.reduce((acc, cur) => acc.nestedMessages[cur], file2.messages[path2]).nestedEnums[e];
     }
-    function tsEnum(desc3) {
+    function tsEnum(desc2) {
       const enumObject = {};
-      for (const value of desc3.values) {
+      for (const value of desc2.values) {
         enumObject[value.localName] = value.number;
         enumObject[value.number] = value.localName;
       }
@@ -59733,11 +59738,11 @@ var require_any = __commonJS({
       if (any2.typeUrl === "") {
         return void 0;
       }
-      const desc3 = registryOrMessageDesc.kind == "message" ? registryOrMessageDesc : registryOrMessageDesc.getMessage(typeUrlToName(any2.typeUrl));
-      if (!desc3 || !anyIs(any2, desc3)) {
+      const desc2 = registryOrMessageDesc.kind == "message" ? registryOrMessageDesc : registryOrMessageDesc.getMessage(typeUrlToName(any2.typeUrl));
+      if (!desc2 || !anyIs(any2, desc2)) {
         return void 0;
       }
-      return (0, from_binary_js_1.fromBinary)(desc3, any2.value);
+      return (0, from_binary_js_1.fromBinary)(desc2, any2.value);
     }
     function anyUnpackTo(any2, schema, message) {
       if (!anyIs(any2, schema)) {
@@ -60061,13 +60066,13 @@ var require_wkt = __commonJS({
     "use strict";
     var __createBinding = exports && exports.__createBinding || (Object.create ? (function(o, m, k, k2) {
       if (k2 === void 0) k2 = k;
-      var desc3 = Object.getOwnPropertyDescriptor(m, k);
-      if (!desc3 || ("get" in desc3 ? !m.__esModule : desc3.writable || desc3.configurable)) {
-        desc3 = { enumerable: true, get: function() {
+      var desc2 = Object.getOwnPropertyDescriptor(m, k);
+      if (!desc2 || ("get" in desc2 ? !m.__esModule : desc2.writable || desc2.configurable)) {
+        desc2 = { enumerable: true, get: function() {
           return m[k];
         } };
       }
-      Object.defineProperty(o, k2, desc3);
+      Object.defineProperty(o, k2, desc2);
     }) : (function(o, m, k, k2) {
       if (k2 === void 0) k2 = k;
       o[k2] = m[k];
@@ -60185,19 +60190,19 @@ var require_extensions = __commonJS({
     function createExtensionContainer(extension, value) {
       const localName = extension.typeName;
       const field = Object.assign(Object.assign({}, extension), { kind: "field", parent: extension.extendee, localName });
-      const desc3 = Object.assign(Object.assign({}, extension.extendee), { fields: [field], members: [field], oneofs: [] });
-      const container = (0, create_js_1.create)(desc3, value !== void 0 ? { [localName]: value } : void 0);
+      const desc2 = Object.assign(Object.assign({}, extension.extendee), { fields: [field], members: [field], oneofs: [] });
+      const container = (0, create_js_1.create)(desc2, value !== void 0 ? { [localName]: value } : void 0);
       return [
-        (0, reflect_js_1.reflect)(desc3, container),
+        (0, reflect_js_1.reflect)(desc2, container),
         field,
         () => {
           const value2 = container[localName];
           if (value2 === void 0) {
-            const desc4 = extension.message;
-            if ((0, wrappers_js_1.isWrapperDesc)(desc4)) {
-              return (0, scalar_js_1.scalarZeroValue)(desc4.fields[0].scalar, desc4.fields[0].longAsString);
+            const desc3 = extension.message;
+            if ((0, wrappers_js_1.isWrapperDesc)(desc3)) {
+              return (0, scalar_js_1.scalarZeroValue)(desc3.fields[0].scalar, desc3.fields[0].longAsString);
             }
-            return (0, create_js_1.create)(desc4);
+            return (0, create_js_1.create)(desc3);
           }
           return value2;
         }
@@ -60569,13 +60574,13 @@ var require_wire = __commonJS({
     "use strict";
     var __createBinding = exports && exports.__createBinding || (Object.create ? (function(o, m, k, k2) {
       if (k2 === void 0) k2 = k;
-      var desc3 = Object.getOwnPropertyDescriptor(m, k);
-      if (!desc3 || ("get" in desc3 ? !m.__esModule : desc3.writable || desc3.configurable)) {
-        desc3 = { enumerable: true, get: function() {
+      var desc2 = Object.getOwnPropertyDescriptor(m, k);
+      if (!desc2 || ("get" in desc2 ? !m.__esModule : desc2.writable || desc2.configurable)) {
+        desc2 = { enumerable: true, get: function() {
           return m[k];
         } };
       }
-      Object.defineProperty(o, k2, desc3);
+      Object.defineProperty(o, k2, desc2);
     }) : (function(o, m, k, k2) {
       if (k2 === void 0) k2 = k;
       o[k2] = m[k];
@@ -60735,18 +60740,18 @@ var require_to_json = __commonJS({
       }
       return opts.alwaysEmitImplicit || jsonArr.length > 0 ? jsonArr : void 0;
     }
-    function enumToJsonInternal(desc3, value, enumAsInteger) {
+    function enumToJsonInternal(desc2, value, enumAsInteger) {
       var _a;
       if (typeof value != "number") {
-        throw new Error(`cannot encode ${desc3} to JSON: expected number, got ${(0, reflect_check_js_1.formatVal)(value)}`);
+        throw new Error(`cannot encode ${desc2} to JSON: expected number, got ${(0, reflect_check_js_1.formatVal)(value)}`);
       }
-      if (desc3.typeName == "google.protobuf.NullValue") {
+      if (desc2.typeName == "google.protobuf.NullValue") {
         return null;
       }
       if (enumAsInteger) {
         return value;
       }
-      const val = desc3.value[value];
+      const val = desc2.value[value];
       return (_a = val === null || val === void 0 ? void 0 : val.name) !== null && _a !== void 0 ? _a : value;
     }
     function scalarToJson(field, value) {
@@ -60843,18 +60848,18 @@ var require_to_json = __commonJS({
       }
       const { registry: registry2 } = opts;
       let message;
-      let desc3;
+      let desc2;
       if (registry2) {
         message = (0, index_js_1.anyUnpack)(val, registry2);
         if (message) {
-          desc3 = registry2.getMessage(message.$typeName);
+          desc2 = registry2.getMessage(message.$typeName);
         }
       }
-      if (!desc3 || !message) {
+      if (!desc2 || !message) {
         throw new Error(`cannot encode message ${val.$typeName} to JSON: "${val.typeUrl}" is not in the type registry`);
       }
-      const reflected = (0, reflect_js_1.reflect)(desc3, message);
-      const json3 = (0, wrappers_js_1.hasCustomJsonRepresentation)(desc3) ? { value: tryWktToJson(reflected, opts) } : reflectToJson(reflected, opts);
+      const reflected = (0, reflect_js_1.reflect)(desc2, message);
+      const json3 = (0, wrappers_js_1.hasCustomJsonRepresentation)(desc2) ? { value: tryWktToJson(reflected, opts) } : reflectToJson(reflected, opts);
       json3["@type"] = val.typeUrl;
       return json3;
     }
@@ -61016,16 +61021,16 @@ var require_from_json = __commonJS({
       return void 0 !== descEnum.values.find((v) => v.name === value);
     }
     var messageJsonFields = /* @__PURE__ */ new WeakMap();
-    function getJsonField(desc3, jsonKey) {
+    function getJsonField(desc2, jsonKey) {
       var _a;
-      if (!messageJsonFields.has(desc3)) {
+      if (!messageJsonFields.has(desc2)) {
         const jsonNames = /* @__PURE__ */ new Map();
-        for (const field of desc3.fields) {
+        for (const field of desc2.fields) {
           jsonNames.set(field.name, field).set(field.jsonName, field);
         }
-        messageJsonFields.set(desc3, jsonNames);
+        messageJsonFields.set(desc2, jsonNames);
       }
-      return (_a = messageJsonFields.get(desc3)) === null || _a === void 0 ? void 0 : _a.get(jsonKey);
+      return (_a = messageJsonFields.get(desc2)) === null || _a === void 0 ? void 0 : _a.get(jsonKey);
     }
     function readMessage(msg, json3, opts) {
       var _a;
@@ -61159,9 +61164,9 @@ var require_from_json = __commonJS({
       return json3 === null && ((_a = field.message) === null || _a === void 0 ? void 0 : _a.typeName) != "google.protobuf.Value" && ((_b = field.enum) === null || _b === void 0 ? void 0 : _b.typeName) != "google.protobuf.NullValue";
     }
     var tokenIgnoredUnknownEnum = /* @__PURE__ */ Symbol();
-    function readEnum(desc3, json3, ignoreUnknownFields) {
+    function readEnum(desc2, json3, ignoreUnknownFields) {
       if (json3 === null) {
-        return desc3.values[0].number;
+        return desc2.values[0].number;
       }
       switch (typeof json3) {
         case "number":
@@ -61170,7 +61175,7 @@ var require_from_json = __commonJS({
           }
           break;
         case "string":
-          const value = desc3.values.find((ev) => ev.name === json3);
+          const value = desc2.values.find((ev) => ev.name === json3);
           if (value !== void 0) {
             return value.number;
           }
@@ -61179,7 +61184,7 @@ var require_from_json = __commonJS({
           }
           break;
       }
-      throw new Error(`cannot decode ${desc3} from JSON: ${(0, reflect_check_js_1.formatVal)(json3)}`);
+      throw new Error(`cannot decode ${desc2} from JSON: ${(0, reflect_check_js_1.formatVal)(json3)}`);
     }
     function scalarFromJson(field, json3) {
       switch (field.scalar) {
@@ -61344,12 +61349,12 @@ var require_from_json = __commonJS({
       if (!typeName.length) {
         throw new Error(`cannot decode message ${any2.$typeName} from JSON: "@type" is invalid`);
       }
-      const desc3 = (_a = opts.registry) === null || _a === void 0 ? void 0 : _a.getMessage(typeName);
-      if (!desc3) {
+      const desc2 = (_a = opts.registry) === null || _a === void 0 ? void 0 : _a.getMessage(typeName);
+      if (!desc2) {
         throw new Error(`cannot decode message ${any2.$typeName} from JSON: ${typeUrl} is not in the type registry`);
       }
-      const msg = (0, reflect_js_1.reflect)(desc3);
-      if ((0, index_js_1.hasCustomJsonRepresentation)(desc3) && Object.prototype.hasOwnProperty.call(json3, "value")) {
+      const msg = (0, reflect_js_1.reflect)(desc2);
+      if ((0, index_js_1.hasCustomJsonRepresentation)(desc2) && Object.prototype.hasOwnProperty.call(json3, "value")) {
         const value = json3.value;
         readMessage(msg, value, opts);
       } else {
@@ -61529,13 +61534,13 @@ var require_cjs = __commonJS({
     "use strict";
     var __createBinding = exports && exports.__createBinding || (Object.create ? (function(o, m, k, k2) {
       if (k2 === void 0) k2 = k;
-      var desc3 = Object.getOwnPropertyDescriptor(m, k);
-      if (!desc3 || ("get" in desc3 ? !m.__esModule : desc3.writable || desc3.configurable)) {
-        desc3 = { enumerable: true, get: function() {
+      var desc2 = Object.getOwnPropertyDescriptor(m, k);
+      if (!desc2 || ("get" in desc2 ? !m.__esModule : desc2.writable || desc2.configurable)) {
+        desc2 = { enumerable: true, get: function() {
           return m[k];
         } };
       }
-      Object.defineProperty(o, k2, desc3);
+      Object.defineProperty(o, k2, desc2);
     }) : (function(o, m, k, k2) {
       if (k2 === void 0) k2 = k;
       o[k2] = m[k];
@@ -61693,10 +61698,10 @@ var require_connect_error = __commonJS({
             }
             continue;
           }
-          const desc3 = registry2.getMessage(data.type);
-          if (desc3) {
+          const desc2 = registry2.getMessage(data.type);
+          if (desc2) {
             try {
-              details.push((0, protobuf_1.fromBinary)(desc3, data.value));
+              details.push((0, protobuf_1.fromBinary)(desc2, data.value));
             } catch (_) {
             }
           }
@@ -61723,10 +61728,10 @@ var require_http_headers = __commonJS({
     var wire_1 = require_wire();
     var connect_error_js_1 = require_connect_error();
     var code_js_1 = require_code();
-    function encodeBinaryHeader(value, desc3) {
+    function encodeBinaryHeader(value, desc2) {
       let bytes;
-      if (desc3 !== void 0) {
-        bytes = (0, protobuf_1.toBinary)(desc3, value);
+      if (desc2 !== void 0) {
+        bytes = (0, protobuf_1.toBinary)(desc2, value);
       } else if (typeof value == "string") {
         bytes = new TextEncoder().encode(value);
       } else {
@@ -61734,11 +61739,11 @@ var require_http_headers = __commonJS({
       }
       return (0, wire_1.base64Encode)(bytes, "std_raw");
     }
-    function decodeBinaryHeader(value, desc3, options) {
+    function decodeBinaryHeader(value, desc2, options) {
       try {
         const bytes = (0, wire_1.base64Decode)(value);
-        if (desc3) {
-          return (0, protobuf_1.fromBinary)(desc3, bytes, options);
+        if (desc2) {
+          return (0, protobuf_1.fromBinary)(desc2, bytes, options);
         }
         return bytes;
       } catch (e) {
@@ -61765,10 +61770,10 @@ var require_any_client = __commonJS({
     exports.makeAnyClient = makeAnyClient;
     function makeAnyClient(service, createMethod) {
       const client = {};
-      for (const desc3 of service.methods) {
-        const method = createMethod(desc3);
+      for (const desc2 of service.methods) {
+        const method = createMethod(desc2);
         if (method != null) {
-          client[desc3.localName] = method;
+          client[desc2.localName] = method;
         }
       }
       return client;
@@ -63416,19 +63421,19 @@ var require_embed = __commonJS({
         stripJsonNames(n);
       }
     }
-    function pathInFileDesc(desc3) {
-      if (desc3.kind == "service") {
-        return [desc3.file.services.indexOf(desc3)];
+    function pathInFileDesc(desc2) {
+      if (desc2.kind == "service") {
+        return [desc2.file.services.indexOf(desc2)];
       }
-      const parent = desc3.parent;
+      const parent = desc2.parent;
       if (parent == void 0) {
-        switch (desc3.kind) {
+        switch (desc2.kind) {
           case "enum":
-            return [desc3.file.enums.indexOf(desc3)];
+            return [desc2.file.enums.indexOf(desc2)];
           case "message":
-            return [desc3.file.messages.indexOf(desc3)];
+            return [desc2.file.messages.indexOf(desc2)];
           case "extension":
-            return [desc3.file.extensions.indexOf(desc3)];
+            return [desc2.file.extensions.indexOf(desc2)];
         }
       }
       function findPath(cur) {
@@ -63443,13 +63448,13 @@ var require_embed = __commonJS({
         return nested;
       }
       const path2 = findPath(parent);
-      switch (desc3.kind) {
+      switch (desc2.kind) {
         case "extension":
-          return [...path2, parent.nestedExtensions.indexOf(desc3)];
+          return [...path2, parent.nestedExtensions.indexOf(desc2)];
         case "message":
-          return [...path2, parent.nestedMessages.indexOf(desc3)];
+          return [...path2, parent.nestedMessages.indexOf(desc2)];
         case "enum":
-          return [...path2, parent.nestedEnums.indexOf(desc3)];
+          return [...path2, parent.nestedEnums.indexOf(desc2)];
       }
     }
     function createFileDescriptorProtoBoot(proto2) {
@@ -63804,13 +63809,13 @@ var require_codegenv1 = __commonJS({
     "use strict";
     var __createBinding = exports && exports.__createBinding || (Object.create ? (function(o, m, k, k2) {
       if (k2 === void 0) k2 = k;
-      var desc3 = Object.getOwnPropertyDescriptor(m, k);
-      if (!desc3 || ("get" in desc3 ? !m.__esModule : desc3.writable || desc3.configurable)) {
-        desc3 = { enumerable: true, get: function() {
+      var desc2 = Object.getOwnPropertyDescriptor(m, k);
+      if (!desc2 || ("get" in desc2 ? !m.__esModule : desc2.writable || desc2.configurable)) {
+        desc2 = { enumerable: true, get: function() {
           return m[k];
         } };
       }
-      Object.defineProperty(o, k2, desc3);
+      Object.defineProperty(o, k2, desc2);
     }) : (function(o, m, k, k2) {
       if (k2 === void 0) k2 = k;
       o[k2] = m[k];
@@ -63962,17 +63967,17 @@ var require_normalize = __commonJS({
     exports.normalize = normalize;
     exports.normalizeIterable = normalizeIterable;
     var protobuf_1 = require_cjs();
-    function normalize(desc3, message) {
-      return (0, protobuf_1.create)(desc3, message);
+    function normalize(desc2, message) {
+      return (0, protobuf_1.create)(desc2, message);
     }
-    function normalizeIterable(desc3, input) {
+    function normalizeIterable(desc2, input) {
       function transform2(result) {
         if (result.done === true) {
           return result;
         }
         return {
           done: result.done,
-          value: normalize(desc3, result.value)
+          value: normalize(desc2, result.value)
         };
       }
       return {
@@ -64250,11 +64255,11 @@ var require_serialization = __commonJS({
         }
       };
     }
-    function createBinarySerialization(desc3, options) {
+    function createBinarySerialization(desc2, options) {
       return {
         parse(data) {
           try {
-            return (0, protobuf_1.fromBinary)(desc3, data, options);
+            return (0, protobuf_1.fromBinary)(desc2, data, options);
           } catch (e) {
             const m = e instanceof Error ? e.message : String(e);
             throw new connect_error_js_1.ConnectError(`parse binary: ${m}`, code_js_1.Code.Internal);
@@ -64262,7 +64267,7 @@ var require_serialization = __commonJS({
         },
         serialize(data) {
           try {
-            return (0, protobuf_1.toBinary)(desc3, data, options);
+            return (0, protobuf_1.toBinary)(desc2, data, options);
           } catch (e) {
             const m = e instanceof Error ? e.message : String(e);
             throw new connect_error_js_1.ConnectError(`serialize binary: ${m}`, code_js_1.Code.Internal);
@@ -64270,7 +64275,7 @@ var require_serialization = __commonJS({
         }
       };
     }
-    function createJsonSerialization(desc3, options) {
+    function createJsonSerialization(desc2, options) {
       var _a, _b;
       const textEncoder = (_a = options === null || options === void 0 ? void 0 : options.textEncoder) !== null && _a !== void 0 ? _a : new TextEncoder();
       const textDecoder2 = (_b = options === null || options === void 0 ? void 0 : options.textDecoder) !== null && _b !== void 0 ? _b : new TextDecoder();
@@ -64279,14 +64284,14 @@ var require_serialization = __commonJS({
         parse(data) {
           try {
             const json3 = textDecoder2.decode(data);
-            return (0, protobuf_1.fromJsonString)(desc3, json3, o);
+            return (0, protobuf_1.fromJsonString)(desc2, json3, o);
           } catch (e) {
             throw connect_error_js_1.ConnectError.from(e, code_js_1.Code.InvalidArgument);
           }
         },
         serialize(data) {
           try {
-            const json3 = (0, protobuf_1.toJsonString)(desc3, data, o);
+            const json3 = (0, protobuf_1.toJsonString)(desc2, data, o);
             return textEncoder.encode(json3);
           } catch (e) {
             throw connect_error_js_1.ConnectError.from(e, code_js_1.Code.Internal);
@@ -66242,13 +66247,13 @@ var require_codegenv2 = __commonJS({
     "use strict";
     var __createBinding = exports && exports.__createBinding || (Object.create ? (function(o, m, k, k2) {
       if (k2 === void 0) k2 = k;
-      var desc3 = Object.getOwnPropertyDescriptor(m, k);
-      if (!desc3 || ("get" in desc3 ? !m.__esModule : desc3.writable || desc3.configurable)) {
-        desc3 = { enumerable: true, get: function() {
+      var desc2 = Object.getOwnPropertyDescriptor(m, k);
+      if (!desc2 || ("get" in desc2 ? !m.__esModule : desc2.writable || desc2.configurable)) {
+        desc2 = { enumerable: true, get: function() {
           return m[k];
         } };
       }
-      Object.defineProperty(o, k2, desc3);
+      Object.defineProperty(o, k2, desc2);
     }) : (function(o, m, k, k2) {
       if (k2 === void 0) k2 = k;
       o[k2] = m[k];
@@ -66592,13 +66597,13 @@ var require_protocol_connect = __commonJS({
     "use strict";
     var __createBinding = exports && exports.__createBinding || (Object.create ? (function(o, m, k, k2) {
       if (k2 === void 0) k2 = k;
-      var desc3 = Object.getOwnPropertyDescriptor(m, k);
-      if (!desc3 || ("get" in desc3 ? !m.__esModule : desc3.writable || desc3.configurable)) {
-        desc3 = { enumerable: true, get: function() {
+      var desc2 = Object.getOwnPropertyDescriptor(m, k);
+      if (!desc2 || ("get" in desc2 ? !m.__esModule : desc2.writable || desc2.configurable)) {
+        desc2 = { enumerable: true, get: function() {
           return m[k];
         } };
       }
-      Object.defineProperty(o, k2, desc3);
+      Object.defineProperty(o, k2, desc2);
     }) : (function(o, m, k, k2) {
       if (k2 === void 0) k2 = k;
       o[k2] = m[k];
@@ -67608,13 +67613,13 @@ var require_protocol_grpc = __commonJS({
     "use strict";
     var __createBinding = exports && exports.__createBinding || (Object.create ? (function(o, m, k, k2) {
       if (k2 === void 0) k2 = k;
-      var desc3 = Object.getOwnPropertyDescriptor(m, k);
-      if (!desc3 || ("get" in desc3 ? !m.__esModule : desc3.writable || desc3.configurable)) {
-        desc3 = { enumerable: true, get: function() {
+      var desc2 = Object.getOwnPropertyDescriptor(m, k);
+      if (!desc2 || ("get" in desc2 ? !m.__esModule : desc2.writable || desc2.configurable)) {
+        desc2 = { enumerable: true, get: function() {
           return m[k];
         } };
       }
-      Object.defineProperty(o, k2, desc3);
+      Object.defineProperty(o, k2, desc2);
     }) : (function(o, m, k, k2) {
       if (k2 === void 0) k2 = k;
       o[k2] = m[k];
@@ -67691,13 +67696,13 @@ var require_protocol_grpc_web = __commonJS({
     "use strict";
     var __createBinding = exports && exports.__createBinding || (Object.create ? (function(o, m, k, k2) {
       if (k2 === void 0) k2 = k;
-      var desc3 = Object.getOwnPropertyDescriptor(m, k);
-      if (!desc3 || ("get" in desc3 ? !m.__esModule : desc3.writable || desc3.configurable)) {
-        desc3 = { enumerable: true, get: function() {
+      var desc2 = Object.getOwnPropertyDescriptor(m, k);
+      if (!desc2 || ("get" in desc2 ? !m.__esModule : desc2.writable || desc2.configurable)) {
+        desc2 = { enumerable: true, get: function() {
           return m[k];
         } };
       }
-      Object.defineProperty(o, k2, desc3);
+      Object.defineProperty(o, k2, desc2);
     }) : (function(o, m, k, k2) {
       if (k2 === void 0) k2 = k;
       o[k2] = m[k];
@@ -74377,11 +74382,11 @@ var require_dist4 = __commonJS({
       for (var name in all)
         __defProp2(target, name, { get: all[name], enumerable: true });
     };
-    var __copyProps2 = (to, from, except2, desc3) => {
+    var __copyProps2 = (to, from, except2, desc2) => {
       if (from && typeof from === "object" || typeof from === "function") {
         for (let key of __getOwnPropNames2(from))
           if (!__hasOwnProp2.call(to, key) && key !== except2)
-            __defProp2(to, key, { get: () => from[key], enumerable: !(desc3 = __getOwnPropDesc2(from, key)) || desc3.enumerable });
+            __defProp2(to, key, { get: () => from[key], enumerable: !(desc2 = __getOwnPropDesc2(from, key)) || desc2.enumerable });
       }
       return to;
     };
@@ -85106,8 +85111,8 @@ router3.get("/:channelId/messages", async (req, res) => {
   const channelId = parseInt(req.params.channelId);
   if (isNaN(channelId)) return res.status(400).json({ error: "Invalid channel ID" });
   try {
-    const messages = await db.select().from(messagesTable).where(eq(messagesTable.channelId, channelId)).orderBy(messagesTable.timestamp).limit(100);
-    return res.json(messages.map((m) => ({
+    const recent = await db.select().from(messagesTable).where(eq(messagesTable.channelId, channelId)).orderBy(desc(messagesTable.timestamp)).limit(100);
+    return res.json(recent.reverse().map((m) => ({
       ...m,
       timestamp: m.timestamp.toISOString()
     })));
@@ -90135,6 +90140,15 @@ CREATE TABLE IF NOT EXISTS "attachments" (
   "extracted_text" text,
   "created_at" timestamp DEFAULT now() NOT NULL
 );
+
+-- Indexes for the hot read paths the dashboard polls every few seconds. Without
+-- these, each poll seq-scans + sorts and holds a pool connection longer, which
+-- (under concurrent orchestration writes) caused reads to hang and return empty.
+CREATE INDEX IF NOT EXISTS "messages_channel_ts_idx" ON "messages" ("channel_id", "timestamp");
+CREATE INDEX IF NOT EXISTS "agent_commands_created_idx" ON "agent_commands" ("created_at");
+CREATE INDEX IF NOT EXISTS "tool_calls_agent_idx" ON "tool_calls" ("agent_id");
+CREATE INDEX IF NOT EXISTS "tasks_status_idx" ON "tasks" ("status");
+CREATE INDEX IF NOT EXISTS "agent_memory_agent_idx" ON "agent_memory" ("agent_id");
 `;
 var SEED_AGENTS = `
 INSERT INTO agents (name, role, description, status, color, avatar_initials, model, capabilities)
