@@ -52,12 +52,30 @@ const hasFrontend =
   process.env["NODE_ENV"] === "production" && fs.existsSync(indexHtml);
 
 if (hasFrontend) {
-  app.use(express.static(staticPath));
+  app.use(
+    express.static(staticPath, {
+      setHeaders: (res, filePath) => {
+        // The SPA entry point must NEVER be cached: the browser has to revalidate
+        // it on every load so a new deploy is picked up immediately (otherwise a
+        // tab keeps serving a stale bundle — the "old build" ghost). Hashed assets
+        // are content-addressed (the filename changes when the bytes change), so
+        // they're safe to cache forever.
+        if (filePath.endsWith("index.html")) {
+          res.setHeader("Cache-Control", "no-cache");
+        } else if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+          res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+        }
+      },
+    }),
+  );
   app.get("/*path", (req, res, next) => {
     if (req.path.startsWith("/api")) return next();
     // Missing static assets (paths with a file extension) should 404, not
     // fall back to the SPA shell — otherwise stale asset requests get HTML 200.
     if (path.extname(req.path)) return next();
+    // The SPA shell is served for every app route; it must revalidate too so a
+    // deep-link/refresh always lands the newest deployed bundle.
+    res.setHeader("Cache-Control", "no-cache");
     res.sendFile(indexHtml, (err) => {
       if (err) next();
     });
