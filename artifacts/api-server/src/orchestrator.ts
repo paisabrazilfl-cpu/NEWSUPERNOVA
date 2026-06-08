@@ -686,8 +686,16 @@ export async function orchestrateGoal(opts: {
   channelId: number;
   priority: string;
   sourceContext?: string | null;
+  /**
+   * Force the whole goal onto a SINGLE agent as ONE directive (no multi-CLAW
+   * decomposition). Used for connected-account/Composio actions: only ABBY/WIRE/
+   * MR.NICE hold the Composio tools, and the goal must run exactly once — fanning
+   * it out duplicated work (e.g. published an Instagram post twice) and routed
+   * slices to agents that can't act on it.
+   */
+  forceAgentId?: number;
 }): Promise<void> {
-  const { goal, channelId, priority, sourceContext } = opts;
+  const { goal, channelId, priority, sourceContext, forceAgentId } = opts;
   logger.info({ phase: "abby-planning", ...groundingProof(sourceContext) }, "orchestration grounding");
   void sendInngestEvent("swarm/goal.received", { goal, channelId, priority });
   try {
@@ -726,8 +734,17 @@ Decompose this goal into precise, exhaustive, granular directives — ONE per CL
 Respond with ONLY a JSON array (no prose, no code fences) of objects shaped: {"agentId": <number>, "directive": "<single, fully-specified instruction>"}. Maximum 5 directives.`;
 
     const model = resolveModel(ABBY_ID, abby?.model, undefined);
-    const planRaw = await completeChat(model, planSystem, planUser);
-    let directives = parseDirectives(planRaw, claws);
+
+    // Single-agent path: dispatch the whole goal as ONE directive to the forced
+    // agent (must be a real CLAW). Skips ABBY's multi-directive planning entirely
+    // so the action runs exactly once on a capable agent.
+    let directives: Directive[];
+    if (forceAgentId && claws.some((c) => c.id === forceAgentId)) {
+      directives = [{ agentId: forceAgentId, directive: goal }];
+    } else {
+      const planRaw = await completeChat(model, planSystem, planUser);
+      directives = parseDirectives(planRaw, claws);
+    }
 
     // Fallback: if ABBY didn't return parseable directives, route the raw goal
     // to the most relevant single CLAW (browser if a URL is present, else FORGE).
@@ -772,7 +789,7 @@ Respond with ONLY a JSON array (no prose, no code fences) of objects shaped: {"a
     // ── ABBY coordinator pass ──
     // ABBY reviews the CLAWs' real results and, if the goal isn't fully met,
     // issues ONE bounded follow-up round before committing.
-    if (results.length && !isSwarmPaused()) {
+    if (results.length && !isSwarmPaused() && !forceAgentId) {
       await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, ABBY_ID));
       const reviewUser = `Operator goal: "${goal}"
 
