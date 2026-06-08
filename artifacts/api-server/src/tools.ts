@@ -1154,7 +1154,7 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
   composio_action: {
     name: "composio_action",
     description:
-      "Execute an authenticated action on a connected SaaS app (Gmail, Slack, GitHub, Notion, Calendar, Sheets, Instagram, …) via Composio. Call composio_apps FIRST to confirm the app is live; the connected account is auto-resolved from the toolkit. TWO modes: (1) NAMED action — pass `toolkit` + `action` (a Composio tool slug like GMAIL_SEND_EMAIL) + `arguments`. (2) RAW PROXY — when no named action fits or to call the app's REST API directly, pass `toolkit` + `endpoint` (the app's API path, e.g. '/me/media?fields=id,caption,timestamp') + `method` (GET/POST/…). Use proxy mode for Instagram/Graph-API reads. Disabled unless the operator enabled execution.",
+      "Execute an authenticated action on a connected SaaS app (Gmail, Slack, GitHub, Notion, Calendar, Sheets, Instagram, …) via Composio. Call composio_apps FIRST to confirm the app is live; the connected account is auto-resolved from the toolkit. TWO modes: (1) NAMED action — pass `toolkit` + `action` (a Composio tool slug like GMAIL_SEND_EMAIL) + `arguments`. (2) RAW PROXY — pass `toolkit` + `endpoint` (the app's API path) + `method` (GET/POST/…); put call data in `arguments` (a key/value object) and it is sent as query parameters. Example — publish an Instagram post (2 steps): first endpoint:'/me/media', method:'POST', arguments:{image_url:'https://…public.png', caption:'…'} → returns a creation id; then endpoint:'/me/media_publish', method:'POST', arguments:{creation_id:'<that id>'}. Use proxy mode for Instagram/Graph-API. Disabled unless the operator enabled execution.",
     parameters: {
       type: "object",
       properties: {
