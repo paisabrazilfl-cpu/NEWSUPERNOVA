@@ -48,6 +48,7 @@ import { pineconeConfigured, pineconeUpsert, pineconeQuery } from "./lib/pinecon
 import { runInSandbox, repoPr, sandboxConfigured, gitWriteConfigured } from "./lib/sandbox";
 import { TIER1_SOURCES, tier1SourcesText } from "./lib/sources";
 import { marketingPlaybook, MARKETING_SECTIONS } from "./lib/marketing";
+import { blockIfSensitiveForPublic } from "./lib/safety";
 
 const STEEL_BASE = "https://api.steel.dev/v1";
 const FIRECRAWL_BASE = "https://api.firecrawl.dev/v1";
@@ -1207,6 +1208,19 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
       if (!composioExecuteEnabled()) {
         return "error: Composio execution is disabled. The operator must set ALLOW_COMPOSIO_EXECUTE=true after connecting accounts.";
       }
+      // SAFEGUARD: when this is a WRITE to a public social platform (e.g. publishing
+      // a post), screen the payload for confidential/sensitive content first.
+      const tk = (args["toolkit"] != null ? String(args["toolkit"]) : "").toLowerCase();
+      const mth = (args["method"] != null ? String(args["method"]) : "").toUpperCase();
+      const ep = args["endpoint"] != null ? String(args["endpoint"]) : "";
+      const isSocialWrite =
+        /instagram|facebook|threads|^x$|twitter|tiktok|linkedin|reddit|youtube/.test(tk) &&
+        (["POST", "PUT", "PATCH"].includes(mth) || /publish|media|post|tweet|status|share/i.test(ep));
+      if (isSocialWrite) {
+        const payload = `${ep} ${JSON.stringify(args["arguments"] ?? {})} ${JSON.stringify(args["body"] ?? "")}`;
+        const blockedSocial = blockIfSensitiveForPublic(payload, `your public ${tk || "social"} account`);
+        if (blockedSocial) return blockedSocial;
+      }
       return composioExecute({
         toolkit: args["toolkit"] != null ? String(args["toolkit"]) : undefined,
         action: args["action"] != null ? String(args["action"]) : undefined,
@@ -1235,6 +1249,9 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
       if (!composioExecuteEnabled()) return "error: Composio execution is disabled (operator must set ALLOW_COMPOSIO_EXECUTE=true).";
       const imageUrl = String(args["image_url"] ?? "").trim();
       const caption = args["caption"] != null ? String(args["caption"]) : "";
+      // SAFEGUARD: never auto-publish confidential/sensitive material to a public account.
+      const blocked = blockIfSensitiveForPublic(caption, "your public Instagram");
+      if (blocked) return blocked;
       if (!/^https:\/\/\S+/i.test(imageUrl)) {
         return "error: image_url must be an absolute https URL that Instagram can fetch (use the URL image_generate returns, e.g. https://<host>/api/uploads/<id>). A relative path will not work.";
       }
