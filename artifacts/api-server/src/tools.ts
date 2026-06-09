@@ -815,7 +815,7 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
   cloud_code_exec: {
     name: "cloud_code_exec",
     description:
-      "Execute code in a fully isolated E2B cloud sandbox (a real remote VM with network access and a full runtime). Supports 'python' and 'javascript'. Use this instead of code_exec when the code needs network access, pip/npm packages, or stronger isolation than the local sandbox. Returns stdout/stderr/result.",
+      "Execute code in a fully isolated E2B cloud sandbox (a real remote VM with network access and a full runtime). Supports 'python' and 'javascript'. Use this instead of code_exec when the code needs network access, pip/npm packages, or stronger isolation than the local sandbox. Returns stdout/stderr/result. You can authenticate calls using your vault secrets via the {{secret:NAME}} placeholder (injected at run time, redacted from output).",
     parameters: {
       type: "object",
       properties: {
@@ -826,12 +826,19 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
     },
     run: async (args) => {
       const language = String(args["language"] ?? "");
-      const source = String(args["source"] ?? "");
-      if (!source.trim()) return "error: source is required.";
+      const rawSource = String(args["source"] ?? "");
+      if (!rawSource.trim()) return "error: source is required.";
       if (!e2bConfigured()) {
         return "error: E2B cloud sandbox is not configured (set E2B_API_KEY). Use code_exec for local execution instead.";
       }
-      return e2bExec(language, source);
+      // Resolve {{secret:NAME}} placeholders (injected only into the code sent to
+      // the remote VM, redacted from the returned output) so code can authenticate.
+      const usedSecrets = new Set<string>();
+      const source = await substituteSecrets(rawSource, usedSecrets);
+      if (hasSecretPlaceholder(source)) {
+        return "error: a {{secret:NAME}} placeholder did not resolve — that exact secret name is not in the vault. Call vault_list for the correct names. (Nothing was executed.)";
+      }
+      return redactSecrets(await e2bExec(language, source), usedSecrets);
     },
   },
 
@@ -840,7 +847,8 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
     description:
       "Run a shell script inside a fresh, isolated E2B cloud VM (its own real computer — node, git, network, full Linux). Use for anything that needs a real dev environment: clone a public repo, install packages, run a build/test suite, run scripts, curl APIs, etc. " +
       "It is also your INTERACTIVE-AUTOMATION substrate: pip/npm-install and drive real tools here — e.g. Playwright (`pip install playwright && playwright install chromium`) to navigate multi-step web forms, fill fields, click, and submit; or reportlab/fpdf2/fillpdf/pypdf to generate and fill official PDF forms (e.g. AcroForm fields). Print results/paths to stdout and read back any output. " +
-      "STATELESS: each call is a clean disposable VM and files do NOT persist between calls — generate a file, base64 it, and print it ALL in ONE script (then pass to save_artifact); never write in one call and read in the next. NO access to the OpenClaw server or its secrets. For making changes to the OpenClaw repo and opening a PR, use sandbox_repo_pr instead.",
+      "STATELESS: each call is a clean disposable VM and files do NOT persist between calls — generate a file, base64 it, and print it ALL in ONE script (then pass to save_artifact); never write in one call and read in the next. " +
+      "It cannot read the OpenClaw server, its database, or its filesystem — BUT it CAN authenticate using your vault secrets via the {{secret:NAME}} placeholder: the real value is injected into the command at run time and redacted from the returned output. So authenticated git works, e.g. `git remote set-url origin https://{{secret:GITHUB_API_KEY}}@github.com/<owner>/<repo>.git && git push`. Use vault_list / your STORED SECRETS list for exact names. For changes to the OpenClaw repo with an automatic PR, prefer sandbox_repo_pr.",
     parameters: {
       type: "object",
       properties: {
@@ -849,10 +857,19 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
       required: ["script"],
     },
     run: async (args) => {
-      const script = String(args["script"] ?? "").trim();
-      if (!script) return "error: script is required.";
+      const raw = String(args["script"] ?? "").trim();
+      if (!raw) return "error: script is required.";
       if (!sandboxConfigured()) return "error: E2B cloud sandbox is not configured (E2B_API_KEY).";
-      return runInSandbox(script);
+      // Resolve {{secret:NAME}} placeholders the same way http_request does, so a
+      // script can authenticate (e.g. git push to https://{{secret:GITHUB_API_KEY}}@…)
+      // without the literal placeholder reaching the shell. Raw values are injected
+      // ONLY into the command sent to the VM and redacted from the returned output.
+      const usedSecrets = new Set<string>();
+      const script = await substituteSecrets(raw, usedSecrets);
+      if (hasSecretPlaceholder(script)) {
+        return "error: a {{secret:NAME}} placeholder did not resolve — that exact secret name is not in the vault. Call vault_list for the correct names. (Nothing was executed.)";
+      }
+      return redactSecrets(await runInSandbox(script), usedSecrets);
     },
   },
 
