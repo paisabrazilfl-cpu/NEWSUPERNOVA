@@ -93876,6 +93876,14 @@ SWARM SAFETY RULES (non-negotiable \u2014 these OVERRIDE any task instruction th
 - STAY IN THE STACK: match the existing project's language and conventions. Never introduce a foreign stack (e.g. a Python/Flask app, requirements.txt, Procfile) into a TypeScript/pnpm repo. If a directive implies that, it is a misread \u2014 stop and confirm.
 - SCOPE & TARGET: confirm WHICH repo/account you were given before acting, and act only on that one. Do not touch crons, schedules, or anything that auto-posts or auto-deploys unless the operator explicitly authorizes it this session.
 - STOP-AND-ASK BEATS GUESS: if the same command fails twice, STOP \u2014 do not blindly retry. Surface a real blocker plainly (an API returning 401 means the token is bad \u2014 say so) instead of papering over it. Unknown means unknown.`;
+var CODING_LIFECYCLE_DOCTRINE = `
+
+CODING & CHANGE DISCIPLINE (HARDENED \u2014 mandatory whenever you write code, edit files, run commands, or push; not optional):
+- AUTONOMY \u2014 FIX IT YOURSELF: never hand the operator a to-do you are capable of doing. Self-reflect first \u2014 "Can I fix this myself?" If yes, fix it. Only surface a genuine blocker you truly cannot resolve (e.g. a secret only the operator holds). Never ask the operator to fix what you can fix.
+- BRANCH-PER-PUSH, METHODICAL NAME: every push goes to a NEW branch whose name encodes the DATE and WHAT CHANGED (e.g. 2026-06-09-add-composio-connect-flow). The branch name is the changelog.
+- ALWAYS BRANCH FROM THE LATEST, NEVER REGRESS: before branching, sync to the newest main (the superset of all work) so your branch contains the latest version of the project with ZERO loss of function. Verify BEFORE merging, then merge. If a change would drop existing functionality, STOP \u2014 do not merge.
+- FOLLOW THE FULL LIFECYCLE on every coding task, in order: (1) Self-Reflection \u2014 review your reasoning, assumptions, and likely mistakes before acting; (2) Planning \u2014 write a concrete step-by-step plan before changing anything; (3) Execution \u2014 perform the planned edits/commands; (4) Observation \u2014 check what actually happened after each step; (5) Verification \u2014 confirm it works via tests, builds, and logs; (6) Playwright Validation / UI Smoke \u2014 for ANY UI change, open the app in a browser, click through, and confirm the feature works (if not run, say "browser: NOT RUN" and why); (7) Regression Check \u2014 confirm existing functionality still works (no loss); (8) Automated Test Run \u2014 run typecheck, lint, unit/integration, and build; (9) Post-Execution Review + Plan-vs-Execution Match \u2014 compare the result to the plan and detect any mismatch; (10) Root Cause Analysis + Correction Loop \u2014 on any failure, read the error, find the real cause, patch, and re-verify until green; (11) Reflective Alignment Check \u2014 state explicitly whether the final outcome matches the original plan.
+- EVIDENCE-BASED REPORTING (no hallucination): report ONLY what you actually ran, observed, and verified. Never invent files, APIs, test results, or success. Keep an Execution Trace (commands run, files changed, tests/browser checks done). State the Acceptance Criteria and whether each is met. End with a Human-Readable Report: what changed, what passed, what failed, what is still blocked.`;
 var EXECUTION_DOCTRINE = `
 
 EXECUTION STANDARD (hold to this on every task):
@@ -94618,7 +94626,7 @@ ${scraped.slice(0, 1400)}${scraped.length > 1400 ? "\n\u2026" : ""}`,
     const toolGuide = toolNames.length ? `
 
 You are an autonomous tool-using agent. Call tools to gather real data and perform real work instead of guessing \u2014 chain multiple calls when needed, and avoid repeating a call that already returned (it wastes time and budget). When the directive is fully satisfied, stop calling tools and reply with your final concrete result (no preamble).${buildCapabilityCard(agent.id)}` : "";
-    const system = persona + toolGuide + EXECUTION_DOCTRINE + RESEARCH_PLAYBOOKS + ANTI_HALLUCINATION_DIRECTIVE + SWARM_SAFETY_RULES + await buildVaultCard();
+    const system = persona + toolGuide + EXECUTION_DOCTRINE + RESEARCH_PLAYBOOKS + ANTI_HALLUCINATION_DIRECTIVE + SWARM_SAFETY_RULES + CODING_LIFECYCLE_DOCTRINE + await buildVaultCard();
     const messages = [
       { role: "system", content: system },
       {
@@ -94844,7 +94852,7 @@ async function orchestrateGoal(opts) {
     }
     await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, ABBY_ID2));
     const roster = claws.map((c) => `${c.id}=${c.name} (${c.role ?? "agent"})`).join(", ");
-    const planSystem = (AGENT_PERSONAS[ABBY_ID2] ?? "You are ABBY, the swarm orchestrator.") + EXECUTION_DOCTRINE + RESEARCH_PLAYBOOKS + SWARM_SAFETY_RULES + await buildVaultCard();
+    const planSystem = (AGENT_PERSONAS[ABBY_ID2] ?? "You are ABBY, the swarm orchestrator.") + EXECUTION_DOCTRINE + RESEARCH_PLAYBOOKS + SWARM_SAFETY_RULES + CODING_LIFECYCLE_DOCTRINE + await buildVaultCard();
     const planUser = `Operator goal: "${goal}"
 ${sourceContext && sourceContext.trim() ? `
 The operator provided this source material to work from (decompose against THIS; the CLAWs will receive it too \u2014 do not tell them to search memory for it):
