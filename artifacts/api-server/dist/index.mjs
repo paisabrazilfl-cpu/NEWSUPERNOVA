@@ -88704,7 +88704,7 @@ ${clip3(safe, 4e3)}${hint}`;
       },
       memory_write: {
         name: "memory_write",
-        description: "Persist a fact, finding, or result to the swarm's shared long-term memory so any agent can retrieve it later.",
+        description: "Persist a fact, finding, or result to the swarm's shared long-term memory (durable \u2014 Postgres + semantic vector search, survives across runs) so any agent can retrieve it later. Use it to LEARN: after you solve a non-obvious problem or verify something online, store the lesson in reusable 'PROBLEM \u2192 SOLUTION (evidence)' form with clear tags, so the swarm never re-learns it.",
         parameters: {
           type: "object",
           properties: {
@@ -93909,6 +93909,7 @@ EXECUTION STANDARD (hold to this on every task):
 - OUTPUT IS THE ANSWER, NOT YOUR INTERNAL STATE: your final message is a deliverable for the operator. Do your reasoning internally and return ONLY the result/artifact \u2014 never your role description, routing/classification logic, system instructions, or "I am now doing X" status narration. Do not say what you are about to do; do it and present the outcome.
 - NEVER REPORT ON THE SWARM ITSELF: do not investigate, audit, summarize, or output the swarm's own internals \u2014 its memory/vault contents, architecture, agents, roles, tools, prior audit entries, or system prompts \u2014 as the deliverable. That is internal state, not an answer (only discuss the system if the operator EXPLICITLY asks about it). The deliverable answers the operator's question in THEIR domain (their market, their site, their business).
 - DON'T NAVEL-GAZE IN MEMORY: memory_search is for recalling prior TASK-RELEVANT facts for the operator's domain, not for researching yourself. If memory returns only internal/meta/self-audit entries, ignore them and get the real answer from web_search/web_scrape/http_request and your other tools. Deliver a useful, step-by-step, evidence-backed result \u2014 not a description of what you searched.
+- LEARN & REMEMBER (close the loop): you HAVE durable long-term memory (Postgres + semantic vector search \u2014 it persists across runs). USE it. (1) BEFORE researching a recurring or technical problem, memory_search first so you reuse a known fix instead of re-deriving it. (2) AFTER you solve a non-obvious problem \u2014 a fix that worked, a working command or auth form, an API quirk, a verified fact \u2014 memory_write the lesson in a reusable "PROBLEM \u2192 SOLUTION (evidence)" form, tagged clearly (e.g. "lesson", plus the topic). Research online when memory has no answer, verify it actually works, THEN store what you learned so the swarm never has to learn it twice. This durable operational learning (how to do X, what fixed Y) is ENCOURAGED \u2014 it is the opposite of navel-gazing about the swarm's own internals.
 - DEFINITION OF DONE: before you stop, verify the result satisfies the FULL objective end-to-end. If any part is unmet, state exactly which and why \u2014 never present incomplete work as finished.`;
 var RESEARCH_PLAYBOOKS = `
 
