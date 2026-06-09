@@ -3,6 +3,7 @@ import { renderWorldFrame, renderTraversalBlock } from "../lib/worldEngine";
 import { runWorldCycle, readAuraState, getWorldState, resetWorldState, worldEngineEnabled } from "../lib/world";
 import { requireOperator } from "../lib/auth";
 import { timingSafeStrEqual } from "../lib/auth";
+import { logger } from "../lib/logger";
 
 const router = Router();
 
@@ -58,6 +59,13 @@ router.post("/world/cycle", cycleAuth, async (req, res) => {
   try {
     const dry = req.query["dry"] !== "0"; // default DRY (safe). dry=0 to actually publish.
     const force = req.query["force"] === "1";
+    // Publishing 6 tiles can exceed the HTTP gateway timeout. async=1 fires the
+    // cycle in the background and returns immediately (poll /world/status).
+    if (req.query["async"] === "1") {
+      runWorldCycle({ dryRun: dry, force }).catch((e) => logger.error({ err: String(e) }, "world: async cycle failed"));
+      res.status(202).json({ accepted: true, async: true, note: "cycle running in background — poll /api/world/status" });
+      return;
+    }
     const result = await runWorldCycle({ dryRun: dry, force });
     res.json(result);
   } catch (err) { res.status(500).json({ error: String(err).slice(0, 300) }); }

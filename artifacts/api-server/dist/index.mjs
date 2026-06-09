@@ -28105,7 +28105,7 @@ var require_pino = __commonJS({
     function pinoBundlerAbsolutePath(p) {
       try {
         const path3 = __require("path");
-        const outputDir = "/home/runner/work/BOS-AURA/BOS-AURA/artifacts/api-server/dist";
+        const outputDir = "/home/user/BOS-AURA/artifacts/api-server/dist";
         return path3.resolve(outputDir, p.replace(/^\.\//, ""));
       } catch (e) {
         const f = new Function("p", "return new URL(p, import.meta.url).pathname");
@@ -95348,6 +95348,11 @@ router18.post("/world/cycle", cycleAuth, async (req, res) => {
   try {
     const dry = req.query["dry"] !== "0";
     const force = req.query["force"] === "1";
+    if (req.query["async"] === "1") {
+      runWorldCycle({ dryRun: dry, force }).catch((e) => logger.error({ err: String(e) }, "world: async cycle failed"));
+      res.status(202).json({ accepted: true, async: true, note: "cycle running in background \u2014 poll /api/world/status" });
+      return;
+    }
     const result = await runWorldCycle({ dryRun: dry, force });
     res.json(result);
   } catch (err) {
