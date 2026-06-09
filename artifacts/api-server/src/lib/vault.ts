@@ -60,6 +60,19 @@ export async function getSecretValue(name: string): Promise<string | null> {
   }
 }
 
+/**
+ * List the NAMES (and optional descriptions) of every stored secret — never the
+ * values. Used to inject the operator's Settings → Stored Secrets inventory into
+ * the agent prompt so the swarm knows which credentials exist and can reach them
+ * via {{secret:NAME}}, without ever seeing (or being able to read) a raw value.
+ */
+export async function listSecretNames(): Promise<{ name: string; description: string | null }[]> {
+  return db
+    .select({ name: vaultSecretsTable.name, description: vaultSecretsTable.description })
+    .from(vaultSecretsTable)
+    .orderBy(vaultSecretsTable.name);
+}
+
 const SECRET_PLACEHOLDER = /\{\{\s*secret:([A-Za-z0-9_\-]+)\s*\}\}/g;
 
 /**

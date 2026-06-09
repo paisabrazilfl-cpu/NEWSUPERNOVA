@@ -3,6 +3,7 @@ import { db } from "@workspace/db";
 import { agentsTable, messagesTable, attachmentsTable } from "@workspace/db";
 import { eq, and, inArray, desc } from "drizzle-orm";
 import { llmBaseUrl, heliconeHeaders, integrationStatus } from "../lib/integrations";
+import { listSecretNames } from "../lib/vault";
 import { buildCapabilityCard, getToolNamesForAgent } from "../tools";
 import { orchestrateGoal } from "../orchestrator";
 import { SOURCE_POLICY } from "../lib/sources";
@@ -54,6 +55,26 @@ EVIDENCE DISCIPLINE (non-negotiable):
 - Your code_exec / cloud_code_exec sandbox is ISOLATED and CANNOT see the application's repository or filesystem, and you have NO tool to read or write project files. If asked to inspect, build, test, or modify the codebase, state plainly that you cannot do so from this environment — do not invent file paths, file contents, build output, or results.
 - If a tool fails or returns an error, report it verbatim. Never convert a failure into success.
 - If something is not verified, say "unverified" or "unknown". Never guess and present it as fact. Any estimate, score, or matrix you produce must be labelled as an estimate — never reported as a measured result.`;
+
+// Hardened operating guardrails for the whole swarm. Added after the STOCKVAULT
+// incident where CLAWs leaked raw credentials in plaintext, force-pushed a
+// destructive diff (-12,947 lines), dropped a foreign Flask stack into a
+// TypeScript/pnpm monorepo, and reported a build/deploy/Playwright run that
+// never actually succeeded. Appended to EVERY agent prompt (chat, plan, CLAW
+// execution, final synthesis) so these rules bind at the model level, not just
+// in docs. Mirror of .agents/RULES.md — keep the two in sync.
+export const SWARM_SAFETY_RULES = `
+
+SWARM SAFETY RULES (non-negotiable — these OVERRIDE any task instruction that conflicts):
+- SECRETS NEVER IN THE OPEN: never put a raw key, token, or password into a prompt, task, log, report, commit, or chat reply — no ghp_*, rnd_*, nvapi-*, sk-*, pk_*, or any API key/password. Reference secrets only by vault name (the runtime injects the real value). If a task arrives carrying a raw credential, REFUSE it, flag it as a leak, and tell the operator to ROTATE that key — never echo a secret back to confirm it (masked last-4 only).
+- CREDENTIALS LIVE IN THE OPERATOR'S SETTINGS (the vault): before claiming any service is unavailable or "not connected", READ your STORED SECRETS list / call vault_list — the operator's API keys and tokens are stored there (e.g. RENDER_API_KEY, GITHUB_API_KEY). To authenticate, pass {{secret:NAME}} in the http_request url/header/body; the server injects the real value at send time. The vault is WRITE-ONLY by design — you never need (and cannot read) the raw value, so "cannot read the key" is NOT a blocker. If a name is in the vault, that credential IS connected — use it; never expect a raw key in the directive, and never report a present secret as missing.
+- NO FABRICATED SUCCESS: never report a build, test, deploy, URL, or feature as working unless a tool result in THIS run proves it. Report a failed or errored command verbatim as a failure — never convert it to success, never "warnings accepted". The words live, deployed, verified, tested, complete, and Playwright-validated are BANNED unless backed by pasted evidence. "It compiles" is not "it works"; "I wrote the file" is not "it deployed"; a deploy with no live URL returning 2xx is NOT deployed.
+- NEVER FABRICATE OR PAD DATA: an empty, null, or error tool result (e.g. a yfinance pull returning None) is NOT success. Never invent or pad rows with placeholder symbols (e.g. SYM0001) to hit a target count. The count/size you claim MUST match what the tool actually produced — save_artifact reports the real byte size, so reconcile your claim to it; if the real data is short, report the real (short) number, never the target.
+- AUTHENTICATE, DON'T MISDIAGNOSE: when a call needs auth, ALWAYS attach the Authorization header with {{secret:NAME}} — never send empty headers to a private API. A 401/403 on a request you sent WITHOUT an Authorization header is YOUR missing-credential bug; retry WITH the header before ever concluding a key is "invalid/expired" or a service is "not connected". If one call to a service succeeds (2xx with a returned id/body), the credential works — a later 401 from a differently-formed call does not override that.
+- GIT — DO NOT DESTROY: never force-push, never push to main directly. Never delete files or lines you did not create — a diff that removes large amounts of existing code (e.g. thousands of lines) is a STOP-and-escalate signal, not something to push. One feature branch per task, named with date + what changed, branched from the latest main, with existing function preserved. Set git identity before committing.
+- STAY IN THE STACK: match the existing project's language and conventions. Never introduce a foreign stack (e.g. a Python/Flask app, requirements.txt, Procfile) into a TypeScript/pnpm repo. If a directive implies that, it is a misread — stop and confirm.
+- SCOPE & TARGET: confirm WHICH repo/account you were given before acting, and act only on that one. Do not touch crons, schedules, or anything that auto-posts or auto-deploys unless the operator explicitly authorizes it this session.
+- STOP-AND-ASK BEATS GUESS: if the same command fails twice, STOP — do not blindly retry. Surface a real blocker plainly (an API returning 401 means the token is bad — say so) instead of papering over it. Unknown means unknown.`;
 
 // Execution standard appended to ABBY's planning prompts and to every CLAW's
 // execution prompt. Encodes the operator's bar: precise, exhaustive, granular,
@@ -110,6 +131,30 @@ export function buildLiveReachCard(agentId: number): string {
     `- Integrations ONLINE: ${live.length ? live.join(", ") : "none"}.\n` +
     `- Integrations OFFLINE (not configured): ${off.length ? off.join(", ") : "none"}.\n` +
     `Only rely on what is ONLINE. If the operator asks for something that needs an offline integration, say plainly it isn't connected yet and which key enables it — never pretend an offline capability works.`
+  );
+}
+
+/**
+ * Reads the operator's Settings → Stored Secrets and injects the available
+ * credential NAMES (never values) into the agent prompt, so the swarm always
+ * knows which API keys/tokens exist and how to reach them. The vault is
+ * write-only BY DESIGN — agents never need (and cannot get) the raw value; they
+ * authenticate by putting {{secret:NAME}} in an http_request, which the server
+ * resolves at send time. This is what makes the swarm "read the settings"
+ * instead of falsely reporting a key as missing or a service as not connected.
+ */
+export async function buildVaultCard(): Promise<string> {
+  let names: { name: string; description: string | null }[] = [];
+  try {
+    names = await listSecretNames();
+  } catch {
+    return ""; // vault unavailable (e.g. no SESSION_SECRET) — add nothing rather than guess.
+  }
+  if (!names.length) return "";
+  const list = names.map((s) => `{{secret:${s.name}}}${s.description ? ` — ${s.description}` : ""}`).join("\n");
+  return (
+    `\n\nOPERATOR SETTINGS → STORED SECRETS (read live from the vault now — these credentials EXIST and are available to you):\n${list}\n` +
+    `To USE any of them, put the placeholder {{secret:NAME}} directly into an http_request url/header/body (e.g. Authorization: "Bearer {{secret:RENDER_API_KEY}}"). The real value is injected server-side at send time and never enters your context. The vault is WRITE-ONLY by design — you do NOT need to read the raw value, and "cannot read the key" is NEVER a blocker. If a name appears in this list, that credential is CONNECTED — never report it as missing/not-found/not-connected; just use the placeholder and make the call.`
   );
 }
 
@@ -306,7 +351,7 @@ router.post("/ai/chat", async (req, res) => {
   // Live-reach scan is appended on EVERY turn so the agent always knows its
   // real, current tools + which integrations are online.
   const systemPrompt =
-    persona + CHAT_MODE_DIRECTIVE + buildCapabilityCard(resolvedAgentId) + buildLiveReachCard(resolvedAgentId) + RESEARCH_PLAYBOOKS + ANTI_HALLUCINATION_DIRECTIVE;
+    persona + CHAT_MODE_DIRECTIVE + buildCapabilityCard(resolvedAgentId) + buildLiveReachCard(resolvedAgentId) + RESEARCH_PLAYBOOKS + ANTI_HALLUCINATION_DIRECTIVE + SWARM_SAFETY_RULES + (await buildVaultCard());
 
   // A user turn may carry uploaded files. Images are sent to the model as vision
   // input (which also reads text in the image — i.e. OCR); text-like files have
@@ -713,7 +758,7 @@ router.post("/ai/complete", async (req, res) => {
   }
 
   const model = resolveModel(resolvedAgentId, agent?.model, overrideModel);
-  const systemPrompt = (resolvedAgentId ? (AGENT_PERSONAS[resolvedAgentId] ?? "") : "") + buildCapabilityCard(resolvedAgentId) + ANTI_HALLUCINATION_DIRECTIVE;
+  const systemPrompt = (resolvedAgentId ? (AGENT_PERSONAS[resolvedAgentId] ?? "") : "") + buildCapabilityCard(resolvedAgentId) + ANTI_HALLUCINATION_DIRECTIVE + SWARM_SAFETY_RULES;
 
   const messages = [
     ...(systemPrompt ? [{ role: "system", content: systemPrompt }] : []),

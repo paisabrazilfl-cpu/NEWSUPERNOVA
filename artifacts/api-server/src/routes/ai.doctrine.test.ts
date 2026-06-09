@@ -15,6 +15,7 @@ import {
   EXECUTION_DOCTRINE,
   ANTI_HALLUCINATION_DIRECTIVE,
   RESEARCH_PLAYBOOKS,
+  SWARM_SAFETY_RULES,
   requestsDownloadableArtifact,
   requestsImage,
   requestsConnectedAccountAction,
@@ -240,5 +241,50 @@ describe("EXECUTION_DOCTRINE — no internal-state / navel-gazing", () => {
 describe("ANTI_HALLUCINATION_DIRECTIVE — still intact alongside the doctrine", () => {
   it("keeps the evidence-discipline guardrail", () => {
     expect(ANTI_HALLUCINATION_DIRECTIVE).toContain("EVIDENCE DISCIPLINE");
+  });
+});
+
+describe("SWARM_SAFETY_RULES — hardened guardrails from the STOCKVAULT incident", () => {
+  it("bans raw secrets in the open and demands rotation on leak", () => {
+    expect(SWARM_SAFETY_RULES).toContain("SECRETS NEVER IN THE OPEN");
+    expect(SWARM_SAFETY_RULES).toContain("ghp_");
+    expect(SWARM_SAFETY_RULES).toContain("rnd_");
+    expect(SWARM_SAFETY_RULES.toUpperCase()).toContain("ROTATE");
+  });
+
+  it("makes the swarm read the vault and use {{secret:NAME}} instead of reporting keys missing", () => {
+    expect(SWARM_SAFETY_RULES).toContain("CREDENTIALS LIVE IN THE OPERATOR'S SETTINGS");
+    expect(SWARM_SAFETY_RULES).toContain("{{secret:NAME}}");
+    expect(SWARM_SAFETY_RULES.toUpperCase()).toContain("WRITE-ONLY");
+    expect(SWARM_SAFETY_RULES.toLowerCase()).toContain("never report a present secret as missing");
+  });
+
+  it("forbids fabricated build/deploy/test success", () => {
+    expect(SWARM_SAFETY_RULES).toContain("NO FABRICATED SUCCESS");
+    expect(SWARM_SAFETY_RULES).toContain("NOT deployed");
+  });
+
+  it("forbids fabricating/padding data and reporting empty results as success", () => {
+    expect(SWARM_SAFETY_RULES).toContain("NEVER FABRICATE OR PAD DATA");
+    expect(SWARM_SAFETY_RULES.toLowerCase()).toContain("placeholder symbols");
+  });
+
+  it("requires attaching auth instead of misdiagnosing a self-inflicted 401", () => {
+    expect(SWARM_SAFETY_RULES).toContain("AUTHENTICATE, DON'T MISDIAGNOSE");
+    expect(SWARM_SAFETY_RULES).toContain("401/403");
+  });
+
+  it("forbids destructive git (no force-push, no main, no mass-deletion)", () => {
+    expect(SWARM_SAFETY_RULES.toLowerCase()).toContain("never force-push");
+    expect(SWARM_SAFETY_RULES.toLowerCase()).toContain("never push to main");
+  });
+
+  it("forbids introducing a foreign stack into the TS monorepo", () => {
+    expect(SWARM_SAFETY_RULES).toContain("STAY IN THE STACK");
+    expect(SWARM_SAFETY_RULES.toLowerCase()).toContain("flask");
+  });
+
+  it("requires stop-and-ask over blind retry / guessing", () => {
+    expect(SWARM_SAFETY_RULES).toContain("STOP-AND-ASK BEATS GUESS");
   });
 });

@@ -25,7 +25,7 @@ import { logger } from "./lib/logger";
 import { db } from "@workspace/db";
 import { agentMemoryTable, vaultSecretsTable, messagesTable, cronJobsTable, attachmentsTable } from "@workspace/db";
 import { desc, ilike, or, isNotNull, eq } from "drizzle-orm";
-import { substituteSecrets, redactSecrets } from "./lib/vault";
+import { substituteSecrets, redactSecrets, hasSecretPlaceholder } from "./lib/vault";
 import {
   PLATFORMS,
   getPlatform,
@@ -677,8 +677,8 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
     name: "http_request",
     description:
       "Make a real outbound HTTP request to any API endpoint. Supports GET/POST/PUT/PATCH/DELETE with optional headers and a JSON/text body. Returns the status and response body (truncated). " +
-      "For rate-limited or private APIs, authenticate with a vault secret placeholder in the headers rather than a raw key — e.g. GitHub: headers { \"Authorization\": \"Bearer {{secret:GITHUB_TOKEN}}\" }. " +
-      "Always authenticate GitHub (api.github.com) calls this way: it raises the limit from 60 to 5,000 requests/hour, and the placeholder is resolved to the real token only at send time, so the secret never enters your context. Use vault_list to see which secret names exist.",
+      "To authenticate ANY private/authenticated API (Render, GitHub, OpenAI, etc.), put a vault secret placeholder in the header rather than a raw key — e.g. headers { \"Authorization\": \"Bearer {{secret:RENDER_API_KEY}}\" } or for GitHub { \"Authorization\": \"Bearer {{secret:GITHUB_API_KEY}}\" }. " +
+      "The placeholder is resolved to the real value only at send time, so the secret never enters your context — the vault is write-only BY DESIGN and you never need the raw key. Use vault_list (or the STORED SECRETS list in your prompt) to see which names exist; if a name is there the credential is available — never report it missing, just use {{secret:NAME}} and make the call. Authenticating GitHub this way also raises its limit from 60 to 5,000 requests/hour.",
     parameters: {
       type: "object",
       properties: {
@@ -714,16 +714,25 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
           ? await substituteSecrets(String(args["body"]), usedSecrets)
           : undefined;
 
-      // Auto-authenticate GitHub calls. Agents repeatedly hit api.github.com
-      // unauthenticated and burn the 60-request/hour limit (a costly 403 loop).
-      // When a GitHub token is available (Render env or the in-app vault via the
-      // boot loader) and the agent didn't already set Authorization, attach it —
-      // lifting the limit to 5,000/hour. The token never enters the model context
-      // and is redacted from any echoed response.
+      // If a {{secret:NAME}} placeholder did NOT resolve, the exact name isn't in
+      // the vault. Fail loudly here instead of firing a request that sends the
+      // literal "{{secret:...}}" string as a credential (a guaranteed 401) and
+      // then mis-reporting the key as invalid/missing.
+      if (hasSecretPlaceholder(url) || Object.values(headers).some(hasSecretPlaceholder) || (body != null && hasSecretPlaceholder(body))) {
+        return "error: a {{secret:NAME}} placeholder did not resolve — that exact secret name is not in the vault. Call vault_list to get the correct names, then retry. (No request was sent.)";
+      }
+
+      // Auto-authenticate the APIs the swarm calls constantly. Agents repeatedly
+      // send these with NO Authorization header (e.g. headers={}) and then read
+      // the resulting 401 as "the key is invalid / the service isn't connected" —
+      // when in fact they simply never attached the credential. When the vault has
+      // the token (loaded into env at boot) and the agent didn't set Authorization,
+      // attach it. The token never enters the model context and is redacted from
+      // any echoed response.
       try {
         const host = new URL(url).hostname.toLowerCase();
+        const lc = Object.keys(headers).map((k) => k.toLowerCase());
         if (host === "api.github.com" || host.endsWith(".githubusercontent.com")) {
-          const lc = Object.keys(headers).map((k) => k.toLowerCase());
           const ghToken = process.env["GITHUB_API_KEY"] || process.env["GITHUB_TOKEN"] || process.env["SANDBOX_GITHUB_TOKEN"];
           if (ghToken && !lc.includes("authorization")) {
             headers["Authorization"] = `Bearer ${ghToken}`;
@@ -731,8 +740,16 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
           }
           if (!lc.includes("user-agent")) headers["User-Agent"] = "OpenClaw-Omega";
           if (host === "api.github.com" && !lc.includes("accept")) headers["Accept"] = "application/vnd.github+json";
+        } else if (host === "api.render.com") {
+          const rnToken = process.env["RENDER_API_KEY"];
+          if (rnToken && !lc.includes("authorization")) {
+            headers["Authorization"] = `Bearer ${rnToken}`;
+            usedSecrets.add(rnToken);
+          }
+          if (!lc.includes("accept")) headers["Accept"] = "application/json";
         }
       } catch { /* url already validated above; ignore */ }
+      const authSent = Object.keys(headers).some((k) => k.toLowerCase() === "authorization");
 
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), 15000);
@@ -759,7 +776,14 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
         // Strip any injected secret values that the endpoint may have echoed
         // back before this result is stored or fed to the model.
         const safe = redactSecrets(text, usedSecrets);
-        return `HTTP ${r.status} ${r.statusText}\n${clip(safe, 4000)}`;
+        // A 401/403 on a request we sent with NO Authorization header is a
+        // missing-credential mistake, not proof the key is bad. Tell the agent so
+        // it retries with the placeholder instead of declaring the service dead.
+        const hint =
+          (r.status === 401 || r.status === 403) && !authSent
+            ? `\n\n[hint: this request was sent with NO Authorization header — that is why it was rejected. This is NOT evidence the credential is missing or invalid. Retry with headers {"Authorization":"Bearer {{secret:NAME}}"} using the correct vault name (see vault_list / your STORED SECRETS list).]`
+            : "";
+        return `HTTP ${r.status} ${r.statusText}\n${clip(safe, 4000)}${hint}`;
       } catch (e) {
         return redactSecrets(`error: request failed: ${String(e).slice(0, 200)}`, usedSecrets);
       } finally {

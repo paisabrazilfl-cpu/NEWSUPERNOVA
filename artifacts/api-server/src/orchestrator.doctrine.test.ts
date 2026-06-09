@@ -32,4 +32,10 @@ describe("SYNTHESIS_DOCTRINE — CLAWs report to ABBY, ABBY reports in full (eve
     expect(SYNTHESIS_DOCTRINE).toContain("UNVERIFIED");
     expect(SYNTHESIS_DOCTRINE.toLowerCase()).toContain("blocked");
   });
+
+  it("resolves conflicting CLAW results by concrete evidence instead of echoing both", () => {
+    expect(SYNTHESIS_DOCTRINE).toContain("RESOLVE CONFLICTS BY EVIDENCE");
+    expect(SYNTHESIS_DOCTRINE).toContain("401");
+    expect(SYNTHESIS_DOCTRINE).toContain("ONE evidence-based DIRECT ANSWER");
+  });
 });
