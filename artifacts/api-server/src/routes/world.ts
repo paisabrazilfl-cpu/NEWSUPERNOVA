@@ -1,6 +1,6 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { renderWorldFrame, renderTraversalBlock } from "../lib/worldEngine";
-import { runWorldCycle, runStoryCycle, readAuraState, getWorldState, resetWorldState, worldDiag, worldEngineEnabled } from "../lib/world";
+import { runWorldCycle, runStoryCycle, runIntroPost, readAuraState, getWorldState, resetWorldState, worldDiag, worldEngineEnabled } from "../lib/world";
 import { requireOperator } from "../lib/auth";
 import { timingSafeStrEqual } from "../lib/auth";
 import { logger } from "../lib/logger";
@@ -68,6 +68,19 @@ router.post("/world/cycle", cycleAuth, async (req, res) => {
     }
     const result = await runWorldCycle({ dryRun: dry, force });
     res.json(result);
+  } catch (err) { res.status(500).json({ error: String(err).slice(0, 300) }); }
+});
+
+// ── post the one-time INTRO card (single feed image) — dry by default ──
+router.post("/world/intro", cycleAuth, async (req, res) => {
+  try {
+    const dry = req.query["dry"] !== "0";
+    if (req.query["async"] === "1") {
+      runIntroPost({ dryRun: dry }).catch((e) => logger.error({ err: String(e) }, "world: async intro failed"));
+      res.status(202).json({ accepted: true, async: true, note: "intro running in background — poll /api/world/status" });
+      return;
+    }
+    res.json(await runIntroPost({ dryRun: dry }));
   } catch (err) { res.status(500).json({ error: String(err).slice(0, 300) }); }
 });
 

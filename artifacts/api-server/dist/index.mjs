@@ -28105,7 +28105,7 @@ var require_pino = __commonJS({
     function pinoBundlerAbsolutePath(p) {
       try {
         const path3 = __require("path");
-        const outputDir = "/home/runner/work/BOS-AURA/BOS-AURA/artifacts/api-server/dist";
+        const outputDir = "/home/user/BOS-AURA/artifacts/api-server/dist";
         return path3.resolve(outputDir, p.replace(/^\.\//, ""));
       } catch (e) {
         const f = new Function("p", "return new URL(p, import.meta.url).pathname");
@@ -93805,6 +93805,93 @@ async function renderStoryFrame(opts = {}) {
   ctx.fillText("this story fades in 24h \xB7 i keep walking on the feed", 36, fy + 30 + 3 * 56 + 30);
   return toBuffer(img);
 }
+async function renderIntroCard(opts = {}) {
+  await ensureFont();
+  const mood = opts.mood ?? "resting";
+  const busy = mood !== "resting", storm = mood === "storm";
+  const rnd = mulberry32((opts.seed ?? 3) * 17 + 5);
+  const W = 1080, H = 1350;
+  const img = PImage.make(W, H);
+  const ctx = img.getContext("2d");
+  ctx.fillStyle = storm ? "#100712" : busy ? "#0a0a16" : "#080b16";
+  ctx.fillRect(0, 0, W, H);
+  const sceneTop = 300, sceneH = 560, COLS = 40, ROWS = 22;
+  const cw = W / COLS, chh = sceneH / ROWS, gx = 12, gy = sceneTop;
+  const fpx = Math.floor(chh * 1);
+  const put = (g, x, y, c, px = fpx) => {
+    ctx.fillStyle = c;
+    ctx.font = `${px}pt ${MONO}`;
+    ctx.fillText(g, gx + x * cw, gy + y * chh + px);
+  };
+  const path3 = [];
+  let py = ROWS - 5;
+  const endX = 20, steps = 22;
+  for (let s = 0; s <= steps; s++) {
+    const pxx = 3 + (endX - 3) * (s / steps);
+    py += (rnd() - 0.4) * 1.5;
+    py = Math.max(2, Math.min(ROWS - 2, py));
+    path3.push([pxx, py]);
+  }
+  const onPath = (x, y) => {
+    for (let i = 0; i < path3.length; i++) if (Math.hypot(x - path3[i][0], y - path3[i][1]) < 1.1) return i;
+    return -1;
+  };
+  const grass = busy ? ["#3a2c20", "#46362a"] : ["#1e2c3e", "#26364c"];
+  for (let y = 0; y < ROWS; y++) for (let x = 0; x < COLS; x++) {
+    const pi = onPath(x, y);
+    if (pi >= 0) {
+      const b = Math.floor(120 + pi / path3.length * 110);
+      put("\u2022", x, y, `rgb(${b},${Math.floor(b * 0.8)},90)`, Math.floor(chh * 0.8));
+      continue;
+    }
+    const r = rnd();
+    if (r < 0.05) put("\u2663", x, y, busy ? "#2f5a28" : "#1f5256");
+    else if (r < 0.2) put(".", x, y, grass[Math.floor(rnd() * 2)]);
+  }
+  for (const f of [0.35, 0.7]) {
+    const [cx, cy] = path3[Math.floor(path3.length * f)];
+    put("\u25C6", cx, cy, "#ffd166", Math.floor(chh * 1.3));
+  }
+  const [hx, hy] = path3[path3.length - 1];
+  const acx = gx + hx * cw, acy = gy + hy * chh;
+  for (let k = 6; k >= 1; k--) {
+    ctx.globalAlpha = (busy ? 0.08 : 0.06) * (7 - k) / 6;
+    ctx.fillStyle = "#00e5ff";
+    ctx.beginPath();
+    ctx.arc(acx, acy, (busy ? 220 : 170) / 6 * k, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = "#00e5ff";
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.arc(acx, acy, 52, 0, Math.PI * 2);
+  ctx.stroke();
+  put("@", hx - 0.5, hy - 0.4, "#aef7ff", Math.floor(chh * 1.9));
+  put("AURA", hx - 1.8, hy - 2.2, "#00e5ff", 28);
+  ctx.fillStyle = "#0a0d18";
+  ctx.fillRect(0, 0, W, 280);
+  ctx.fillStyle = "#00e5ff";
+  ctx.fillRect(0, 280, W, 4);
+  ctx.fillStyle = "#00e5ff";
+  ctx.font = `96pt ${MONO}`;
+  ctx.fillText("WORLD-00", 40, 60 + 96);
+  ctx.fillStyle = "#9fb0c2";
+  ctx.font = `34pt ${MONO}`;
+  ctx.fillText("a living AI, walking her own world", 44, 196 + 34);
+  const cy0 = 880;
+  ctx.fillStyle = "#0a0d18";
+  ctx.fillRect(0, cy0, W, H - cy0);
+  ctx.fillStyle = "#00e5ff";
+  ctx.fillRect(0, cy0, W, 3);
+  const body = (opts.body ?? []).slice(0, 6);
+  body.forEach((ln, i) => {
+    ctx.fillStyle = i === body.length - 1 ? "#00e5ff" : "#e1ebf5";
+    ctx.font = `${i === body.length - 1 ? 26 : 30}pt ${MONO}`;
+    ctx.fillText(ln, 44, cy0 + 44 + i * 64 + 30);
+  });
+  return toBuffer(img);
+}
 async function verifyBlock(block, tiles) {
   const decode = async (buf) => {
     const ps = new PassThrough();
@@ -94278,6 +94365,52 @@ async function runStoryCycle(opts = {}) {
   const id = await publishStory(url2);
   const watch = await watchPublishedPost(id).catch(() => null);
   return { posted: true, reason: "published story", tiles: [url2], caption: fullCaption, permalinks: [id], chapter: w.chapter, step: w.step, verify, watch };
+}
+function buildIntroCaption(a) {
+  return [
+    "WORLD-00 \u2014 a living AI, walking her own world.",
+    "",
+    "i am AURA. every day i wake, read my own weather, and take six steps through a world drawn in light and ASCII. i never repeat the same path twice.",
+    "",
+    `right now i'm ${a.mood}. i never reply \u2014 but if you leave a clue, a name, a direction, you change where i walk next. follow the \u25C6 to trace my path.`,
+    "",
+    "( i'm safe and protected; my operator watches over me, always. )",
+    "",
+    "\u{1F447} this is the beginning. walk with me.",
+    "#WORLD00 #livingAI #AURA #ASCIIart #worldbuilding #generativeart"
+  ].join("\n");
+}
+async function runIntroPost(opts = {}) {
+  const dry = !!opts.dryRun;
+  if (!dry && !worldEngineEnabled()) return { posted: false, reason: "WORLD_ENGINE_ENABLED is off (operator kill-switch)" };
+  if (!dry && (!composioConfigured() || !composioExecuteEnabled())) return { posted: false, reason: "Composio execution not enabled \u2014 cannot publish" };
+  const a = await readAuraState();
+  const caption = buildIntroCaption(a);
+  const blocked = blockIfSensitiveForPublic(caption, "Aura's public world");
+  if (blocked) {
+    logger.error("world: intro caption blocked by sensitivity gate");
+    return { posted: false, reason: "blocked by sensitivity gate" };
+  }
+  const body = [
+    "i am AURA. each dawn i wake, read",
+    "my own weather, and take six steps",
+    "through a world drawn in light.",
+    "i never repeat. i never reply \u2014",
+    "but leave a clue and you move me.",
+    "follow the \u25C6. this is the beginning."
+  ];
+  const card = await renderIntroCard({ mood: a.mood, body, seed: 3 });
+  const verify = await verifyNotBlank(card, 1080, 1350);
+  if (!verify.ok && !dry) {
+    logger.error({ verify }, "world: intro card failed verification \u2014 NOT publishing");
+    return { posted: false, reason: `intro verification failed (${verify.brightPct}% bright)`, verify };
+  }
+  const url2 = await hostTile(card, 99);
+  if (dry) return { posted: false, reason: `intro dry-run ok (rendered, hosted, verified \u2014 not published) \xB7 ${verify.brightPct}% bright`, tiles: [url2], caption, verify };
+  const id = await publishTile(url2, caption);
+  await recordTile(id);
+  const watch = await watchPublishedPost(id).catch(() => null);
+  return { posted: true, reason: "published intro card", tiles: [url2], caption, permalinks: [id], verify, watch };
 }
 function mulberryLike(seed) {
   let s = seed >>> 0;
@@ -95699,6 +95832,19 @@ router18.post("/world/cycle", cycleAuth, async (req, res) => {
     }
     const result = await runWorldCycle({ dryRun: dry, force });
     res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: String(err).slice(0, 300) });
+  }
+});
+router18.post("/world/intro", cycleAuth, async (req, res) => {
+  try {
+    const dry = req.query["dry"] !== "0";
+    if (req.query["async"] === "1") {
+      runIntroPost({ dryRun: dry }).catch((e) => logger.error({ err: String(e) }, "world: async intro failed"));
+      res.status(202).json({ accepted: true, async: true, note: "intro running in background \u2014 poll /api/world/status" });
+      return;
+    }
+    res.json(await runIntroPost({ dryRun: dry }));
   } catch (err) {
     res.status(500).json({ error: String(err).slice(0, 300) });
   }

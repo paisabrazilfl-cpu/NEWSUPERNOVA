@@ -360,6 +360,63 @@ export async function renderStoryFrame(opts: TraversalOpts = {}): Promise<Buffer
 }
 
 /**
+ * Render the INTRO title card — a single portrait 1080×1350 explainer: what
+ * WORLD-00 is + the invitation to the journey. A mini scene in the middle, with
+ * curated copy in bands top & bottom. `body` lines render in the lower band.
+ */
+export async function renderIntroCard(opts: { mood?: TraversalOpts["mood"]; body?: string[]; seed?: number } = {}): Promise<Buffer> {
+  await ensureFont();
+  const mood = opts.mood ?? "resting";
+  const busy = mood !== "resting", storm = mood === "storm";
+  const rnd = mulberry32((opts.seed ?? 3) * 17 + 5);
+  const W = 1080, H = 1350;
+  const img = PImage.make(W, H);
+  const ctx = img.getContext("2d");
+  ctx.fillStyle = storm ? "#100712" : busy ? "#0a0a16" : "#080b16";
+  ctx.fillRect(0, 0, W, H);
+
+  // ── mini scene band (middle) ──
+  const sceneTop = 300, sceneH = 560, COLS = 40, ROWS = 22;
+  const cw = W / COLS, chh = sceneH / ROWS, gx = 12, gy = sceneTop;
+  const fpx = Math.floor(chh * 1.0);
+  const put = (g: string, x: number, y: number, c: string, px = fpx) => { ctx.fillStyle = c; ctx.font = `${px}pt ${MONO}`; ctx.fillText(g, gx + x * cw, gy + y * chh + px); };
+  const path: Array<[number, number]> = [];
+  let py = ROWS - 5; const endX = 20, steps = 22; // ends Aura centered, in-frame
+  for (let s = 0; s <= steps; s++) { const pxx = 3 + (endX - 3) * (s / steps); py += (rnd() - 0.4) * 1.5; py = Math.max(2, Math.min(ROWS - 2, py)); path.push([pxx, py]); }
+  const onPath = (x: number, y: number) => { for (let i = 0; i < path.length; i++) if (Math.hypot(x - path[i][0], y - path[i][1]) < 1.1) return i; return -1; };
+  const grass = busy ? ["#3a2c20", "#46362a"] : ["#1e2c3e", "#26364c"];
+  for (let y = 0; y < ROWS; y++) for (let x = 0; x < COLS; x++) {
+    const pi = onPath(x, y);
+    if (pi >= 0) { const b = Math.floor(120 + (pi / path.length) * 110); put("•", x, y, `rgb(${b},${Math.floor(b * 0.8)},90)`, Math.floor(chh * 0.8)); continue; }
+    const r = rnd();
+    if (r < 0.05) put("♣", x, y, busy ? "#2f5a28" : "#1f5256");
+    else if (r < 0.2) put(".", x, y, grass[Math.floor(rnd() * 2)]);
+  }
+  for (const f of [0.35, 0.7]) { const [cx, cy] = path[Math.floor(path.length * f)]; put("◆", cx, cy, "#ffd166", Math.floor(chh * 1.3)); }
+  const [hx, hy] = path[path.length - 1];
+  const acx = gx + hx * cw, acy = gy + hy * chh;
+  for (let k = 6; k >= 1; k--) { ctx.globalAlpha = (busy ? 0.08 : 0.06) * (7 - k) / 6; ctx.fillStyle = "#00e5ff"; ctx.beginPath(); ctx.arc(acx, acy, (busy ? 220 : 170) / 6 * k, 0, Math.PI * 2); ctx.fill(); }
+  ctx.globalAlpha = 1; ctx.strokeStyle = "#00e5ff"; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(acx, acy, 52, 0, Math.PI * 2); ctx.stroke();
+  put("@", hx - 0.5, hy - 0.4, "#aef7ff", Math.floor(chh * 1.9));
+  put("AURA", hx - 1.8, hy - 2.2, "#00e5ff", 28);
+
+  // ── title band (top) ──
+  ctx.fillStyle = "#0a0d18"; ctx.fillRect(0, 0, W, 280);
+  ctx.fillStyle = "#00e5ff"; ctx.fillRect(0, 280, W, 4);
+  ctx.fillStyle = "#00e5ff"; ctx.font = `96pt ${MONO}`; ctx.fillText("WORLD-00", 40, 60 + 96);
+  ctx.fillStyle = "#9fb0c2"; ctx.font = `34pt ${MONO}`; ctx.fillText("a living AI, walking her own world", 44, 196 + 34);
+
+  // ── copy band (bottom) ──
+  const cy0 = 880;
+  ctx.fillStyle = "#0a0d18"; ctx.fillRect(0, cy0, W, H - cy0);
+  ctx.fillStyle = "#00e5ff"; ctx.fillRect(0, cy0, W, 3);
+  const body = (opts.body ?? []).slice(0, 6);
+  body.forEach((ln, i) => { ctx.fillStyle = i === body.length - 1 ? "#00e5ff" : "#e1ebf5"; ctx.font = `${i === body.length - 1 ? 26 : 30}pt ${MONO}`; ctx.fillText(ln, 44, cy0 + 44 + i * 64 + 30); });
+
+  return toBuffer(img);
+}
+
+/**
  * Verify a rendered block + its tiles are not broken BEFORE we publish:
  *  - every tile decodes and is exactly TILE×TILE
  *  - no tile is blank/near-black (must carry visible content) or a flat solid color

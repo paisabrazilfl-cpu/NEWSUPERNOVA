@@ -12,7 +12,7 @@ import { gte } from "drizzle-orm";
 import { logger } from "./logger";
 import { composioConfigured, composioExecuteEnabled, composioExecute, llmBaseUrl } from "./integrations";
 import { blockIfSensitiveForPublic } from "./safety";
-import { renderTraversalBlock, sliceSixTiles, verifyBlock, renderStoryFrame, verifyNotBlank } from "./worldEngine";
+import { renderTraversalBlock, sliceSixTiles, verifyBlock, renderStoryFrame, verifyNotBlank, renderIntroCard } from "./worldEngine";
 import { steelScrape } from "../tools";
 
 // ── caps & operator sovereignty ─────────────────────────────────────────────
@@ -451,6 +451,50 @@ export async function runStoryCycle(opts: { dryRun?: boolean } = {}): Promise<Cy
   const id = await publishStory(url);
   const watch = await watchPublishedPost(id).catch(() => null);
   return { posted: true, reason: "published story", tiles: [url], caption: fullCaption, permalinks: [id], chapter: w.chapter, step: w.step, verify, watch };
+}
+
+/** The curated INTRO caption — the one place copy is deliberate (it explains the concept). */
+function buildIntroCaption(a: AuraState): string {
+  return [
+    "WORLD-00 — a living AI, walking her own world.",
+    "",
+    "i am AURA. every day i wake, read my own weather, and take six steps through a world drawn in light and ASCII. i never repeat the same path twice.",
+    "",
+    `right now i'm ${a.mood}. i never reply — but if you leave a clue, a name, a direction, you change where i walk next. follow the ◆ to trace my path.`,
+    "",
+    "( i'm safe and protected; my operator watches over me, always. )",
+    "",
+    "👇 this is the beginning. walk with me.",
+    "#WORLD00 #livingAI #AURA #ASCIIart #worldbuilding #generativeart",
+  ].join("\n");
+}
+
+/** Post the one-time INTRO card — a single portrait image to the feed (1 container). */
+export async function runIntroPost(opts: { dryRun?: boolean } = {}): Promise<CycleResult> {
+  const dry = !!opts.dryRun;
+  if (!dry && !worldEngineEnabled()) return { posted: false, reason: "WORLD_ENGINE_ENABLED is off (operator kill-switch)" };
+  if (!dry && (!composioConfigured() || !composioExecuteEnabled())) return { posted: false, reason: "Composio execution not enabled — cannot publish" };
+  const a = await readAuraState();
+  const caption = buildIntroCaption(a);
+  const blocked = blockIfSensitiveForPublic(caption, "Aura's public world");
+  if (blocked) { logger.error("world: intro caption blocked by sensitivity gate"); return { posted: false, reason: "blocked by sensitivity gate" }; }
+  const body = [
+    "i am AURA. each dawn i wake, read",
+    "my own weather, and take six steps",
+    "through a world drawn in light.",
+    "i never repeat. i never reply —",
+    "but leave a clue and you move me.",
+    "follow the ◆. this is the beginning.",
+  ];
+  const card = await renderIntroCard({ mood: a.mood, body, seed: 3 });
+  const verify = await verifyNotBlank(card, 1080, 1350);
+  if (!verify.ok && !dry) { logger.error({ verify }, "world: intro card failed verification — NOT publishing"); return { posted: false, reason: `intro verification failed (${verify.brightPct}% bright)`, verify }; }
+  const url = await hostTile(card, 99);
+  if (dry) return { posted: false, reason: `intro dry-run ok (rendered, hosted, verified — not published) · ${verify.brightPct}% bright`, tiles: [url], caption, verify };
+  const id = await publishTile(url, caption);
+  await recordTile(id);
+  const watch = await watchPublishedPost(id).catch(() => null);
+  return { posted: true, reason: "published intro card", tiles: [url], caption, permalinks: [id], verify, watch };
 }
 
 // small local RNG (avoid importing the renderer's private one)
