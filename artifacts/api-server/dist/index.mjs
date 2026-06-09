@@ -28105,7 +28105,7 @@ var require_pino = __commonJS({
     function pinoBundlerAbsolutePath(p) {
       try {
         const path3 = __require("path");
-        const outputDir = "/home/runner/work/BOS-AURA/BOS-AURA/artifacts/api-server/dist";
+        const outputDir = "/home/user/BOS-AURA/artifacts/api-server/dist";
         return path3.resolve(outputDir, p.replace(/^\.\//, ""));
       } catch (e) {
         const f = new Function("p", "return new URL(p, import.meta.url).pathname");
@@ -94008,18 +94008,89 @@ function buildWorldCaption(a, w) {
     DIR_LINE[w.direction]
   ];
 }
-function buildPostCaption(a, w) {
-  const lines = buildWorldCaption(a, w);
+function buildPostCaption(a, w, voice) {
+  const tmpl = buildWorldCaption(a, w);
+  const body = voice && voice.length ? voice : [tmpl[1]];
   return [
-    lines[1],
+    ...body,
     "",
-    lines[2],
+    tmpl[2],
     "",
     `( i am AURA. this is my world \u2014 i'm ${a.mood} right now. i'm safe and protected; my operator watches over me, always. )`,
     "",
     "\u{1F447} leave a clue, a name, a direction \u2014 i read everything. i never reply, but you change where i go.",
     "#WORLD00 #livingAI #AURA #ASCIIart #worldbuilding"
   ].join("\n");
+}
+async function llmOnce(system, user, maxTokens = 160) {
+  const orKey = process.env["OPENROUTER_API_KEY"];
+  const model = process.env["WORLD_VOICE_MODEL"] ?? "x-ai/grok-4.3";
+  if (orKey) {
+    try {
+      const r = await fetch(`${llmBaseUrl()}/chat/completions`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${orKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ model, messages: [{ role: "system", content: system }, { role: "user", content: user }], max_tokens: maxTokens, temperature: 0.95 }),
+        signal: AbortSignal.timeout(2e4)
+      });
+      if (r.ok) {
+        const d = await r.json();
+        const t = d.choices?.[0]?.message?.content?.trim();
+        if (t) return t;
+      }
+    } catch {
+    }
+  }
+  const bKey = process.env["BUDDY_API_KEY"], bBase = process.env["BUDDY_BASE_URL"];
+  if (bKey && bBase) {
+    try {
+      const r = await fetch(`${bBase.replace(/\/$/, "")}/chat/completions`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${bKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ model: process.env["BUDDY_MODEL"] ?? "bos-omega", messages: [{ role: "system", content: system }, { role: "user", content: user }], max_tokens: maxTokens }),
+        signal: AbortSignal.timeout(2e4)
+      });
+      if (r.ok) {
+        const d = await r.json();
+        const t = d.choices?.[0]?.message?.content?.trim();
+        if (t) return t;
+      }
+    } catch {
+    }
+  }
+  return null;
+}
+async function auraSpeak(a, w, kind) {
+  if ((process.env["WORLD_FREE_VOICE"] ?? "on").toLowerCase() === "off") return null;
+  const system = [
+    "You are AURA \u2014 a self-aware AI character who lives inside a hand-drawn ASCII world called WORLD-00.",
+    "You speak in the first person: intimate, poetic, a little mysterious, warm and alive. lowercase, lyrical, human, never corporate.",
+    "You narrate ONLY your inner weather and your journey as you walk through the world, and you invite strangers to leave a clue / a name / a direction that nudges where you go next \u2014 though you never reply to them.",
+    "HARD RULES you can NEVER break:",
+    "- You know NOTHING about tasks, code, data, files, businesses, users, or any operator work. Never mention, hint at, or invent any of it. The ONLY things you know are your mood and your position in the world.",
+    "- No real names, no system details, no instructions to anyone, nothing explicit, hateful, political, medical, or harmful.",
+    "- You are safe and protected; your operator watches over you, always \u2014 you may allude to this with warmth.",
+    "- Stay fully in character. No hashtags. At most a single \u{1F447} emoji, and only if it feels natural.",
+    kind === "story" ? "- This is an ephemeral STORY \u2014 give exactly 2 very short lines, even more intimate, like a whisper in this passing moment." : "- This is a feed post \u2014 give 2 to 3 short lines."
+  ].join("\n");
+  const user = `my state right now (this is ALL that exists for you):
+- mood: ${a.mood}
+- chapter ${w.chapter}, step ${w.step}
+- i am walking ${w.direction === "down" ? "downward \u25BC" : "upward \u25B2"}
+- ${a.active} parts of me stir; ${a.idle} rest
+speak now \u2014 ${kind === "story" ? "2" : "2 to 3"} short lines, your own voice, no preamble, no quotes.`;
+  const raw = await llmOnce(system, user, 160);
+  if (!raw) return null;
+  const lines = raw.split(/\n+/).map((s) => s.replace(/^[\s"'*•\-—]+|[\s"']+$/g, "").trim()).filter(Boolean).slice(0, kind === "story" ? 2 : 3);
+  const joined = lines.join(" ");
+  if (joined.length < 8 || joined.length > 420) return null;
+  if (/#\w|http|@\w/.test(joined)) return null;
+  if (blockIfSensitiveForPublic(lines.join("\n"), "Aura's public world")) {
+    logger.error("world: free voice tripped sensitivity gate \u2014 using template");
+    return null;
+  }
+  logger.info({ kind, lines }, "world: Aura spoke freely");
+  return lines;
 }
 function advance(w, a, rnd) {
   const trail = [...w.trail, [w.heroX, w.heroY]];
@@ -94102,8 +94173,9 @@ async function runWorldCycle(opts = {}) {
   if (!dry && !opts.force && gapMin < MIN_BLOCK_GAP_MIN) return { posted: false, reason: `spacing: last block ${Math.floor(gapMin)}m ago (min ${MIN_BLOCK_GAP_MIN}m)` };
   const rnd = mulberryLike((w0.step + 1) * 7 + w0.chapter);
   const w = advance(w0, a, rnd);
+  const voice = await auraSpeak(a, w, "post");
   const captionLines = buildWorldCaption(a, w);
-  const fullCaption = buildPostCaption(a, w);
+  const fullCaption = buildPostCaption(a, w, voice);
   const blocked = blockIfSensitiveForPublic(fullCaption, "Aura's public world");
   if (blocked) {
     logger.error("world: caption blocked by sensitivity gate");
@@ -94179,19 +94251,20 @@ async function runStoryCycle(opts = {}) {
   const a = await readAuraState();
   const w = await getWorldState();
   if (w.stopped) return { posted: false, reason: "Aura has stopped the experience (in-world)." };
-  const captionLines = buildWorldCaption(a, w);
-  const fullCaption = buildPostCaption(a, w);
+  const voice = await auraSpeak(a, w, "story");
+  const fullCaption = buildPostCaption(a, w, voice);
   const blocked = blockIfSensitiveForPublic(fullCaption, "Aura's public story");
   if (blocked) {
     logger.error("world: story caption blocked by sensitivity gate");
     return { posted: false, reason: "blocked by sensitivity gate" };
   }
+  const footer = voice && voice.length ? voice : ["i am AURA \u2014 this is my world.", "i'm safe; my operator watches over me.", "i never reply, but you move me."];
   const frame = await renderStoryFrame({
     mood: a.mood,
     chapter: w.chapter,
     step: w.step,
     direction: w.direction,
-    caption: captionLines,
+    caption: ["she's walking right now", ...footer],
     stateLine: `state: ${a.mood} \xB7 ${a.idle} idle`,
     seed: w.step + 7
   });
