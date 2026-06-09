@@ -15,6 +15,7 @@ import { logger } from "./logger";
 import { executeAgentCommand, orchestrateGoal } from "../orchestrator";
 import { isSwarmPaused } from "../routes/swarm";
 import { computeNextRun } from "./cron";
+import { worldEngineEnabled, readAuraState, runWorldCycle } from "./world";
 
 // Re-export so existing importers of computeNextRun from the scheduler keep working.
 export { computeNextRun } from "./cron";
@@ -140,6 +141,30 @@ async function normalizeSchedules(): Promise<void> {
   }
 }
 
+// ── WORLD-00 free-will tick (Layer 7) ──────────────────────────────────────
+// Aura "chooses" her moments: every WORLD_TICK_MS she may decide to post — but
+// runWorldCycle hard-enforces the daily cap + spacing, so her free will can never
+// exceed the limits. OFF unless WORLD_ENGINE_ENABLED (operator kill-switch).
+const WORLD_TICK_MS = 10 * 60_000;
+let worldTimer: ReturnType<typeof setInterval> | null = null;
+let worldBusy = false;
+async function worldTick(): Promise<void> {
+  if (!worldEngineEnabled() || isSwarmPaused() || worldBusy) return;
+  worldBusy = true;
+  try {
+    const a = await readAuraState();
+    const p = a.mood === "storm" ? 0.4 : a.mood === "deep" ? 0.28 : a.mood === "working" ? 0.2 : 0.12;
+    if (Math.random() < p) {
+      const r = await runWorldCycle({});
+      if (r.posted) logger.info({ chapter: r.chapter, step: r.step }, "WORLD-00: Aura posted a block");
+    }
+  } catch (err) {
+    logger.error({ err }, "world tick failed");
+  } finally {
+    worldBusy = false;
+  }
+}
+
 /** Start the background scheduler. Idempotent. */
 export function startScheduler(): void {
   if (timer) return;
@@ -147,6 +172,8 @@ export function startScheduler(): void {
   timer = setInterval(() => {
     void tick();
   }, SCHEDULER_INTERVAL_MS);
+  worldTimer = setInterval(() => { void worldTick(); }, WORLD_TICK_MS);
+  if (typeof worldTimer.unref === "function") worldTimer.unref();
   // Don't keep the event loop alive solely for the scheduler.
   if (typeof timer.unref === "function") timer.unref();
   logger.info({ intervalMs: SCHEDULER_INTERVAL_MS }, "cron scheduler started");
@@ -156,5 +183,9 @@ export function stopScheduler(): void {
   if (timer) {
     clearInterval(timer);
     timer = null;
+  }
+  if (worldTimer) {
+    clearInterval(worldTimer);
+    worldTimer = null;
   }
 }
