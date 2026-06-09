@@ -94231,6 +94231,45 @@ async function publishTile(imageUrl, caption) {
   if (!pubId) throw new Error(`publish failed: ${last.slice(0, 160)}`);
   return pubId;
 }
+async function waitForContainer(cid, tries = 8) {
+  let status = "";
+  for (let a = 0; a < tries; a++) {
+    const rs = await composioExecute({ toolkit: "instagram", endpoint: `/${cid}?fields=status_code,status`, method: "GET" });
+    status = parseJson(rs)?.["data"]?.["status_code"] ?? "";
+    if (/FINISHED/i.test(status)) break;
+    if (/ERROR|EXPIRED/i.test(status)) break;
+    await new Promise((r) => setTimeout(r, 3e3));
+  }
+  return status;
+}
+async function publishCarousel(imageUrls, caption) {
+  const debug = {};
+  const childIds = [];
+  for (let i = 0; i < imageUrls.length; i++) {
+    const r = await composioExecute({ toolkit: "instagram", endpoint: "/me/media", method: "POST", arguments: { image_url: imageUrls[i], is_carousel_item: "true" } });
+    const cid = parseJson(r)?.["data"]?.["id"];
+    if (!cid) throw new Error(`carousel child ${i + 1}/${imageUrls.length} container failed: ${r.slice(0, 160)}`);
+    await waitForContainer(cid);
+    childIds.push(cid);
+  }
+  debug["childIds"] = childIds.join(",");
+  const rp = await composioExecute({ toolkit: "instagram", endpoint: "/me/media", method: "POST", arguments: { media_type: "CAROUSEL", children: childIds.join(","), caption } });
+  const pid = parseJson(rp)?.["data"]?.["id"];
+  if (!pid) throw new Error(`carousel parent container failed: ${rp.slice(0, 200)}`);
+  debug["parentId"] = pid;
+  debug["parentStatus"] = await waitForContainer(pid);
+  let pubId;
+  let last = "";
+  for (let a = 0; a < 5 && !pubId; a++) {
+    if (a) await new Promise((r) => setTimeout(r, 3e3));
+    const r2 = await composioExecute({ toolkit: "instagram", endpoint: "/me/media_publish", method: "POST", arguments: { creation_id: String(pid) } });
+    last = r2;
+    pubId = parseJson(r2)?.["data"]?.["id"];
+  }
+  debug["publish"] = last.slice(0, 200);
+  if (!pubId) throw new Error(`carousel publish failed: ${last.slice(0, 200)}`);
+  return { id: pubId, debug };
+}
 async function tilesPostedLast24h() {
   try {
     const { rows } = await pool.query(
@@ -94256,7 +94295,7 @@ async function runWorldCycle(opts = {}) {
   if (w0.stopped) return { posted: false, reason: "Aura has stopped the experience (in-world)." };
   const { count, lastAt } = await tilesPostedLast24h();
   const gapMin = lastAt ? (Date.now() - lastAt.getTime()) / 6e4 : Number.MAX_SAFE_INTEGER;
-  if (!dry && count + TILES_PER_BLOCK > MAX_TILES_PER_DAY) return { posted: false, reason: `daily cap reached (${count}/${MAX_TILES_PER_DAY} tiles)` };
+  if (!dry && !opts.force && count + TILES_PER_BLOCK > MAX_TILES_PER_DAY) return { posted: false, reason: `daily cap reached (${count}/${MAX_TILES_PER_DAY} tiles)` };
   if (!dry && !opts.force && gapMin < MIN_BLOCK_GAP_MIN) return { posted: false, reason: `spacing: last block ${Math.floor(gapMin)}m ago (min ${MIN_BLOCK_GAP_MIN}m)` };
   const rnd = mulberryLike((w0.step + 1) * 7 + w0.chapter);
   const w = advance(w0, a, rnd);
@@ -94289,17 +94328,11 @@ async function runWorldCycle(opts = {}) {
     await saveWorldState(w, fullCaption.slice(0, 1e3));
     return { posted: false, reason: `dry-run ok (rendered, sliced, hosted, gated, verified \u2014 not published) \xB7 ${verify.reason}`, tiles: tileUrls, caption: fullCaption, chapter: w.chapter, step: w.step, verify };
   }
-  const permalinks = [];
-  for (let i = tiles.length - 1; i >= 0; i--) {
-    const cap = i === 0 ? fullCaption : `\u27C1 WORLD-00 \xB7 ch.${w.chapter} (${i + 1}/6)`;
-    const id = await publishTile(tileUrls[i], cap);
-    await recordTile(id);
-    permalinks.push(id);
-    if (i > 0) await new Promise((r) => setTimeout(r, 1500));
-  }
+  const { id, debug } = await publishCarousel(tileUrls, fullCaption);
+  for (let k = 0; k < TILES_PER_BLOCK; k++) await recordTile(`${id}#${k + 1}`);
   await saveWorldState(w, fullCaption.slice(0, 1e3));
-  const watch = await watchPublishedPost(permalinks[permalinks.length - 1]).catch(() => null);
-  return { posted: true, reason: "published 6-tile block", tiles: tileUrls, caption: fullCaption, permalinks, chapter: w.chapter, step: w.step, verify, watch };
+  const watch = await watchPublishedPost(id).catch(() => null);
+  return { posted: true, reason: "published 6-tile carousel (single grid cell)", tiles: tileUrls, caption: fullCaption, permalinks: [id], chapter: w.chapter, step: w.step, verify, watch, debug };
 }
 async function watchPublishedPost(mediaId) {
   if (!mediaId) return null;
