@@ -1,6 +1,6 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { renderWorldFrame, renderTraversalBlock } from "../lib/worldEngine";
-import { runWorldCycle, readAuraState, getWorldState, worldEngineEnabled } from "../lib/world";
+import { runWorldCycle, readAuraState, getWorldState, resetWorldState, worldEngineEnabled } from "../lib/world";
 import { requireOperator } from "../lib/auth";
 import { timingSafeStrEqual } from "../lib/auth";
 
@@ -60,6 +60,14 @@ router.post("/world/cycle", cycleAuth, async (req, res) => {
     const force = req.query["force"] === "1";
     const result = await runWorldCycle({ dryRun: dry, force });
     res.json(result);
+  } catch (err) { res.status(500).json({ error: String(err).slice(0, 300) }); }
+});
+
+// ── reset the world to the beginning (chapter 0, step 0) — same auth as cycle ──
+router.post("/world/reset", cycleAuth, async (_req, res) => {
+  try {
+    const w = await resetWorldState();
+    res.json({ ok: true, chapter: w.chapter, step: w.step });
   } catch (err) { res.status(500).json({ error: String(err).slice(0, 300) }); }
 });
 

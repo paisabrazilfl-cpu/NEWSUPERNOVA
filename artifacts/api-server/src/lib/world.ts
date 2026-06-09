@@ -94,6 +94,15 @@ export async function saveWorldState(s: WorldState, lastCaption?: string): Promi
   );
 }
 
+/** Reset the world back to the very beginning (chapter 0, step 0) — a clean restart. */
+export async function resetWorldState(): Promise<WorldState> {
+  await pool.query(
+    `UPDATE world_state SET chapter=0, step=0, hero_x=75, hero_y=4, direction='down',
+       trail='[]', last_caption=NULL, stopped=false, updated_at=now() WHERE id=1`,
+  );
+  return getWorldState();
+}
+
 // ── Layer 6 (part): identity + narrative caption (templated = no content leak) ──
 const HERO_LINES = {
   resting: ["all is quiet. i wander, and the world holds its breath with me.", "no storms today. just me, the dark, and the next step."],

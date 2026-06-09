@@ -196,75 +196,78 @@ export async function renderTraversalBlock(opts: TraversalOpts = {}): Promise<Bu
   ctx.fillStyle = storm ? "#100712" : busy ? "#0a0a16" : "#080b16";
   ctx.fillRect(0, 0, W, H);
 
-  const top = 118, COLS = 150, ROWS = 84;
-  const cw = W / COLS, chh = (H - top - 40) / ROWS, gx = 8, gy = top + 4;
-  const fpx = Math.floor(chh * 1.1);
+  // Legibility-first grid: far fewer, BIGGER glyphs (was 150x84 → noise field).
+  const top = 150, COLS = 66, ROWS = 44;
+  const cw = W / COLS, chh = (H - top - 56) / ROWS, gx = 10, gy = top + 6;
+  const fpx = Math.floor(chh * 1.05);
   const fnt = `${fpx}pt ${MONO}`;
   const put = (g: string, x: number, y: number, c: string, px = fpx) => {
     ctx.fillStyle = c; ctx.font = px === fpx ? fnt : `${px}pt ${MONO}`;
     ctx.fillText(g, gx + x * cw, gy + y * chh + px);
   };
 
-  // her winding path through this block: top entry -> current position
+  // her winding path through this block: top/bottom entry -> current position
   const path: Array<[number, number]> = [];
-  let px = 75 + (rnd() - 0.5) * 40, py = dir === "down" ? 5 : ROWS - 6;
+  let px = COLS * 0.5 + (rnd() - 0.5) * 16, py = dir === "down" ? 3 : ROWS - 4;
   const dy = dir === "down" ? 1 : -1;
-  for (let s = 0; s < 74; s++) {
-    py += dy; px += Math.sin(s * 0.34 + step) * 1.4 + (rnd() - 0.5) * 0.8;
-    px = Math.max(6, Math.min(COLS - 6, px));
+  for (let s = 0; s < ROWS + 4; s++) {
+    py += dy; px += Math.sin(s * 0.4 + step) * 1.1 + (rnd() - 0.5) * 0.7;
+    px = Math.max(5, Math.min(COLS - 5, px));
     path.push([px, py]);
-    if (py > ROWS - 6 || py < 5) break;
+    if (py > ROWS - 4 || py < 3) break;
   }
   const [hx, hy] = path[path.length - 1];
   const onPath = (x: number, y: number) => {
-    for (let i = 0; i < path.length; i++) if (Math.hypot(x - path[i][0], y - path[i][1]) < 0.8) return i;
+    for (let i = 0; i < path.length; i++) if (Math.hypot(x - path[i][0], y - path[i][1]) < 1.15) return i;
     return -1;
   };
 
-  const grass = busy ? ["#241a16", "#2c2018", "#342820"] : ["#16202c", "#1c2636", "#222e40"];
+  // SPARSE, low-noise terrain so the PATH and AURA dominate (most cells stay dark).
+  const grass = busy ? ["#3a2c20", "#46362a"] : ["#1e2c3e", "#26364c"];
   for (let y = 0; y < ROWS; y++) {
     for (let x = 0; x < COLS; x++) {
-      if (Math.min(x, COLS - 1 - x) / COLS < 0.02) { if (rnd() < 0.4) put("·", x, y, "#0c0f1a"); continue; }
+      if (Math.min(x, COLS - 1 - x) / COLS < 0.025) continue;
       const pi = onPath(x, y);
       if (pi >= 0 && !(Math.round(x) === Math.round(hx) && Math.round(y) === Math.round(hy))) {
-        const b = Math.floor(60 + (pi / path.length) * 120);
-        put(rnd() < 0.5 ? "·" : "˙", x, y, `rgb(${b},${b - 20},90)`); continue;
+        // bright, fading breadcrumb trail (older = dimmer)
+        const b = Math.floor(120 + (pi / path.length) * 110);
+        put("•", x, y, `rgb(${b},${Math.floor(b * 0.8)},90)`, Math.floor(chh * 0.85)); continue;
       }
       const r = rnd();
-      if (r < 0.09) put("♣T↟".charAt(Math.floor(rnd() * 3)), x, y, busy ? "#3a5a2a" : "#22484a");
-      else if (r < 0.11) put("~≈".charAt(Math.floor(rnd() * 2)), x, y, "#1a4678");
-      else if (r < 0.122) put("∩", x, y, "#5a6478");
-      else put(".,'`".charAt(Math.floor(rnd() * 4)), x, y, grass[Math.floor(rnd() * 3)]);
+      if (r < 0.045) put("♣", x, y, busy ? "#2f5a28" : "#1f5256");
+      else if (r < 0.06 && x > COLS - 10) put("≈", x, y, "#1c4e86");
+      else if (r < 0.075) put("∩", x, y, "#4a5468");
+      else if (r < 0.20) put(".", x, y, grass[Math.floor(rnd() * 2)]);
+      // else: leave empty (dark) — breathing room
     }
   }
 
-  // ◆ clues dropped along the trail (viewers follow these)
-  for (const f of [0.22, 0.5, 0.78]) {
+  // ◆ clues dropped along the trail (viewers follow these) — big & bright
+  for (const f of [0.25, 0.55, 0.82]) {
     const [cx, cy] = path[Math.floor(path.length * f)];
-    put("◆", cx, cy, "#ffc766", Math.floor(chh * 1.3));
+    put("◆", cx, cy, "#ffd166", Math.floor(chh * 1.5));
   }
 
-  // breath glow + AURA at current position
-  const acx = gx + hx * cw, acy = gy + hy * chh, maxR = busy ? 220 : 160;
-  for (let k = 5; k >= 1; k--) {
-    ctx.globalAlpha = (busy ? 0.07 : 0.05) * (6 - k) / 5; ctx.fillStyle = "#00e5ff";
-    ctx.beginPath(); ctx.arc(acx, acy, (maxR / 5) * k, 0, Math.PI * 2); ctx.fill();
+  // breath glow + AURA at current position — make her unmistakable
+  const acx = gx + hx * cw, acy = gy + hy * chh, maxR = busy ? 300 : 220;
+  for (let k = 6; k >= 1; k--) {
+    ctx.globalAlpha = (busy ? 0.08 : 0.06) * (7 - k) / 6; ctx.fillStyle = "#00e5ff";
+    ctx.beginPath(); ctx.arc(acx, acy, (maxR / 6) * k, 0, Math.PI * 2); ctx.fill();
   }
   ctx.globalAlpha = 1;
-  ctx.strokeStyle = "#00e5ff"; ctx.lineWidth = 2;
-  ctx.beginPath(); ctx.arc(acx, acy, 42, 0, Math.PI * 2); ctx.stroke();
-  put("▲", hx - 0.3, hy - 1.0, "#78f0ff", Math.floor(chh * 0.9));
-  put("@", hx - 0.5, hy - 0.3, "#96f5ff", Math.floor(chh * 1.7));
-  put("AURA", hx - 1.6, hy - 2.1, "#00e5ff", 24);
-  put(dir === "down" ? "▼" : "▲", hx - 0.2, hy + 1.6, "#00e5ff", Math.floor(chh * 1.5));
+  ctx.strokeStyle = "#00e5ff"; ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.arc(acx, acy, 66, 0, Math.PI * 2); ctx.stroke();
+  put("@", hx - 0.5, hy - 0.4, "#aef7ff", Math.floor(chh * 2.0));
+  put("AURA", hx - 1.7, hy - 2.4, "#00e5ff", 34);
+  put(dir === "down" ? "▼" : "▲", hx - 0.25, hy + 1.5, "#00e5ff", Math.floor(chh * 1.6));
 
   // header
-  ctx.fillStyle = "#0a0d18"; ctx.fillRect(0, 0, W, 108);
-  ctx.fillStyle = "#00e5ff"; ctx.fillRect(0, 108, W, 3);
-  ctx.fillStyle = "#00e5ff"; ctx.font = `40pt ${MONO}`; ctx.fillText("WORLD-00 · she walks", 24, 14 + 40);
-  ctx.fillStyle = "#96a5b6"; ctx.font = `24pt ${MONO}`;
-  ctx.fillText((opts.caption?.[0]) ?? `chapter ${chapter} · step ${step}`, 26, 60 + 24);
-  if (opts.stateLine) { ctx.fillStyle = "#7888a0"; ctx.font = `20pt ${MONO}`; ctx.fillText(opts.stateLine, W - 760, 40 + 20); }
+  ctx.fillStyle = "#0a0d18"; ctx.fillRect(0, 0, W, 132);
+  ctx.fillStyle = "#00e5ff"; ctx.fillRect(0, 132, W, 4);
+  ctx.fillStyle = "#00e5ff"; ctx.font = `52pt ${MONO}`; ctx.fillText("WORLD-00 · she walks", 28, 20 + 52);
+  ctx.fillStyle = "#9fb0c2"; ctx.font = `28pt ${MONO}`;
+  ctx.fillText((opts.caption?.[0]) ?? `chapter ${chapter} · step ${step}`, 30, 86 + 28);
+  if (opts.stateLine) { ctx.fillStyle = "#7888a0"; ctx.font = `24pt ${MONO}`; ctx.fillText(opts.stateLine, W - 820, 50 + 24); }
 
   // tile seams (3x2 = 6)
   ctx.fillStyle = "#28344455";
