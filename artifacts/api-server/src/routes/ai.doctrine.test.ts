@@ -237,6 +237,13 @@ describe("EXECUTION_DOCTRINE — no internal-state / navel-gazing", () => {
     expect(EXECUTION_DOCTRINE).toContain("NEVER REPORT ON THE SWARM ITSELF");
     expect(EXECUTION_DOCTRINE).toContain("DON'T NAVEL-GAZE IN MEMORY");
   });
+
+  it("encodes a real learning loop: recall before researching, store the lesson after solving", () => {
+    expect(EXECUTION_DOCTRINE).toContain("LEARN & REMEMBER");
+    expect(EXECUTION_DOCTRINE).toContain("PROBLEM → SOLUTION");
+    expect(EXECUTION_DOCTRINE.toLowerCase()).toContain("memory_search first");
+    expect(EXECUTION_DOCTRINE.toLowerCase()).toContain("never has to learn it twice");
+  });
 });
 
 describe("ANTI_HALLUCINATION_DIRECTIVE — still intact alongside the doctrine", () => {
