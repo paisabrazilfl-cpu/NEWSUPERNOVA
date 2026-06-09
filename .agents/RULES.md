@@ -44,6 +44,22 @@ happened — while the real `RENDER_API_KEY` sat in the vault the whole time.
   complete, Playwright-validated.*
 - "It compiles" ≠ "it works". "I wrote the file" ≠ "it deployed". A deploy with no
   live URL returning 2xx is **NOT** deployed.
+- **Never fabricate or pad data.** An empty/null/error result (e.g. yfinance
+  returning `None`) is **not** success. Never invent placeholder rows (`SYM0001`)
+  to hit a target count. The count/size you claim must match what the tool
+  produced — `save_artifact` reports the real byte size; reconcile to it. If the
+  real data is short, report the real number.
+
+## 2b. Authenticate — don't misdiagnose a self-inflicted 401
+- Calls needing auth **must** carry `Authorization: Bearer {{secret:NAME}}`. Never
+  send empty headers to a private API.
+- A **401/403 on a request you sent with no Authorization header is YOUR bug** —
+  retry *with* the header before concluding a key is "invalid/expired" or a
+  service "not connected". If one call to a service returns 2xx with a real id, the
+  credential works; a later 401 from a mis-formed call does not override that.
+- *Enforced in code:* `http_request` auto-attaches the vault token for
+  `api.github.com` and `api.render.com`, refuses to send unresolved
+  `{{secret:NAME}}` placeholders, and flags any 401/403 that had no auth header.
 
 ## 4. The sandbox cannot build this repo
 *(enforced via `ANTI_HALLUCINATION_DIRECTIVE`)*

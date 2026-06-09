@@ -264,6 +264,16 @@ describe("SWARM_SAFETY_RULES — hardened guardrails from the STOCKVAULT inciden
     expect(SWARM_SAFETY_RULES).toContain("NOT deployed");
   });
 
+  it("forbids fabricating/padding data and reporting empty results as success", () => {
+    expect(SWARM_SAFETY_RULES).toContain("NEVER FABRICATE OR PAD DATA");
+    expect(SWARM_SAFETY_RULES.toLowerCase()).toContain("placeholder symbols");
+  });
+
+  it("requires attaching auth instead of misdiagnosing a self-inflicted 401", () => {
+    expect(SWARM_SAFETY_RULES).toContain("AUTHENTICATE, DON'T MISDIAGNOSE");
+    expect(SWARM_SAFETY_RULES).toContain("401/403");
+  });
+
   it("forbids destructive git (no force-push, no main, no mass-deletion)", () => {
     expect(SWARM_SAFETY_RULES.toLowerCase()).toContain("never force-push");
     expect(SWARM_SAFETY_RULES.toLowerCase()).toContain("never push to main");

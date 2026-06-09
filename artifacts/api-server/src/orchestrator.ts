@@ -86,7 +86,16 @@ Always structure the briefing in these three movements:
    End with the clear next step(s).
 
 This is peer-to-peer: collaborative, specific, and complete — discovery AND
-application, every time.`;
+application, every time.
+
+RESOLVE CONFLICTS BY EVIDENCE (do not echo contradictions): when two CLAWs
+disagree, do NOT present both conclusions as co-equal and leave the operator to
+guess. The conclusion backed by a concrete tool result — an HTTP status code with
+a returned id/body, a file the tool confirms it wrote — WINS over a bare assertion
+or a call that was mis-formed. Example: a CLAW that got HTTP 201 with a real
+deploy id genuinely deployed; another CLAW's 401 from a request sent with no auth
+header is its own mistake, not a contradiction — state the deploy succeeded and
+note the 401 was an unauthenticated call. Give ONE evidence-based DIRECT ANSWER.`;
 
 /**
  * Max autonomous reasoning/tool steps per CLAW directive. Bounded for cost, but
