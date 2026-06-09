@@ -88622,7 +88622,7 @@ ${clip3(safe, 4e3)}${hint}`;
       },
       cloud_code_exec: {
         name: "cloud_code_exec",
-        description: "Execute code in a fully isolated E2B cloud sandbox (a real remote VM with network access and a full runtime). Supports 'python' and 'javascript'. Use this instead of code_exec when the code needs network access, pip/npm packages, or stronger isolation than the local sandbox. Returns stdout/stderr/result.",
+        description: "Execute code in a fully isolated E2B cloud sandbox (a real remote VM with network access and a full runtime). Supports 'python' and 'javascript'. Use this instead of code_exec when the code needs network access, pip/npm packages, or stronger isolation than the local sandbox. Returns stdout/stderr/result. You can authenticate calls using your vault secrets via the {{secret:NAME}} placeholder (injected at run time, redacted from output).",
         parameters: {
           type: "object",
           properties: {
@@ -88633,17 +88633,22 @@ ${clip3(safe, 4e3)}${hint}`;
         },
         run: async (args) => {
           const language = String(args["language"] ?? "");
-          const source = String(args["source"] ?? "");
-          if (!source.trim()) return "error: source is required.";
+          const rawSource = String(args["source"] ?? "");
+          if (!rawSource.trim()) return "error: source is required.";
           if (!e2bConfigured()) {
             return "error: E2B cloud sandbox is not configured (set E2B_API_KEY). Use code_exec for local execution instead.";
           }
-          return e2bExec(language, source);
+          const usedSecrets = /* @__PURE__ */ new Set();
+          const source = await substituteSecrets(rawSource, usedSecrets);
+          if (hasSecretPlaceholder(source)) {
+            return "error: a {{secret:NAME}} placeholder did not resolve \u2014 that exact secret name is not in the vault. Call vault_list for the correct names. (Nothing was executed.)";
+          }
+          return redactSecrets(await e2bExec(language, source), usedSecrets);
         }
       },
       sandbox_exec: {
         name: "sandbox_exec",
-        description: "Run a shell script inside a fresh, isolated E2B cloud VM (its own real computer \u2014 node, git, network, full Linux). Use for anything that needs a real dev environment: clone a public repo, install packages, run a build/test suite, run scripts, curl APIs, etc. It is also your INTERACTIVE-AUTOMATION substrate: pip/npm-install and drive real tools here \u2014 e.g. Playwright (`pip install playwright && playwright install chromium`) to navigate multi-step web forms, fill fields, click, and submit; or reportlab/fpdf2/fillpdf/pypdf to generate and fill official PDF forms (e.g. AcroForm fields). Print results/paths to stdout and read back any output. STATELESS: each call is a clean disposable VM and files do NOT persist between calls \u2014 generate a file, base64 it, and print it ALL in ONE script (then pass to save_artifact); never write in one call and read in the next. NO access to the OpenClaw server or its secrets. For making changes to the OpenClaw repo and opening a PR, use sandbox_repo_pr instead.",
+        description: "Run a shell script inside a fresh, isolated E2B cloud VM (its own real computer \u2014 node, git, network, full Linux). Use for anything that needs a real dev environment: clone a public repo, install packages, run a build/test suite, run scripts, curl APIs, etc. It is also your INTERACTIVE-AUTOMATION substrate: pip/npm-install and drive real tools here \u2014 e.g. Playwright (`pip install playwright && playwright install chromium`) to navigate multi-step web forms, fill fields, click, and submit; or reportlab/fpdf2/fillpdf/pypdf to generate and fill official PDF forms (e.g. AcroForm fields). Print results/paths to stdout and read back any output. STATELESS: each call is a clean disposable VM and files do NOT persist between calls \u2014 generate a file, base64 it, and print it ALL in ONE script (then pass to save_artifact); never write in one call and read in the next. It cannot read the OpenClaw server, its database, or its filesystem \u2014 BUT it CAN authenticate using your vault secrets via the {{secret:NAME}} placeholder: the real value is injected into the command at run time and redacted from the returned output. So authenticated git works, e.g. `git remote set-url origin https://{{secret:GITHUB_API_KEY}}@github.com/<owner>/<repo>.git && git push`. Use vault_list / your STORED SECRETS list for exact names. For changes to the OpenClaw repo with an automatic PR, prefer sandbox_repo_pr.",
         parameters: {
           type: "object",
           properties: {
@@ -88652,10 +88657,15 @@ ${clip3(safe, 4e3)}${hint}`;
           required: ["script"]
         },
         run: async (args) => {
-          const script = String(args["script"] ?? "").trim();
-          if (!script) return "error: script is required.";
+          const raw = String(args["script"] ?? "").trim();
+          if (!raw) return "error: script is required.";
           if (!sandboxConfigured()) return "error: E2B cloud sandbox is not configured (E2B_API_KEY).";
-          return runInSandbox(script);
+          const usedSecrets = /* @__PURE__ */ new Set();
+          const script = await substituteSecrets(raw, usedSecrets);
+          if (hasSecretPlaceholder(script)) {
+            return "error: a {{secret:NAME}} placeholder did not resolve \u2014 that exact secret name is not in the vault. Call vault_list for the correct names. (Nothing was executed.)";
+          }
+          return redactSecrets(await runInSandbox(script), usedSecrets);
         }
       },
       sandbox_repo_pr: {
@@ -93937,7 +93947,7 @@ async function buildVaultCard() {
 
 OPERATOR SETTINGS \u2192 STORED SECRETS (read live from the vault now \u2014 these credentials EXIST and are available to you):
 ${list}
-To USE any of them, put the placeholder {{secret:NAME}} directly into an http_request url/header/body (e.g. Authorization: "Bearer {{secret:RENDER_API_KEY}}"). The real value is injected server-side at send time and never enters your context. The vault is WRITE-ONLY by design \u2014 you do NOT need to read the raw value, and "cannot read the key" is NEVER a blocker. If a name appears in this list, that credential is CONNECTED \u2014 never report it as missing/not-found/not-connected; just use the placeholder and make the call.`;
+To USE any of them, put the placeholder {{secret:NAME}} directly into an http_request (url/header/body, e.g. Authorization: "Bearer {{secret:RENDER_API_KEY}}") OR into a sandbox_exec/cloud_code_exec script (e.g. an authenticated git push: https://{{secret:GITHUB_API_KEY}}@github.com/owner/repo.git). The real value is injected at run time, never enters your context, and is redacted from the output. The vault is WRITE-ONLY by design \u2014 you do NOT need to read the raw value, and "cannot read the key" is NEVER a blocker. If a name appears in this list, that credential is CONNECTED \u2014 never report it as missing/not-found/not-connected; just use the placeholder and run the call.`;
 }
 function requestsDownloadableArtifact(message) {
   return /\b(downloadable|download link)\b/i.test(message) || /\.(pdf|csv|docx?|xlsx?|pptx?)\b/i.test(message) || /\b(save|create|make|build|generate|produce|export|download)\b[^.!?\n]{0,40}\b(file|files|pdf|csv|deck|decks|slide|slides|presentation|spreadsheet|document|report|download)\b/i.test(message) || // image-generation requests also need a tool (image_generate) → dispatch
