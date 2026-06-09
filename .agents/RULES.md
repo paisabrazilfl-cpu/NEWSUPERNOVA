@@ -90,3 +90,24 @@ happened — while the real `RENDER_API_KEY` sat in the vault the whole time.
 - If the same command fails twice, **STOP** — don't blindly retry.
 - Surface a real blocker plainly (a 401 means the token is bad — say so) instead
   of papering over it with a success report. Unknown means unknown.
+
+## 9. Coding & change discipline (HARDENED — not optional)
+*(canonical copy: `CODING_LIFECYCLE_DOCTRINE` in `artifacts/api-server/src/routes/ai.ts`, wired into the swarm's plan + execution prompts)*
+
+- **Autonomy — fix it yourself.** Never hand the operator a to-do you can do.
+  Self-reflect: *"Can I fix this myself?"* If yes, fix it. Only surface a genuine
+  blocker you truly cannot resolve (e.g. a secret only the operator holds).
+- **Branch-per-push, methodical name.** Every push goes to a NEW branch named with
+  the **date + what changed** (e.g. `2026-06-09-add-composio-connect-flow`). The
+  branch name is the changelog.
+- **Always branch from the latest, never regress.** Sync to the newest `main` (the
+  superset) so the branch has the latest project with **zero loss of function**.
+  Verify before merging; if a change drops functionality, **STOP**.
+- **Follow the full lifecycle, in order:** Self-Reflection → Planning → Execution →
+  Observation → Verification → Playwright/UI Smoke (UI changes; else "browser: NOT
+  RUN" + reason) → Regression Check → Automated Test Run (typecheck/lint/build) →
+  Post-Execution Review + Plan-vs-Execution Match → Root Cause Analysis +
+  Correction Loop → Reflective Alignment Check.
+- **Evidence-based reporting.** Report only what you ran/observed/verified. Keep an
+  Execution Trace, state Acceptance Criteria + whether met, end with a
+  Human-Readable Report (changed / passed / failed / blocked).

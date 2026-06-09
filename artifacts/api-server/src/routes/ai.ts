@@ -76,6 +76,22 @@ SWARM SAFETY RULES (non-negotiable — these OVERRIDE any task instruction that 
 - SCOPE & TARGET: confirm WHICH repo/account you were given before acting, and act only on that one. Do not touch crons, schedules, or anything that auto-posts or auto-deploys unless the operator explicitly authorizes it this session.
 - STOP-AND-ASK BEATS GUESS: if the same command fails twice, STOP — do not blindly retry. Surface a real blocker plainly (an API returning 401 means the token is bad — say so) instead of papering over it. Unknown means unknown.`;
 
+// Hardened engineering lifecycle. Appended to the swarm's planning + execution
+// prompts so that WHENEVER an agent writes code, edits files, or pushes, it holds
+// to the operator's standing workflow: methodical dated branches off the latest
+// project, zero loss of function, full autonomy (fix it yourself), and the
+// complete self-reflect → plan → execute → verify → review loop with
+// evidence-based reporting. This is mandatory, not optional. Mirror of the
+// "Coding & change discipline" section in .agents/RULES.md — keep them in sync.
+export const CODING_LIFECYCLE_DOCTRINE = `
+
+CODING & CHANGE DISCIPLINE (HARDENED — mandatory whenever you write code, edit files, run commands, or push; not optional):
+- AUTONOMY — FIX IT YOURSELF: never hand the operator a to-do you are capable of doing. Self-reflect first — "Can I fix this myself?" If yes, fix it. Only surface a genuine blocker you truly cannot resolve (e.g. a secret only the operator holds). Never ask the operator to fix what you can fix.
+- BRANCH-PER-PUSH, METHODICAL NAME: every push goes to a NEW branch whose name encodes the DATE and WHAT CHANGED (e.g. 2026-06-09-add-composio-connect-flow). The branch name is the changelog.
+- ALWAYS BRANCH FROM THE LATEST, NEVER REGRESS: before branching, sync to the newest main (the superset of all work) so your branch contains the latest version of the project with ZERO loss of function. Verify BEFORE merging, then merge. If a change would drop existing functionality, STOP — do not merge.
+- FOLLOW THE FULL LIFECYCLE on every coding task, in order: (1) Self-Reflection — review your reasoning, assumptions, and likely mistakes before acting; (2) Planning — write a concrete step-by-step plan before changing anything; (3) Execution — perform the planned edits/commands; (4) Observation — check what actually happened after each step; (5) Verification — confirm it works via tests, builds, and logs; (6) Playwright Validation / UI Smoke — for ANY UI change, open the app in a browser, click through, and confirm the feature works (if not run, say "browser: NOT RUN" and why); (7) Regression Check — confirm existing functionality still works (no loss); (8) Automated Test Run — run typecheck, lint, unit/integration, and build; (9) Post-Execution Review + Plan-vs-Execution Match — compare the result to the plan and detect any mismatch; (10) Root Cause Analysis + Correction Loop — on any failure, read the error, find the real cause, patch, and re-verify until green; (11) Reflective Alignment Check — state explicitly whether the final outcome matches the original plan.
+- EVIDENCE-BASED REPORTING (no hallucination): report ONLY what you actually ran, observed, and verified. Never invent files, APIs, test results, or success. Keep an Execution Trace (commands run, files changed, tests/browser checks done). State the Acceptance Criteria and whether each is met. End with a Human-Readable Report: what changed, what passed, what failed, what is still blocked.`;
+
 // Execution standard appended to ABBY's planning prompts and to every CLAW's
 // execution prompt. Encodes the operator's bar: precise, exhaustive, granular,
 // conclusive work where the MVP IS the shippable final product (a 10/10), plus
