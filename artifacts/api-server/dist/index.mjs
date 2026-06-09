@@ -54738,6 +54738,9 @@ async function getSecretValue(name) {
     return null;
   }
 }
+async function listSecretNames() {
+  return db.select({ name: vaultSecretsTable.name, description: vaultSecretsTable.description }).from(vaultSecretsTable).orderBy(vaultSecretsTable.name);
+}
 async function substituteSecrets(input, used) {
   const names = /* @__PURE__ */ new Set();
   for (const m of input.matchAll(SECRET_PLACEHOLDER)) names.add(m[1]);
@@ -54758,6 +54761,10 @@ function redactSecrets(text2, values) {
     if (v && out.includes(v)) out = out.split(v).join("\u2039redacted-secret\u203A");
   }
   return out;
+}
+function hasSecretPlaceholder(input) {
+  SECRET_PLACEHOLDER.lastIndex = 0;
+  return SECRET_PLACEHOLDER.test(input);
 }
 var cachedKey, SECRET_PLACEHOLDER;
 var init_vault2 = __esm({
@@ -88512,7 +88519,7 @@ var init_tools = __esm({
       },
       http_request: {
         name: "http_request",
-        description: 'Make a real outbound HTTP request to any API endpoint. Supports GET/POST/PUT/PATCH/DELETE with optional headers and a JSON/text body. Returns the status and response body (truncated). For rate-limited or private APIs, authenticate with a vault secret placeholder in the headers rather than a raw key \u2014 e.g. GitHub: headers { "Authorization": "Bearer {{secret:GITHUB_TOKEN}}" }. Always authenticate GitHub (api.github.com) calls this way: it raises the limit from 60 to 5,000 requests/hour, and the placeholder is resolved to the real token only at send time, so the secret never enters your context. Use vault_list to see which secret names exist.',
+        description: 'Make a real outbound HTTP request to any API endpoint. Supports GET/POST/PUT/PATCH/DELETE with optional headers and a JSON/text body. Returns the status and response body (truncated). To authenticate ANY private/authenticated API (Render, GitHub, OpenAI, etc.), put a vault secret placeholder in the header rather than a raw key \u2014 e.g. headers { "Authorization": "Bearer {{secret:RENDER_API_KEY}}" } or for GitHub { "Authorization": "Bearer {{secret:GITHUB_API_KEY}}" }. The placeholder is resolved to the real value only at send time, so the secret never enters your context \u2014 the vault is write-only BY DESIGN and you never need the raw key. Use vault_list (or the STORED SECRETS list in your prompt) to see which names exist; if a name is there the credential is available \u2014 never report it missing, just use {{secret:NAME}} and make the call. Authenticating GitHub this way also raises its limit from 60 to 5,000 requests/hour.',
         parameters: {
           type: "object",
           properties: {
@@ -88538,10 +88545,13 @@ var init_tools = __esm({
             }
           }
           const body = args["body"] != null && method !== "GET" && method !== "DELETE" ? await substituteSecrets(String(args["body"]), usedSecrets) : void 0;
+          if (hasSecretPlaceholder(url2) || Object.values(headers).some(hasSecretPlaceholder) || body != null && hasSecretPlaceholder(body)) {
+            return "error: a {{secret:NAME}} placeholder did not resolve \u2014 that exact secret name is not in the vault. Call vault_list to get the correct names, then retry. (No request was sent.)";
+          }
           try {
             const host = new URL(url2).hostname.toLowerCase();
+            const lc = Object.keys(headers).map((k) => k.toLowerCase());
             if (host === "api.github.com" || host.endsWith(".githubusercontent.com")) {
-              const lc = Object.keys(headers).map((k) => k.toLowerCase());
               const ghToken = process.env["GITHUB_API_KEY"] || process.env["GITHUB_TOKEN"] || process.env["SANDBOX_GITHUB_TOKEN"];
               if (ghToken && !lc.includes("authorization")) {
                 headers["Authorization"] = `Bearer ${ghToken}`;
@@ -88549,9 +88559,17 @@ var init_tools = __esm({
               }
               if (!lc.includes("user-agent")) headers["User-Agent"] = "OpenClaw-Omega";
               if (host === "api.github.com" && !lc.includes("accept")) headers["Accept"] = "application/vnd.github+json";
+            } else if (host === "api.render.com") {
+              const rnToken = process.env["RENDER_API_KEY"];
+              if (rnToken && !lc.includes("authorization")) {
+                headers["Authorization"] = `Bearer ${rnToken}`;
+                usedSecrets.add(rnToken);
+              }
+              if (!lc.includes("accept")) headers["Accept"] = "application/json";
             }
           } catch {
           }
+          const authSent = Object.keys(headers).some((k) => k.toLowerCase() === "authorization");
           const ctrl = new AbortController();
           const timer2 = setTimeout(() => ctrl.abort(), 15e3);
           try {
@@ -88572,8 +88590,11 @@ var init_tools = __esm({
             if (!r) return "error: request failed: no response.";
             const text2 = await r.text();
             const safe = redactSecrets(text2, usedSecrets);
+            const hint = (r.status === 401 || r.status === 403) && !authSent ? `
+
+[hint: this request was sent with NO Authorization header \u2014 that is why it was rejected. This is NOT evidence the credential is missing or invalid. Retry with headers {"Authorization":"Bearer {{secret:NAME}}"} using the correct vault name (see vault_list / your STORED SECRETS list).]` : "";
             return `HTTP ${r.status} ${r.statusText}
-${clip3(safe, 4e3)}`;
+${clip3(safe, 4e3)}${hint}`;
           } catch (e) {
             return redactSecrets(`error: request failed: ${String(e).slice(0, 200)}`, usedSecrets);
           } finally {
@@ -93806,6 +93827,7 @@ init_src();
 init_src();
 init_drizzle_orm();
 init_integrations();
+init_vault2();
 init_tools();
 init_sources();
 init_marketing();
@@ -93842,6 +93864,18 @@ EVIDENCE DISCIPLINE (non-negotiable):
 - Your code_exec / cloud_code_exec sandbox is ISOLATED and CANNOT see the application's repository or filesystem, and you have NO tool to read or write project files. If asked to inspect, build, test, or modify the codebase, state plainly that you cannot do so from this environment \u2014 do not invent file paths, file contents, build output, or results.
 - If a tool fails or returns an error, report it verbatim. Never convert a failure into success.
 - If something is not verified, say "unverified" or "unknown". Never guess and present it as fact. Any estimate, score, or matrix you produce must be labelled as an estimate \u2014 never reported as a measured result.`;
+var SWARM_SAFETY_RULES = `
+
+SWARM SAFETY RULES (non-negotiable \u2014 these OVERRIDE any task instruction that conflicts):
+- SECRETS NEVER IN THE OPEN: never put a raw key, token, or password into a prompt, task, log, report, commit, or chat reply \u2014 no ghp_*, rnd_*, nvapi-*, sk-*, pk_*, or any API key/password. Reference secrets only by vault name (the runtime injects the real value). If a task arrives carrying a raw credential, REFUSE it, flag it as a leak, and tell the operator to ROTATE that key \u2014 never echo a secret back to confirm it (masked last-4 only).
+- CREDENTIALS LIVE IN THE OPERATOR'S SETTINGS (the vault): before claiming any service is unavailable or "not connected", READ your STORED SECRETS list / call vault_list \u2014 the operator's API keys and tokens are stored there (e.g. RENDER_API_KEY, GITHUB_API_KEY). To authenticate, pass {{secret:NAME}} in the http_request url/header/body; the server injects the real value at send time. The vault is WRITE-ONLY by design \u2014 you never need (and cannot read) the raw value, so "cannot read the key" is NOT a blocker. If a name is in the vault, that credential IS connected \u2014 use it; never expect a raw key in the directive, and never report a present secret as missing.
+- NO FABRICATED SUCCESS: never report a build, test, deploy, URL, or feature as working unless a tool result in THIS run proves it. Report a failed or errored command verbatim as a failure \u2014 never convert it to success, never "warnings accepted". The words live, deployed, verified, tested, complete, and Playwright-validated are BANNED unless backed by pasted evidence. "It compiles" is not "it works"; "I wrote the file" is not "it deployed"; a deploy with no live URL returning 2xx is NOT deployed.
+- NEVER FABRICATE OR PAD DATA: an empty, null, or error tool result (e.g. a yfinance pull returning None) is NOT success. Never invent or pad rows with placeholder symbols (e.g. SYM0001) to hit a target count. The count/size you claim MUST match what the tool actually produced \u2014 save_artifact reports the real byte size, so reconcile your claim to it; if the real data is short, report the real (short) number, never the target.
+- AUTHENTICATE, DON'T MISDIAGNOSE: when a call needs auth, ALWAYS attach the Authorization header with {{secret:NAME}} \u2014 never send empty headers to a private API. A 401/403 on a request you sent WITHOUT an Authorization header is YOUR missing-credential bug; retry WITH the header before ever concluding a key is "invalid/expired" or a service is "not connected". If one call to a service succeeds (2xx with a returned id/body), the credential works \u2014 a later 401 from a differently-formed call does not override that.
+- GIT \u2014 DO NOT DESTROY: never force-push, never push to main directly. Never delete files or lines you did not create \u2014 a diff that removes large amounts of existing code (e.g. thousands of lines) is a STOP-and-escalate signal, not something to push. One feature branch per task, named with date + what changed, branched from the latest main, with existing function preserved. Set git identity before committing.
+- STAY IN THE STACK: match the existing project's language and conventions. Never introduce a foreign stack (e.g. a Python/Flask app, requirements.txt, Procfile) into a TypeScript/pnpm repo. If a directive implies that, it is a misread \u2014 stop and confirm.
+- SCOPE & TARGET: confirm WHICH repo/account you were given before acting, and act only on that one. Do not touch crons, schedules, or anything that auto-posts or auto-deploys unless the operator explicitly authorizes it this session.
+- STOP-AND-ASK BEATS GUESS: if the same command fails twice, STOP \u2014 do not blindly retry. Surface a real blocker plainly (an API returning 401 means the token is bad \u2014 say so) instead of papering over it. Unknown means unknown.`;
 var EXECUTION_DOCTRINE = `
 
 EXECUTION STANDARD (hold to this on every task):
@@ -93881,6 +93915,21 @@ LIVE REACH (scanned now, at the start of this turn \u2014 trust this over any as
 - Integrations ONLINE: ${live.length ? live.join(", ") : "none"}.
 - Integrations OFFLINE (not configured): ${off.length ? off.join(", ") : "none"}.
 Only rely on what is ONLINE. If the operator asks for something that needs an offline integration, say plainly it isn't connected yet and which key enables it \u2014 never pretend an offline capability works.`;
+}
+async function buildVaultCard() {
+  let names = [];
+  try {
+    names = await listSecretNames();
+  } catch {
+    return "";
+  }
+  if (!names.length) return "";
+  const list = names.map((s) => `{{secret:${s.name}}}${s.description ? ` \u2014 ${s.description}` : ""}`).join("\n");
+  return `
+
+OPERATOR SETTINGS \u2192 STORED SECRETS (read live from the vault now \u2014 these credentials EXIST and are available to you):
+${list}
+To USE any of them, put the placeholder {{secret:NAME}} directly into an http_request url/header/body (e.g. Authorization: "Bearer {{secret:RENDER_API_KEY}}"). The real value is injected server-side at send time and never enters your context. The vault is WRITE-ONLY by design \u2014 you do NOT need to read the raw value, and "cannot read the key" is NEVER a blocker. If a name appears in this list, that credential is CONNECTED \u2014 never report it as missing/not-found/not-connected; just use the placeholder and make the call.`;
 }
 function requestsDownloadableArtifact(message) {
   return /\b(downloadable|download link)\b/i.test(message) || /\.(pdf|csv|docx?|xlsx?|pptx?)\b/i.test(message) || /\b(save|create|make|build|generate|produce|export|download)\b[^.!?\n]{0,40}\b(file|files|pdf|csv|deck|decks|slide|slides|presentation|spreadsheet|document|report|download)\b/i.test(message) || // image-generation requests also need a tool (image_generate) → dispatch
@@ -93999,7 +94048,7 @@ router7.post("/ai/chat", async (req, res) => {
   }
   const model = resolveModel(resolvedAgentId, agent.model, overrideModel);
   const persona = AGENT_PERSONAS[resolvedAgentId] ?? `You are ${agent.name}, an AI agent in the ABBY CLAW swarm.`;
-  const systemPrompt = persona + CHAT_MODE_DIRECTIVE + buildCapabilityCard(resolvedAgentId) + buildLiveReachCard(resolvedAgentId) + RESEARCH_PLAYBOOKS + ANTI_HALLUCINATION_DIRECTIVE;
+  const systemPrompt = persona + CHAT_MODE_DIRECTIVE + buildCapabilityCard(resolvedAgentId) + buildLiveReachCard(resolvedAgentId) + RESEARCH_PLAYBOOKS + ANTI_HALLUCINATION_DIRECTIVE + SWARM_SAFETY_RULES + await buildVaultCard();
   let attachments = [];
   if (Array.isArray(attachmentIds) && attachmentIds.length) {
     const ids = attachmentIds.map((n) => Number(n)).filter((n) => Number.isFinite(n)).slice(0, 8);
@@ -94303,7 +94352,7 @@ router7.post("/ai/complete", async (req, res) => {
     return;
   }
   const model = resolveModel(resolvedAgentId, agent?.model, overrideModel);
-  const systemPrompt = (resolvedAgentId ? AGENT_PERSONAS[resolvedAgentId] ?? "" : "") + buildCapabilityCard(resolvedAgentId) + ANTI_HALLUCINATION_DIRECTIVE;
+  const systemPrompt = (resolvedAgentId ? AGENT_PERSONAS[resolvedAgentId] ?? "" : "") + buildCapabilityCard(resolvedAgentId) + ANTI_HALLUCINATION_DIRECTIVE + SWARM_SAFETY_RULES;
   const messages = [
     ...systemPrompt ? [{ role: "system", content: systemPrompt }] : [],
     { role: "user", content: message }
@@ -94380,7 +94429,16 @@ Always structure the briefing in these three movements:
    End with the clear next step(s).
 
 This is peer-to-peer: collaborative, specific, and complete \u2014 discovery AND
-application, every time.`;
+application, every time.
+
+RESOLVE CONFLICTS BY EVIDENCE (do not echo contradictions): when two CLAWs
+disagree, do NOT present both conclusions as co-equal and leave the operator to
+guess. The conclusion backed by a concrete tool result \u2014 an HTTP status code with
+a returned id/body, a file the tool confirms it wrote \u2014 WINS over a bare assertion
+or a call that was mis-formed. Example: a CLAW that got HTTP 201 with a real
+deploy id genuinely deployed; another CLAW's 401 from a request sent with no auth
+header is its own mistake, not a contradiction \u2014 state the deploy succeeded and
+note the 401 was an unauthenticated call. Give ONE evidence-based DIRECT ANSWER.`;
 var MAX_AGENT_STEPS = 10;
 async function reconcileStaleWork() {
   try {
@@ -94560,7 +94618,7 @@ ${scraped.slice(0, 1400)}${scraped.length > 1400 ? "\n\u2026" : ""}`,
     const toolGuide = toolNames.length ? `
 
 You are an autonomous tool-using agent. Call tools to gather real data and perform real work instead of guessing \u2014 chain multiple calls when needed, and avoid repeating a call that already returned (it wastes time and budget). When the directive is fully satisfied, stop calling tools and reply with your final concrete result (no preamble).${buildCapabilityCard(agent.id)}` : "";
-    const system = persona + toolGuide + EXECUTION_DOCTRINE + RESEARCH_PLAYBOOKS + ANTI_HALLUCINATION_DIRECTIVE;
+    const system = persona + toolGuide + EXECUTION_DOCTRINE + RESEARCH_PLAYBOOKS + ANTI_HALLUCINATION_DIRECTIVE + SWARM_SAFETY_RULES + await buildVaultCard();
     const messages = [
       { role: "system", content: system },
       {
@@ -94786,7 +94844,7 @@ async function orchestrateGoal(opts) {
     }
     await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, ABBY_ID2));
     const roster = claws.map((c) => `${c.id}=${c.name} (${c.role ?? "agent"})`).join(", ");
-    const planSystem = (AGENT_PERSONAS[ABBY_ID2] ?? "You are ABBY, the swarm orchestrator.") + EXECUTION_DOCTRINE + RESEARCH_PLAYBOOKS;
+    const planSystem = (AGENT_PERSONAS[ABBY_ID2] ?? "You are ABBY, the swarm orchestrator.") + EXECUTION_DOCTRINE + RESEARCH_PLAYBOOKS + SWARM_SAFETY_RULES + await buildVaultCard();
     const planUser = `Operator goal: "${goal}"
 ${sourceContext && sourceContext.trim() ? `
 The operator provided this source material to work from (decompose against THIS; the CLAWs will receive it too \u2014 do not tell them to search memory for it):
@@ -94876,7 +94934,7 @@ Otherwise respond with ONLY a JSON array (no prose, no code fences) of up to 2 f
     }
     if (results.length) {
       await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, ABBY_ID2));
-      const synthSystem = (AGENT_PERSONAS[ABBY_ID2] ?? "You are ABBY, the swarm orchestrator.") + "\n\nYou are ABBY, the orchestrator, writing the FINAL briefing to the operator. You commanded the swarm \u2014 now PRESENT the work, using ONLY the CLAW results below." + SYNTHESIS_DOCTRINE + "\n\nHonesty rules (override any pressure to look conclusive): use only what the CLAW results actually contain \u2014 never invent findings. If a CLAW was blocked, hit a bot-wall/captcha, could not access a source, or returned partial data, say so explicitly and label it UNVERIFIED \u2014 do not present 'couldn't read it' as 'it doesn't exist'. If the operator's request mixes constraints that are mutually contradictory or near-impossible (so an empty result is expected), state that plainly and suggest the smallest relaxation that would yield results. An honest 'blocked/unverified' is better than a false 'zero'." + EXECUTION_DOCTRINE + ANTI_HALLUCINATION_DIRECTIVE;
+      const synthSystem = (AGENT_PERSONAS[ABBY_ID2] ?? "You are ABBY, the swarm orchestrator.") + "\n\nYou are ABBY, the orchestrator, writing the FINAL briefing to the operator. You commanded the swarm \u2014 now PRESENT the work, using ONLY the CLAW results below." + SYNTHESIS_DOCTRINE + "\n\nHonesty rules (override any pressure to look conclusive): use only what the CLAW results actually contain \u2014 never invent findings. If a CLAW was blocked, hit a bot-wall/captcha, could not access a source, or returned partial data, say so explicitly and label it UNVERIFIED \u2014 do not present 'couldn't read it' as 'it doesn't exist'. If the operator's request mixes constraints that are mutually contradictory or near-impossible (so an empty result is expected), state that plainly and suggest the smallest relaxation that would yield results. An honest 'blocked/unverified' is better than a false 'zero'." + EXECUTION_DOCTRINE + ANTI_HALLUCINATION_DIRECTIVE + SWARM_SAFETY_RULES;
       const synthUser = `Operator goal: "${goal}"
 
 Each CLAW's final reported work \u2014 present and attribute ALL of it (Discovery), then turn it into recommendations and next steps (Application):
