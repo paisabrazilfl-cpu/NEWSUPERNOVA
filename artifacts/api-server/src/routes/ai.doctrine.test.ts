@@ -16,6 +16,7 @@ import {
   ANTI_HALLUCINATION_DIRECTIVE,
   RESEARCH_PLAYBOOKS,
   SWARM_SAFETY_RULES,
+  CODING_LIFECYCLE_DOCTRINE,
   requestsDownloadableArtifact,
   requestsImage,
   requestsConnectedAccountAction,
@@ -286,5 +287,41 @@ describe("SWARM_SAFETY_RULES — hardened guardrails from the STOCKVAULT inciden
 
   it("requires stop-and-ask over blind retry / guessing", () => {
     expect(SWARM_SAFETY_RULES).toContain("STOP-AND-ASK BEATS GUESS");
+  });
+});
+
+describe("CODING_LIFECYCLE_DOCTRINE — hardened, non-optional engineering workflow", () => {
+  it("mandates autonomy: fix it yourself, do not hand back fixable to-dos", () => {
+    expect(CODING_LIFECYCLE_DOCTRINE).toContain("FIX IT YOURSELF");
+    expect(CODING_LIFECYCLE_DOCTRINE.toLowerCase()).toContain("can i fix this");
+  });
+
+  it("requires methodical dated branch names off the latest project with zero loss", () => {
+    expect(CODING_LIFECYCLE_DOCTRINE).toContain("BRANCH-PER-PUSH");
+    expect(CODING_LIFECYCLE_DOCTRINE.toUpperCase()).toContain("ZERO LOSS OF FUNCTION");
+    expect(CODING_LIFECYCLE_DOCTRINE).toContain("NEVER REGRESS");
+  });
+
+  it("encodes the full self-reflect → plan → execute → verify → review lifecycle", () => {
+    for (const phase of [
+      "Self-Reflection",
+      "Planning",
+      "Execution",
+      "Observation",
+      "Verification",
+      "Playwright",
+      "Regression Check",
+      "Root Cause Analysis",
+      "Correction Loop",
+      "Reflective Alignment Check",
+    ]) {
+      expect(CODING_LIFECYCLE_DOCTRINE, `lifecycle should include "${phase}"`).toContain(phase);
+    }
+  });
+
+  it("requires evidence-based reporting with an execution trace + acceptance criteria", () => {
+    expect(CODING_LIFECYCLE_DOCTRINE).toContain("EVIDENCE-BASED REPORTING");
+    expect(CODING_LIFECYCLE_DOCTRINE).toContain("Execution Trace");
+    expect(CODING_LIFECYCLE_DOCTRINE).toContain("Acceptance Criteria");
   });
 });

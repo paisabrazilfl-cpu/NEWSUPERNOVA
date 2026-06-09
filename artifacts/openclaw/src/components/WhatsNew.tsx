@@ -2,6 +2,7 @@ import { useState } from "react";
 import {
   Sparkles, X, Image as ImageIcon, FileDown, Paperclip, Mic, Copy, Compass,
   BookOpen, ShieldCheck, MessagesSquare, Wrench, RotateCcw, Link2, Gauge,
+  LayoutTemplate, Globe, KeyRound, Scale, BadgeCheck,
 } from "lucide-react";
 
 /**
@@ -17,6 +18,9 @@ interface Item {
 }
 
 const CAPABILITIES: Item[] = [
+  { icon: LayoutTemplate, title: "$0 on-brand image cards", body: "Quotes, hooks, news, and stat posts render as real 1080×1080 PNGs by code — terminal/cyber on-brand, at about $0 each. The swarm reaches for these before paid image generation, paying only when you genuinely need a photoreal picture." },
+  { icon: Globe, title: "ASCII world stories", body: "Generate a stylized ASCII \"world\" story or triptych as a real, shareable image — a distinct on-brand visual format alongside the cards." },
+  { icon: KeyRound, title: "Uses your saved API keys automatically", body: "The swarm reads the credentials in Settings → Stored Secrets and authenticates with them at call time (write-only — never shown to the model). Tasks needing Render, GitHub, and other APIs just work instead of reporting \"not connected.\"" },
   { icon: ImageIcon, title: "Image generation", body: "Ask for any image, logo, or illustration and get a real, downloadable PNG — not a description. Even verb-less prompts like \"ultra realistic image of a dog\" work." },
   { icon: FileDown, title: "Downloadable files", body: "PDFs, CSVs, decks, and documents are genuinely created and given a download link — never hallucinated." },
   { icon: Paperclip, title: "File & image upload", body: "Attach files or images in chat; ABBY reads them with vision + OCR and works from their contents." },
@@ -31,6 +35,9 @@ const CAPABILITIES: Item[] = [
 ];
 
 const FIXES: Item[] = [
+  { icon: BadgeCheck, title: "No fabricated success or padded data", body: "Agents report only what they actually ran and verified — no fake \"deployed,\" no placeholder rows padded to hit a target count, no empty/None results dressed up as success." },
+  { icon: KeyRound, title: "A working key is never called \"not connected\"", body: "Authenticated API calls auto-attach your stored token, and a 401 from a missing auth header is caught and retried — instead of being mis-reported as an invalid or expired key." },
+  { icon: Scale, title: "Conflicting agent results resolved by evidence", body: "When two CLAWs disagree, ABBY trusts the one with concrete proof — a real deploy id beats an unauthenticated 401 — and gives one clear answer instead of echoing both." },
   { icon: ImageIcon, title: "No more \"I can't generate images\"", body: "Image requests now route to the real image tool every time, instead of being refused inline." },
   { icon: Wrench, title: "Big generations don't fail anymore", body: "Large code and deck outputs no longer break on truncated tool-call arguments — the agent retries smaller and recovers." },
   { icon: RotateCcw, title: "Interrupted ≠ failed", body: "A deploy or restart now shows as amber \"interrupted,\" not a red CLAW \"failure,\" so the failure count reflects real failures only." },
