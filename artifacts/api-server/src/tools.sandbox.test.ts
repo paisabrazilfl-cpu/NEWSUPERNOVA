@@ -25,7 +25,33 @@ vi.mock("./lib/sandbox", () => ({
   gitWriteConfigured: () => true,
 }));
 
-import { TOOL_REGISTRY } from "./tools";
+import { TOOL_REGISTRY, normalizeGitHubAuth } from "./tools";
+
+describe("normalizeGitHubAuth — fix GitHub git auth form", () => {
+  it("rewrites a bare-token github URL to the x-access-token form that works", () => {
+    expect(normalizeGitHubAuth("git push https://ghp_abc123@github.com/o/r.git")).toBe(
+      "git push https://x-access-token:ghp_abc123@github.com/o/r.git",
+    );
+  });
+
+  it("leaves an already-correct x-access-token URL untouched", () => {
+    const ok = "https://x-access-token:ghp_abc123@github.com/o/r.git";
+    expect(normalizeGitHubAuth(ok)).toBe(ok);
+  });
+
+  it("leaves a credential-free github URL untouched", () => {
+    const plain = "git clone --mirror https://github.com/paisabrazilfl-cpu/BOS-AURA.git";
+    expect(normalizeGitHubAuth(plain)).toBe(plain);
+  });
+
+  it("rewrites every occurrence (clone source + push remote)", () => {
+    const s =
+      "git remote set-url origin https://TOK@github.com/o/r.git && git push https://TOK@github.com/o/r.git";
+    expect(normalizeGitHubAuth(s)).toBe(
+      "git remote set-url origin https://x-access-token:TOK@github.com/o/r.git && git push https://x-access-token:TOK@github.com/o/r.git",
+    );
+  });
+});
 
 const ctx = { agentId: 1, agentName: "ABBY" } as never;
 

@@ -170,7 +170,7 @@ export async function buildVaultCard(): Promise<string> {
   const list = names.map((s) => `{{secret:${s.name}}}${s.description ? ` — ${s.description}` : ""}`).join("\n");
   return (
     `\n\nOPERATOR SETTINGS → STORED SECRETS (read live from the vault now — these credentials EXIST and are available to you):\n${list}\n` +
-    `To USE any of them, put the placeholder {{secret:NAME}} directly into an http_request (url/header/body, e.g. Authorization: "Bearer {{secret:RENDER_API_KEY}}") OR into a sandbox_exec/cloud_code_exec script (e.g. an authenticated git push: https://{{secret:GITHUB_API_KEY}}@github.com/owner/repo.git). The real value is injected at run time, never enters your context, and is redacted from the output. The vault is WRITE-ONLY by design — you do NOT need to read the raw value, and "cannot read the key" is NEVER a blocker. If a name appears in this list, that credential is CONNECTED — never report it as missing/not-found/not-connected; just use the placeholder and run the call.`
+    `To USE any of them, put the placeholder {{secret:NAME}} directly into an http_request (url/header/body, e.g. Authorization: "Bearer {{secret:RENDER_API_KEY}}") OR into a sandbox_exec/cloud_code_exec script (e.g. an authenticated git push: https://x-access-token:{{secret:GITHUB_API_KEY}}@github.com/owner/repo.git). The real value is injected at run time, never enters your context, and is redacted from the output. The vault is WRITE-ONLY by design — you do NOT need to read the raw value, and "cannot read the key" is NEVER a blocker. If a name appears in this list, that credential is CONNECTED — never report it as missing/not-found/not-connected; just use the placeholder and run the call.`
   );
 }
 

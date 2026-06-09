@@ -593,6 +593,22 @@ function runSandboxed(language: string, source: string): Promise<string> {
 
 // ─── Tool registry ───────────────────────────────────────────────────────────
 
+/**
+ * Normalize GitHub HTTPS auth in a shell script to the form that actually works.
+ *
+ * GitHub rejects `https://<token>@github.com/...` (token as username, EMPTY
+ * password) with "Invalid username or token. Password authentication is not
+ * supported for Git operations." — the exact error the swarm hit on every mirror
+ * push. The form that authenticates for PAT/GitHub-App tokens is
+ * `https://x-access-token:<token>@github.com/...`. We rewrite any single-userinfo
+ * github.com URL to that form so an authenticated clone/push/mirror just works,
+ * regardless of how the agent wrote the URL. URLs that already carry a
+ * `user:pass`-style colon are left untouched.
+ */
+export function normalizeGitHubAuth(script: string): string {
+  return script.replace(/https:\/\/([^/@:\s]+)@github\.com/g, "https://x-access-token:$1@github.com");
+}
+
 export const TOOL_REGISTRY: Record<string, ToolDef> = {
   web_scrape: {
     name: "web_scrape",
@@ -848,7 +864,7 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
       "Run a shell script inside a fresh, isolated E2B cloud VM (its own real computer — node, git, network, full Linux). Use for anything that needs a real dev environment: clone a public repo, install packages, run a build/test suite, run scripts, curl APIs, etc. " +
       "It is also your INTERACTIVE-AUTOMATION substrate: pip/npm-install and drive real tools here — e.g. Playwright (`pip install playwright && playwright install chromium`) to navigate multi-step web forms, fill fields, click, and submit; or reportlab/fpdf2/fillpdf/pypdf to generate and fill official PDF forms (e.g. AcroForm fields). Print results/paths to stdout and read back any output. " +
       "STATELESS: each call is a clean disposable VM and files do NOT persist between calls — generate a file, base64 it, and print it ALL in ONE script (then pass to save_artifact); never write in one call and read in the next. " +
-      "It cannot read the OpenClaw server, its database, or its filesystem — BUT it CAN authenticate using your vault secrets via the {{secret:NAME}} placeholder: the real value is injected into the command at run time and redacted from the returned output. So authenticated git works, e.g. `git remote set-url origin https://{{secret:GITHUB_API_KEY}}@github.com/<owner>/<repo>.git && git push`. Use vault_list / your STORED SECRETS list for exact names. For changes to the OpenClaw repo with an automatic PR, prefer sandbox_repo_pr.",
+      "It cannot read the OpenClaw server, its database, or its filesystem — BUT it CAN authenticate using your vault secrets via the {{secret:NAME}} placeholder: the real value is injected into the command at run time and redacted from the returned output. So authenticated git works, e.g. `git remote set-url origin https://x-access-token:{{secret:GITHUB_API_KEY}}@github.com/<owner>/<repo>.git && git push` (the x-access-token: form is auto-applied even if you omit it). Use vault_list / your STORED SECRETS list for exact names. For changes to the OpenClaw repo with an automatic PR, prefer sandbox_repo_pr.",
     parameters: {
       type: "object",
       properties: {
@@ -865,10 +881,14 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
       // without the literal placeholder reaching the shell. Raw values are injected
       // ONLY into the command sent to the VM and redacted from the returned output.
       const usedSecrets = new Set<string>();
-      const script = await substituteSecrets(raw, usedSecrets);
+      let script = await substituteSecrets(raw, usedSecrets);
       if (hasSecretPlaceholder(script)) {
         return "error: a {{secret:NAME}} placeholder did not resolve — that exact secret name is not in the vault. Call vault_list for the correct names. (Nothing was executed.)";
       }
+      // Rewrite "https://<token>@github.com" → "https://x-access-token:<token>@…"
+      // so authenticated git push/mirror works (the bare-token form is rejected
+      // by GitHub as "password authentication is not supported").
+      script = normalizeGitHubAuth(script);
       return redactSecrets(await runInSandbox(script), usedSecrets);
     },
   },
