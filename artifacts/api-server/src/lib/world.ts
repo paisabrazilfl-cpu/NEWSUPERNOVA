@@ -411,9 +411,20 @@ async function watchPublishedPost(mediaId?: string): Promise<{ ok: boolean; url?
 async function storyIsLive(pubId: string): Promise<{ ok: boolean; raw: string }> {
   try {
     const r = await composioExecute({ toolkit: "instagram", endpoint: "/me/stories?fields=id,media_type,timestamp&limit=25", method: "GET" });
-    const arr = (parseJson(r)?.["data"]) as Array<Record<string, unknown>> | undefined;
-    const ok = Array.isArray(arr) && arr.some((m) => String(m["id"]) === String(pubId));
-    return { ok, raw: r.slice(0, 600) };
+    // Composio wraps the IG body as { data: <ig-response>, status }, and IG nests the
+    // list under its own `data` key — so the stories array is at j.data.data (same as
+    // /me/media). Reading j.data alone yields the wrapper object, not the array.
+    const j = parseJson(r);
+    const arr = ((j?.["data"] as Record<string, unknown> | undefined)?.["data"]) as Array<Record<string, unknown>> | undefined;
+    // Live if the published id is in the active-stories list. Fallback: a story
+    // timestamped within the last 5 min (guards against IG's publish-vs-listing id
+    // namespace differences seen in practice).
+    const byId = Array.isArray(arr) && arr.some((m) => String(m["id"]) === String(pubId));
+    const recent = Array.isArray(arr) && arr.some((m) => {
+      const t = Date.parse(String(m["timestamp"] ?? ""));
+      return Number.isFinite(t) && Date.now() - t < 5 * 60 * 1000;
+    });
+    return { ok: byId || recent, raw: r.slice(0, 600) };
   } catch (e) { return { ok: false, raw: `stories check error: ${String(e).slice(0, 200)}` }; }
 }
 
