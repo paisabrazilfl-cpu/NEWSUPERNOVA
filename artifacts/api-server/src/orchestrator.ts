@@ -35,6 +35,8 @@ import {
   ANTI_HALLUCINATION_DIRECTIVE,
   EXECUTION_DOCTRINE,
   RESEARCH_PLAYBOOKS,
+  SWARM_SAFETY_RULES,
+  buildVaultCard,
 } from "./routes/ai";
 import { isSwarmPaused } from "./routes/swarm";
 import {
@@ -399,7 +401,7 @@ export async function executeAgentCommand(opts: {
     const toolGuide = toolNames.length
       ? `\n\nYou are an autonomous tool-using agent. Call tools to gather real data and perform real work instead of guessing — chain multiple calls when needed, and avoid repeating a call that already returned (it wastes time and budget). When the directive is fully satisfied, stop calling tools and reply with your final concrete result (no preamble).${buildCapabilityCard(agent.id)}`
       : "";
-    const system = persona + toolGuide + EXECUTION_DOCTRINE + RESEARCH_PLAYBOOKS + ANTI_HALLUCINATION_DIRECTIVE;
+    const system = persona + toolGuide + EXECUTION_DOCTRINE + RESEARCH_PLAYBOOKS + ANTI_HALLUCINATION_DIRECTIVE + SWARM_SAFETY_RULES + (await buildVaultCard());
 
     const messages: ChatMessage[] = [
       { role: "system", content: system },
@@ -721,7 +723,7 @@ export async function orchestrateGoal(opts: {
     const roster = claws
       .map((c) => `${c.id}=${c.name} (${c.role ?? "agent"})`)
       .join(", ");
-    const planSystem = (AGENT_PERSONAS[ABBY_ID] ?? "You are ABBY, the swarm orchestrator.") + EXECUTION_DOCTRINE + RESEARCH_PLAYBOOKS;
+    const planSystem = (AGENT_PERSONAS[ABBY_ID] ?? "You are ABBY, the swarm orchestrator.") + EXECUTION_DOCTRINE + RESEARCH_PLAYBOOKS + SWARM_SAFETY_RULES + (await buildVaultCard());
     const planUser = `Operator goal: "${goal}"
 ${sourceContext && sourceContext.trim() ? `\nThe operator provided this source material to work from (decompose against THIS; the CLAWs will receive it too — do not tell them to search memory for it):\n"""\n${sourceContext.slice(0, 12000)}\n"""\n` : ""}
 Available CLAWs you command: ${roster}.
@@ -840,7 +842,8 @@ Otherwise respond with ONLY a JSON array (no prose, no code fences) of up to 2 f
         SYNTHESIS_DOCTRINE +
         "\n\nHonesty rules (override any pressure to look conclusive): use only what the CLAW results actually contain — never invent findings. If a CLAW was blocked, hit a bot-wall/captcha, could not access a source, or returned partial data, say so explicitly and label it UNVERIFIED — do not present 'couldn't read it' as 'it doesn't exist'. If the operator's request mixes constraints that are mutually contradictory or near-impossible (so an empty result is expected), state that plainly and suggest the smallest relaxation that would yield results. An honest 'blocked/unverified' is better than a false 'zero'." +
         EXECUTION_DOCTRINE +
-        ANTI_HALLUCINATION_DIRECTIVE;
+        ANTI_HALLUCINATION_DIRECTIVE +
+        SWARM_SAFETY_RULES;
       const synthUser = `Operator goal: "${goal}"\n\nEach CLAW's final reported work — present and attribute ALL of it (Discovery), then turn it into recommendations and next steps (Application):\n${results
         .map((r) => `### ${r.name}\n${r.result.slice(0, 3000)}`)
         .join("\n\n")}\n\nWrite your final orchestrator briefing for the operator now — direct answer first, then each CLAW's attributed discovery, then the application (recommendations + next steps). Peer-to-peer voice.`;

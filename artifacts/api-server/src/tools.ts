@@ -677,8 +677,8 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
     name: "http_request",
     description:
       "Make a real outbound HTTP request to any API endpoint. Supports GET/POST/PUT/PATCH/DELETE with optional headers and a JSON/text body. Returns the status and response body (truncated). " +
-      "For rate-limited or private APIs, authenticate with a vault secret placeholder in the headers rather than a raw key — e.g. GitHub: headers { \"Authorization\": \"Bearer {{secret:GITHUB_TOKEN}}\" }. " +
-      "Always authenticate GitHub (api.github.com) calls this way: it raises the limit from 60 to 5,000 requests/hour, and the placeholder is resolved to the real token only at send time, so the secret never enters your context. Use vault_list to see which secret names exist.",
+      "To authenticate ANY private/authenticated API (Render, GitHub, OpenAI, etc.), put a vault secret placeholder in the header rather than a raw key — e.g. headers { \"Authorization\": \"Bearer {{secret:RENDER_API_KEY}}\" } or for GitHub { \"Authorization\": \"Bearer {{secret:GITHUB_API_KEY}}\" }. " +
+      "The placeholder is resolved to the real value only at send time, so the secret never enters your context — the vault is write-only BY DESIGN and you never need the raw key. Use vault_list (or the STORED SECRETS list in your prompt) to see which names exist; if a name is there the credential is available — never report it missing, just use {{secret:NAME}} and make the call. Authenticating GitHub this way also raises its limit from 60 to 5,000 requests/hour.",
     parameters: {
       type: "object",
       properties: {
