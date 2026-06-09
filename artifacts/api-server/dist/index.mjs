@@ -26417,7 +26417,7 @@ var require_thread_stream = __commonJS({
 var require_transport = __commonJS({
   "../../node_modules/.pnpm/pino@9.14.0/node_modules/pino/lib/transport.js"(exports, module) {
     "use strict";
-    var { createRequire } = __require("module");
+    var { createRequire: createRequire2 } = __require("module");
     var getCallers = require_caller();
     var { join: join2, isAbsolute, sep } = __require("node:path");
     var sleep = require_atomic_sleep();
@@ -26528,7 +26528,7 @@ var require_transport = __commonJS({
         for (const filePath of callers) {
           try {
             const context = filePath === "node:repl" ? process.cwd() + sep : filePath;
-            fixTarget2 = createRequire(context).resolve(origin);
+            fixTarget2 = createRequire2(context).resolve(origin);
             break;
           } catch (err) {
             continue;
@@ -90461,36 +90461,41 @@ var uploads_default = router17;
 var import_express18 = __toESM(require_express2(), 1);
 
 // src/lib/worldEngine.ts
-import { createCanvas, GlobalFonts, Image } from "@napi-rs/canvas";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import fs from "node:fs";
-var MONO = "DejaVu Sans Mono";
-(() => {
+import { createRequire } from "node:module";
+var _canvas = null;
+var MONO = "monospace";
+var MONOB = "monospace";
+function canvasMod() {
+  if (_canvas) return _canvas;
+  const req = createRequire(import.meta.url);
+  const mod = req("@napi-rs/canvas");
   try {
     const here = path.dirname(fileURLToPath(import.meta.url));
     const candidates = [
       path.join(here, "..", "assets"),
-      // dist/  -> ../assets
       path.join(here, "..", "..", "assets"),
-      // src/lib -> ../../assets
       path.join(process.cwd(), "assets"),
       path.join(process.cwd(), "artifacts", "api-server", "assets")
     ];
     for (const dir of candidates) {
       const reg = path.join(dir, "DejaVuSansMono.ttf");
-      const regB = path.join(dir, "DejaVuSansMono-Bold.ttf");
       if (fs.existsSync(reg)) {
-        GlobalFonts.registerFromPath(reg, "WorldMono");
-        if (fs.existsSync(regB)) GlobalFonts.registerFromPath(regB, "WorldMonoB");
+        mod.GlobalFonts.registerFromPath(reg, "WorldMono");
+        const regB = path.join(dir, "DejaVuSansMono-Bold.ttf");
+        if (fs.existsSync(regB)) mod.GlobalFonts.registerFromPath(regB, "WorldMonoB");
         MONO = "WorldMono";
+        MONOB = "WorldMonoB";
         break;
       }
     }
   } catch {
   }
-})();
-var MONOB = MONO === "WorldMono" ? "WorldMonoB" : MONO;
+  _canvas = mod;
+  return mod;
+}
 function mulberry32(seed) {
   let a = seed >>> 0;
   return () => {
@@ -90507,6 +90512,7 @@ function renderWorldFrame(opts = {}) {
   const busy = !!opts.busy;
   const chapter = Math.max(0, opts.chapter ?? 0);
   const rnd = mulberry32((opts.seed ?? 7) + chapter * 101);
+  const { createCanvas } = canvasMod();
   const canvas = createCanvas(W, H);
   const ctx = canvas.getContext("2d");
   const bg = busy ? "#0b0710" : "#080a14";
