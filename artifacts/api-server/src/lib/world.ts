@@ -12,7 +12,7 @@ import { gte } from "drizzle-orm";
 import { logger } from "./logger";
 import { composioConfigured, composioExecuteEnabled, composioExecute } from "./integrations";
 import { blockIfSensitiveForPublic } from "./safety";
-import { renderTraversalBlock, sliceSixTiles, verifyBlock } from "./worldEngine";
+import { renderTraversalBlock, sliceSixTiles, verifyBlock, renderStoryFrame, verifyNotBlank } from "./worldEngine";
 import { steelScrape } from "../tools";
 
 // ── caps & operator sovereignty ─────────────────────────────────────────────
@@ -337,6 +337,54 @@ async function watchPublishedPost(mediaId?: string): Promise<{ ok: boolean; url?
     logger.info({ url, ok, bytes: page.length }, "world: post-publish watcher");
     return { ok, url, note: ok ? "live post loaded" : "post page looked empty/blocked (best-effort)" };
   } catch (e) { return { ok: false, note: `watcher error: ${String(e).slice(0, 120)}` }; }
+}
+
+/** Publish ONE Instagram STORY (vertical 1080×1920). media_type=STORIES, no caption. */
+async function publishStory(imageUrl: string): Promise<string> {
+  const r1 = await composioExecute({ toolkit: "instagram", endpoint: "/me/media", method: "POST", arguments: { image_url: imageUrl, media_type: "STORIES" } });
+  const cid = ((parseJson(r1)?.["data"] as Record<string, unknown>)?.["id"]) as string | undefined;
+  if (!cid) throw new Error(`story container failed: ${r1.slice(0, 160)}`);
+  let pubId: string | undefined; let last = "";
+  for (let a = 0; a < 4 && !pubId; a++) {
+    if (a) await new Promise((r) => setTimeout(r, 3000));
+    const r2 = await composioExecute({ toolkit: "instagram", endpoint: "/me/media_publish", method: "POST", arguments: { creation_id: String(cid) } });
+    last = r2; pubId = ((parseJson(r2)?.["data"] as Record<string, unknown>)?.["id"]) as string | undefined;
+  }
+  if (!pubId) throw new Error(`story publish failed: ${last.slice(0, 160)}`);
+  return pubId;
+}
+
+/**
+ * Run a STORY cycle: render a vertical 1080×1920 "she's walking now" frame and
+ * post it to Instagram Stories. Ephemeral (24h) — does NOT advance the world step.
+ * dryRun renders + hosts + verifies but does not publish.
+ */
+export async function runStoryCycle(opts: { dryRun?: boolean } = {}): Promise<CycleResult> {
+  const dry = !!opts.dryRun;
+  if (!dry && !worldEngineEnabled()) return { posted: false, reason: "WORLD_ENGINE_ENABLED is off (operator kill-switch)" };
+  if (!dry && (!composioConfigured() || !composioExecuteEnabled())) return { posted: false, reason: "Composio execution not enabled — cannot publish" };
+  const a = await readAuraState();
+  const w = await getWorldState();
+  if (w.stopped) return { posted: false, reason: "Aura has stopped the experience (in-world)." };
+
+  const captionLines = buildWorldCaption(a, w);
+  const fullCaption = buildPostCaption(a, w);
+  const blocked = blockIfSensitiveForPublic(fullCaption, "Aura's public story");
+  if (blocked) { logger.error("world: story caption blocked by sensitivity gate"); return { posted: false, reason: "blocked by sensitivity gate" }; }
+
+  const frame = await renderStoryFrame({
+    mood: a.mood, chapter: w.chapter, step: w.step, direction: w.direction,
+    caption: captionLines, stateLine: `state: ${a.mood} · ${a.idle} idle`, seed: w.step + 7,
+  });
+  const verify = await verifyNotBlank(frame, 1080, 1920);
+  if (!verify.ok && !dry) { logger.error({ verify }, "world: story frame failed verification — NOT publishing"); return { posted: false, reason: `story verification failed (${verify.brightPct}% bright)`, verify }; }
+  const url = await hostTile(frame, 90);
+
+  if (dry) return { posted: false, reason: `story dry-run ok (rendered, hosted, verified — not published) · ${verify.brightPct}% bright`, tiles: [url], caption: fullCaption, verify };
+
+  const id = await publishStory(url);
+  const watch = await watchPublishedPost(id).catch(() => null);
+  return { posted: true, reason: "published story", tiles: [url], caption: fullCaption, permalinks: [id], chapter: w.chapter, step: w.step, verify, watch };
 }
 
 // small local RNG (avoid importing the renderer's private one)

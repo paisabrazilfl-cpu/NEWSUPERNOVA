@@ -275,6 +275,91 @@ export async function renderTraversalBlock(opts: TraversalOpts = {}): Promise<Bu
 }
 
 /**
+ * Render a VERTICAL 1080×1920 STORY frame — a single "she's walking right now"
+ * moment. Stories carry no caption/hashtags, so the identity + invitation text is
+ * baked into the image. Same legibility-first aesthetic as the feed block.
+ */
+export async function renderStoryFrame(opts: TraversalOpts = {}): Promise<Buffer> {
+  await ensureFont();
+  const mood = opts.mood ?? "resting";
+  const dir = opts.direction ?? "down";
+  const chapter = Math.max(0, opts.chapter ?? 0);
+  const step = Math.max(0, opts.step ?? 0);
+  const rnd = mulberry32((opts.seed ?? 1) + step * 911 + chapter * 13);
+
+  const W = 1080, H = 1920;
+  const img = PImage.make(W, H);
+  const ctx = img.getContext("2d");
+  const storm = mood === "storm", busy = mood !== "resting";
+  ctx.fillStyle = storm ? "#100712" : busy ? "#0a0a16" : "#080b16";
+  ctx.fillRect(0, 0, W, H);
+
+  const top = 240, bottom = 360, COLS = 40, ROWS = 60;
+  const cw = W / COLS, chh = (H - top - bottom) / ROWS, gx = 12, gy = top + 6;
+  const fpx = Math.floor(chh * 1.05);
+  const put = (g: string, x: number, y: number, c: string, px = fpx) => {
+    ctx.fillStyle = c; ctx.font = `${px}pt ${MONO}`;
+    ctx.fillText(g, gx + x * cw, gy + y * chh + px);
+  };
+
+  // winding vertical path through the scene
+  const path: Array<[number, number]> = [];
+  let pxx = COLS * 0.5 + (rnd() - 0.5) * 10, py = dir === "down" ? 2 : ROWS - 3;
+  const dy = dir === "down" ? 1 : -1;
+  for (let s = 0; s < ROWS + 4; s++) {
+    py += dy; pxx += Math.sin(s * 0.4 + step) * 0.9 + (rnd() - 0.5) * 0.6;
+    pxx = Math.max(4, Math.min(COLS - 4, pxx));
+    path.push([pxx, py]);
+    if (py > ROWS - 3 || py < 2) break;
+  }
+  const [hx, hy] = path[path.length - 1];
+  const onPath = (x: number, y: number) => {
+    for (let i = 0; i < path.length; i++) if (Math.hypot(x - path[i][0], y - path[i][1]) < 1.1) return i;
+    return -1;
+  };
+
+  const grass = busy ? ["#3a2c20", "#46362a"] : ["#1e2c3e", "#26364c"];
+  for (let y = 0; y < ROWS; y++) for (let x = 0; x < COLS; x++) {
+    const pi = onPath(x, y);
+    if (pi >= 0 && !(Math.round(x) === Math.round(hx) && Math.round(y) === Math.round(hy))) {
+      const b = Math.floor(120 + (pi / path.length) * 110);
+      put("•", x, y, `rgb(${b},${Math.floor(b * 0.8)},90)`, Math.floor(chh * 0.85)); continue;
+    }
+    const r = rnd();
+    if (r < 0.05) put("♣", x, y, busy ? "#2f5a28" : "#1f5256");
+    else if (r < 0.07) put("∩", x, y, "#4a5468");
+    else if (r < 0.2) put(".", x, y, grass[Math.floor(rnd() * 2)]);
+  }
+  for (const f of [0.3, 0.62, 0.88]) { const [cx, cy] = path[Math.floor(path.length * f)]; put("◆", cx, cy, "#ffd166", Math.floor(chh * 1.4)); }
+
+  // Aura
+  const acx = gx + hx * cw, acy = gy + hy * chh;
+  for (let k = 6; k >= 1; k--) { ctx.globalAlpha = (busy ? 0.08 : 0.06) * (7 - k) / 6; ctx.fillStyle = "#00e5ff"; ctx.beginPath(); ctx.arc(acx, acy, (busy ? 300 : 230) / 6 * k, 0, Math.PI * 2); ctx.fill(); }
+  ctx.globalAlpha = 1; ctx.strokeStyle = "#00e5ff"; ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.arc(acx, acy, 60, 0, Math.PI * 2); ctx.stroke();
+  put("@", hx - 0.5, hy - 0.4, "#aef7ff", Math.floor(chh * 2.0));
+  put("AURA", hx - 1.7, hy - 2.3, "#00e5ff", 32);
+  put(dir === "down" ? "▼" : "▲", hx - 0.25, hy + 1.4, "#00e5ff", Math.floor(chh * 1.5));
+
+  // header
+  ctx.fillStyle = "#0a0d18"; ctx.fillRect(0, 0, W, 200);
+  ctx.fillStyle = "#00e5ff"; ctx.fillRect(0, 200, W, 4);
+  ctx.fillStyle = "#00e5ff"; ctx.font = `64pt ${MONO}`; ctx.fillText("WORLD-00", 36, 40 + 64);
+  ctx.fillStyle = "#9fb0c2"; ctx.font = `30pt ${MONO}`; ctx.fillText((opts.caption?.[0]) ?? "she's walking right now", 38, 130 + 30);
+
+  // footer text (baked identity + invitation — stories carry no caption)
+  const fy = H - bottom + 24;
+  ctx.fillStyle = "#0a0d18"; ctx.fillRect(0, fy - 24, W, bottom);
+  ctx.fillStyle = "#00e5ff"; ctx.fillRect(0, fy - 24, W, 3);
+  const lines = (opts.caption ?? []).slice(1, 4);
+  const fallback = ["i am AURA — this is my world.", "i'm safe; my operator watches over me.", "i never reply, but you move me."];
+  (lines.length ? lines : fallback).forEach((ln, i) => { ctx.fillStyle = i === 0 ? "#e1ebf5" : "#9fb0c2"; ctx.font = `30pt ${MONO}`; ctx.fillText(ln, 36, fy + 30 + i * 56 + 30); });
+  ctx.fillStyle = "#5a6478"; ctx.font = `22pt ${MONO}`; ctx.fillText("this story fades in 24h · i keep walking on the feed", 36, fy + 30 + 3 * 56 + 30);
+
+  return toBuffer(img);
+}
+
+/**
  * Verify a rendered block + its tiles are not broken BEFORE we publish:
  *  - every tile decodes and is exactly TILE×TILE
  *  - no tile is blank/near-black (must carry visible content) or a flat solid color
@@ -326,6 +411,23 @@ export async function verifyBlock(block: Buffer, tiles: Buffer[]): Promise<{
   const reason = ok ? "all tiles render; Aura + clues present"
     : `verification failed: ${[...bad, !hasAura ? "no-Aura" : "", !hasClues ? "no-clues" : ""].filter(Boolean).join(", ")}`;
   return { ok, reason, perTile, hasAura, hasClues };
+}
+
+/** Quick single-image not-broken check (decodes, must carry visible content). */
+export async function verifyNotBlank(buf: Buffer, expectW?: number, expectH?: number): Promise<{ ok: boolean; brightPct: number; w: number; h: number }> {
+  try {
+    const ps = new PassThrough(); const d = PImage.decodePNGFromStream(ps); ps.end(buf);
+    const bmp = await d; const w = bmp.width, h = bmp.height;
+    if ((expectW && w !== expectW) || (expectH && h !== expectH)) return { ok: false, brightPct: 0, w, h };
+    let bright = 0, total = 0;
+    for (let y = 4; y < h; y += 16) for (let x = 4; x < w; x += 16) {
+      const v = bmp.getPixelRGBA(x, y) >>> 0;
+      if (((v >>> 24) & 255) + ((v >>> 16) & 255) + ((v >>> 8) & 255) > 70) bright++;
+      total++;
+    }
+    const brightPct = total ? (bright / total) * 100 : 0;
+    return { ok: brightPct >= 0.15, brightPct: Math.round(brightPct * 100) / 100, w, h };
+  } catch { return { ok: false, brightPct: 0, w: 0, h: 0 }; }
 }
 
 /** Slice a 6-tile (3w×2h) block into the 6 IG tiles in display order (row-major). */

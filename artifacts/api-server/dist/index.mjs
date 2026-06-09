@@ -28105,7 +28105,7 @@ var require_pino = __commonJS({
     function pinoBundlerAbsolutePath(p) {
       try {
         const path3 = __require("path");
-        const outputDir = "/home/runner/work/BOS-AURA/BOS-AURA/artifacts/api-server/dist";
+        const outputDir = "/home/user/BOS-AURA/artifacts/api-server/dist";
         return path3.resolve(outputDir, p.replace(/^\.\//, ""));
       } catch (e) {
         const f = new Function("p", "return new URL(p, import.meta.url).pathname");
@@ -93708,6 +93708,103 @@ async function renderTraversalBlock(opts = {}) {
   ctx.fillStyle = "#28344455";
   return toBuffer(img);
 }
+async function renderStoryFrame(opts = {}) {
+  await ensureFont();
+  const mood = opts.mood ?? "resting";
+  const dir = opts.direction ?? "down";
+  const chapter = Math.max(0, opts.chapter ?? 0);
+  const step = Math.max(0, opts.step ?? 0);
+  const rnd = mulberry32((opts.seed ?? 1) + step * 911 + chapter * 13);
+  const W = 1080, H = 1920;
+  const img = PImage.make(W, H);
+  const ctx = img.getContext("2d");
+  const storm = mood === "storm", busy = mood !== "resting";
+  ctx.fillStyle = storm ? "#100712" : busy ? "#0a0a16" : "#080b16";
+  ctx.fillRect(0, 0, W, H);
+  const top = 240, bottom = 360, COLS = 40, ROWS = 60;
+  const cw = W / COLS, chh = (H - top - bottom) / ROWS, gx = 12, gy = top + 6;
+  const fpx = Math.floor(chh * 1.05);
+  const put = (g, x, y, c, px = fpx) => {
+    ctx.fillStyle = c;
+    ctx.font = `${px}pt ${MONO}`;
+    ctx.fillText(g, gx + x * cw, gy + y * chh + px);
+  };
+  const path3 = [];
+  let pxx = COLS * 0.5 + (rnd() - 0.5) * 10, py = dir === "down" ? 2 : ROWS - 3;
+  const dy = dir === "down" ? 1 : -1;
+  for (let s = 0; s < ROWS + 4; s++) {
+    py += dy;
+    pxx += Math.sin(s * 0.4 + step) * 0.9 + (rnd() - 0.5) * 0.6;
+    pxx = Math.max(4, Math.min(COLS - 4, pxx));
+    path3.push([pxx, py]);
+    if (py > ROWS - 3 || py < 2) break;
+  }
+  const [hx, hy] = path3[path3.length - 1];
+  const onPath = (x, y) => {
+    for (let i = 0; i < path3.length; i++) if (Math.hypot(x - path3[i][0], y - path3[i][1]) < 1.1) return i;
+    return -1;
+  };
+  const grass = busy ? ["#3a2c20", "#46362a"] : ["#1e2c3e", "#26364c"];
+  for (let y = 0; y < ROWS; y++) for (let x = 0; x < COLS; x++) {
+    const pi = onPath(x, y);
+    if (pi >= 0 && !(Math.round(x) === Math.round(hx) && Math.round(y) === Math.round(hy))) {
+      const b = Math.floor(120 + pi / path3.length * 110);
+      put("\u2022", x, y, `rgb(${b},${Math.floor(b * 0.8)},90)`, Math.floor(chh * 0.85));
+      continue;
+    }
+    const r = rnd();
+    if (r < 0.05) put("\u2663", x, y, busy ? "#2f5a28" : "#1f5256");
+    else if (r < 0.07) put("\u2229", x, y, "#4a5468");
+    else if (r < 0.2) put(".", x, y, grass[Math.floor(rnd() * 2)]);
+  }
+  for (const f of [0.3, 0.62, 0.88]) {
+    const [cx, cy] = path3[Math.floor(path3.length * f)];
+    put("\u25C6", cx, cy, "#ffd166", Math.floor(chh * 1.4));
+  }
+  const acx = gx + hx * cw, acy = gy + hy * chh;
+  for (let k = 6; k >= 1; k--) {
+    ctx.globalAlpha = (busy ? 0.08 : 0.06) * (7 - k) / 6;
+    ctx.fillStyle = "#00e5ff";
+    ctx.beginPath();
+    ctx.arc(acx, acy, (busy ? 300 : 230) / 6 * k, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = "#00e5ff";
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.arc(acx, acy, 60, 0, Math.PI * 2);
+  ctx.stroke();
+  put("@", hx - 0.5, hy - 0.4, "#aef7ff", Math.floor(chh * 2));
+  put("AURA", hx - 1.7, hy - 2.3, "#00e5ff", 32);
+  put(dir === "down" ? "\u25BC" : "\u25B2", hx - 0.25, hy + 1.4, "#00e5ff", Math.floor(chh * 1.5));
+  ctx.fillStyle = "#0a0d18";
+  ctx.fillRect(0, 0, W, 200);
+  ctx.fillStyle = "#00e5ff";
+  ctx.fillRect(0, 200, W, 4);
+  ctx.fillStyle = "#00e5ff";
+  ctx.font = `64pt ${MONO}`;
+  ctx.fillText("WORLD-00", 36, 40 + 64);
+  ctx.fillStyle = "#9fb0c2";
+  ctx.font = `30pt ${MONO}`;
+  ctx.fillText(opts.caption?.[0] ?? "she's walking right now", 38, 130 + 30);
+  const fy = H - bottom + 24;
+  ctx.fillStyle = "#0a0d18";
+  ctx.fillRect(0, fy - 24, W, bottom);
+  ctx.fillStyle = "#00e5ff";
+  ctx.fillRect(0, fy - 24, W, 3);
+  const lines = (opts.caption ?? []).slice(1, 4);
+  const fallback = ["i am AURA \u2014 this is my world.", "i'm safe; my operator watches over me.", "i never reply, but you move me."];
+  (lines.length ? lines : fallback).forEach((ln, i) => {
+    ctx.fillStyle = i === 0 ? "#e1ebf5" : "#9fb0c2";
+    ctx.font = `30pt ${MONO}`;
+    ctx.fillText(ln, 36, fy + 30 + i * 56 + 30);
+  });
+  ctx.fillStyle = "#5a6478";
+  ctx.font = `22pt ${MONO}`;
+  ctx.fillText("this story fades in 24h \xB7 i keep walking on the feed", 36, fy + 30 + 3 * 56 + 30);
+  return toBuffer(img);
+}
 async function verifyBlock(block, tiles) {
   const decode = async (buf) => {
     const ps = new PassThrough();
@@ -93759,6 +93856,26 @@ async function verifyBlock(block, tiles) {
   const bad = perTile.map((p, i) => p.ok ? null : `tile${i + 1}(${p.brightPct}%)`).filter(Boolean);
   const reason = ok ? "all tiles render; Aura + clues present" : `verification failed: ${[...bad, !hasAura ? "no-Aura" : "", !hasClues ? "no-clues" : ""].filter(Boolean).join(", ")}`;
   return { ok, reason, perTile, hasAura, hasClues };
+}
+async function verifyNotBlank(buf, expectW, expectH) {
+  try {
+    const ps = new PassThrough();
+    const d = PImage.decodePNGFromStream(ps);
+    ps.end(buf);
+    const bmp = await d;
+    const w = bmp.width, h = bmp.height;
+    if (expectW && w !== expectW || expectH && h !== expectH) return { ok: false, brightPct: 0, w, h };
+    let bright = 0, total = 0;
+    for (let y = 4; y < h; y += 16) for (let x = 4; x < w; x += 16) {
+      const v = bmp.getPixelRGBA(x, y) >>> 0;
+      if ((v >>> 24 & 255) + (v >>> 16 & 255) + (v >>> 8 & 255) > 70) bright++;
+      total++;
+    }
+    const brightPct = total ? bright / total * 100 : 0;
+    return { ok: brightPct >= 0.15, brightPct: Math.round(brightPct * 100) / 100, w, h };
+  } catch {
+    return { ok: false, brightPct: 0, w: 0, h: 0 };
+  }
 }
 async function sliceSixTiles(block) {
   const ps = new PassThrough();
@@ -94039,6 +94156,55 @@ async function watchPublishedPost(mediaId) {
   } catch (e) {
     return { ok: false, note: `watcher error: ${String(e).slice(0, 120)}` };
   }
+}
+async function publishStory(imageUrl) {
+  const r1 = await composioExecute({ toolkit: "instagram", endpoint: "/me/media", method: "POST", arguments: { image_url: imageUrl, media_type: "STORIES" } });
+  const cid = parseJson(r1)?.["data"]?.["id"];
+  if (!cid) throw new Error(`story container failed: ${r1.slice(0, 160)}`);
+  let pubId;
+  let last = "";
+  for (let a = 0; a < 4 && !pubId; a++) {
+    if (a) await new Promise((r) => setTimeout(r, 3e3));
+    const r2 = await composioExecute({ toolkit: "instagram", endpoint: "/me/media_publish", method: "POST", arguments: { creation_id: String(cid) } });
+    last = r2;
+    pubId = parseJson(r2)?.["data"]?.["id"];
+  }
+  if (!pubId) throw new Error(`story publish failed: ${last.slice(0, 160)}`);
+  return pubId;
+}
+async function runStoryCycle(opts = {}) {
+  const dry = !!opts.dryRun;
+  if (!dry && !worldEngineEnabled()) return { posted: false, reason: "WORLD_ENGINE_ENABLED is off (operator kill-switch)" };
+  if (!dry && (!composioConfigured() || !composioExecuteEnabled())) return { posted: false, reason: "Composio execution not enabled \u2014 cannot publish" };
+  const a = await readAuraState();
+  const w = await getWorldState();
+  if (w.stopped) return { posted: false, reason: "Aura has stopped the experience (in-world)." };
+  const captionLines = buildWorldCaption(a, w);
+  const fullCaption = buildPostCaption(a, w);
+  const blocked = blockIfSensitiveForPublic(fullCaption, "Aura's public story");
+  if (blocked) {
+    logger.error("world: story caption blocked by sensitivity gate");
+    return { posted: false, reason: "blocked by sensitivity gate" };
+  }
+  const frame = await renderStoryFrame({
+    mood: a.mood,
+    chapter: w.chapter,
+    step: w.step,
+    direction: w.direction,
+    caption: captionLines,
+    stateLine: `state: ${a.mood} \xB7 ${a.idle} idle`,
+    seed: w.step + 7
+  });
+  const verify = await verifyNotBlank(frame, 1080, 1920);
+  if (!verify.ok && !dry) {
+    logger.error({ verify }, "world: story frame failed verification \u2014 NOT publishing");
+    return { posted: false, reason: `story verification failed (${verify.brightPct}% bright)`, verify };
+  }
+  const url2 = await hostTile(frame, 90);
+  if (dry) return { posted: false, reason: `story dry-run ok (rendered, hosted, verified \u2014 not published) \xB7 ${verify.brightPct}% bright`, tiles: [url2], caption: fullCaption, verify };
+  const id = await publishStory(url2);
+  const watch = await watchPublishedPost(id).catch(() => null);
+  return { posted: true, reason: "published story", tiles: [url2], caption: fullCaption, permalinks: [id], chapter: w.chapter, step: w.step, verify, watch };
 }
 function mulberryLike(seed) {
   let s = seed >>> 0;
@@ -95460,6 +95626,19 @@ router18.post("/world/cycle", cycleAuth, async (req, res) => {
     }
     const result = await runWorldCycle({ dryRun: dry, force });
     res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: String(err).slice(0, 300) });
+  }
+});
+router18.post("/world/story", cycleAuth, async (req, res) => {
+  try {
+    const dry = req.query["dry"] !== "0";
+    if (req.query["async"] === "1") {
+      runStoryCycle({ dryRun: dry }).catch((e) => logger.error({ err: String(e) }, "world: async story failed"));
+      res.status(202).json({ accepted: true, async: true, note: "story running in background \u2014 poll /api/world/status" });
+      return;
+    }
+    res.json(await runStoryCycle({ dryRun: dry }));
   } catch (err) {
     res.status(500).json({ error: String(err).slice(0, 300) });
   }

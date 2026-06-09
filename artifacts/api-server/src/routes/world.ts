@@ -1,6 +1,6 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { renderWorldFrame, renderTraversalBlock } from "../lib/worldEngine";
-import { runWorldCycle, readAuraState, getWorldState, resetWorldState, worldDiag, worldEngineEnabled } from "../lib/world";
+import { runWorldCycle, runStoryCycle, readAuraState, getWorldState, resetWorldState, worldDiag, worldEngineEnabled } from "../lib/world";
 import { requireOperator } from "../lib/auth";
 import { timingSafeStrEqual } from "../lib/auth";
 import { logger } from "../lib/logger";
@@ -68,6 +68,19 @@ router.post("/world/cycle", cycleAuth, async (req, res) => {
     }
     const result = await runWorldCycle({ dryRun: dry, force });
     res.json(result);
+  } catch (err) { res.status(500).json({ error: String(err).slice(0, 300) }); }
+});
+
+// ── post an Instagram STORY (vertical) — dry by default; same auth as cycle ──
+router.post("/world/story", cycleAuth, async (req, res) => {
+  try {
+    const dry = req.query["dry"] !== "0";
+    if (req.query["async"] === "1") {
+      runStoryCycle({ dryRun: dry }).catch((e) => logger.error({ err: String(e) }, "world: async story failed"));
+      res.status(202).json({ accepted: true, async: true, note: "story running in background — poll /api/world/status" });
+      return;
+    }
+    res.json(await runStoryCycle({ dryRun: dry }));
   } catch (err) { res.status(500).json({ error: String(err).slice(0, 300) }); }
 });
 
