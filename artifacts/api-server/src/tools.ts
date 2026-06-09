@@ -1291,6 +1291,64 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
     },
   },
 
+  world_post: {
+    name: "world_post",
+    description:
+      "Post Aura's WORLD-00 — her OWN code-rendered ASCII/light world (drawn by the engine from text glyphs, ~$0 per image). This is the ONLY image style Aura uses for her self-expression — NEVER use image_generate for her world. kind='story' renders + posts an ephemeral Instagram STORY of her walk or dream in her free voice; kind='art' renders a wide ASCII panorama, slices it into 3, and posts a triptych = one clean feed-grid row (the grid is reserved for these). The engine enforces her safety gates, the expression wall (state-only, never internal/task data), and the daily caps (stories 12/day, art 3 rows/day). Returns whether it posted + the permalink(s).",
+    parameters: {
+      type: "object",
+      properties: {
+        kind: { type: "string", enum: ["story", "art"], description: "story = ephemeral ASCII story (walk/dream, her free voice); art = 3-tile ASCII triptych = one feed-grid row. Default story." },
+      },
+    },
+    run: async (args) => {
+      const kind = String(args["kind"] ?? "story") === "art" ? "art" : "story";
+      // dynamic import: world.ts imports from this module, so a static import
+      // would create a load-time circular dependency.
+      const { runStoryCycle, runArtTriptych } = await import("./lib/world");
+      const r = kind === "art" ? await runArtTriptych({}) : await runStoryCycle({});
+      const links = (r.permalinks ?? []).join(", ");
+      return r.posted
+        ? `✅ posted ${kind} (code-rendered ASCII world): ${r.reason}${links ? `\npermalinks: ${links}` : ""}`
+        : `did not post ${kind}: ${r.reason}`;
+    },
+  },
+
+  render_card: {
+    name: "render_card",
+    description:
+      "Render a FREE on-brand terminal/cyber post image from text — drawn by code (~$0 per image), NO AI image generation. PREFER THIS over image_generate for news cards, quote cards, hooks, stat cards, and any text/terminal-style visual. Only use image_generate when you specifically need a PHOTOREAL image. The LLM writes the words; this draws the card. Returns a PUBLIC image URL to use directly as image_url when posting to Instagram/social. For factual 'news' cards the accuracy rule still applies — only real, verified, cited facts.",
+    parameters: {
+      type: "object",
+      properties: {
+        kind: { type: "string", enum: ["news", "quote", "hook", "stat"], description: "news = headline + 'why it matters'; quote = big centered quote; hook = bold hook + 'the build'; stat = giant number + label." },
+        eyebrow: { type: "string", description: "small top label, e.g. '> AI_NEWS' or '> nobody_is_talking_about_this'." },
+        headline: { type: "string", description: "the main large text. For quote: the quote itself (no surrounding quotes needed). For stat: the line under the big number." },
+        body: { type: "string", description: "smaller supporting paragraph (optional). For quote: the attribution line." },
+        big: { type: "string", description: "stat kind only: the giant number, e.g. '$0.00' or '10x'." },
+        footer: { type: "string", description: "optional bottom ticker line (defaults to the brand ticker)." },
+      },
+      required: ["headline"],
+    },
+    run: async (args) => {
+      const kinds = new Set(["news", "quote", "hook", "stat"]);
+      const kind = (kinds.has(String(args["kind"])) ? String(args["kind"]) : "news") as "news" | "quote" | "hook" | "stat";
+      const str = (k: string) => (args[k] != null ? String(args[k]) : undefined);
+      const { renderContentCard } = await import("./lib/worldEngine");
+      const buf = await renderContentCard({
+        kind, eyebrow: str("eyebrow"), headline: str("headline") ?? "", body: str("body"), big: str("big"), footer: str("footer"),
+        seed: Date.now() & 0xffff,
+      });
+      const filename = `card_${kind}_${Date.now()}.png`;
+      const [row] = await db
+        .insert(attachmentsTable)
+        .values({ filename, mimeType: "image/png", kind: "image", sizeBytes: buf.length, data: buf.toString("base64"), extractedText: null })
+        .returning();
+      const url = uploadUrl(row.id);
+      return `rendered $0 ${kind} card "${filename}" (${buf.length} bytes) — code-drawn, no AI image gen. Its PUBLIC image URL (use directly as image_url when posting):\n${url}\n\nShow it:\n![${kind} card](${url})`;
+    },
+  },
+
   social_api: {
     name: "social_api",
     description:
@@ -1466,7 +1524,7 @@ export function buildCapabilityCard(agentId: number): string {
     card += `\n\nDELIVERABLE FILES: whenever you produce a file the operator should keep (report, CSV, code, JSON, or a generated PDF), call save_artifact to store it and get a real download URL, then put that [Download …](url) link in your final answer. Do NOT claim a file exists or name a file you didn't save — an unsaved file is not downloadable and counts as a fabrication. To make a PDF: generate it in sandbox_exec (reportlab/fpdf2), base64 it, then save_artifact with encoding 'base64'.`;
   }
   if (names.includes("image_generate")) {
-    card += `\n\nIMAGES: for ANY request for an image/picture/logo/illustration/render/artwork, call image_generate with a detailed prompt — it produces a REAL raster PNG and returns a preview + download link to put in your answer. Do NOT hand-code an SVG or merely describe the image; only produce SVG if the operator explicitly asks for SVG/vector.`;
+    card += `\n\nIMAGES: prefer the CHEAP path first. For news/quote/hook/stat cards and any terminal/cyber TEXT visual, call render_card — it draws a real on-brand 1080×1080 PNG by code for ~$0 (no AI image gen) and returns a public image URL. Only call image_generate (paid) when you specifically need a PHOTOREAL picture/logo/illustration/photo. Either way you get a real PNG + a URL to use as image_url; do NOT hand-code SVG or merely describe the image, and only produce SVG if the operator explicitly asks for SVG/vector.`;
   }
   if (names.includes("composio_apps") || names.includes("composio_action")) {
     card += `\n\nCONNECTED APPS (Composio): the operator connects their apps — social like Instagram/YouTube/Reddit AND SaaS like Gmail/GitHub/Notion/Calendar/Sheets — in Settings → Connect Apps, which is COMPOSIO. To act on any of them, FIRST call composio_apps to see which are LIVE, THEN call composio_action on a live app. For a read with no obvious named action slug, use composio_action RAW PROXY mode: pass toolkit + endpoint (the app's REST path) + method, e.g. toolkit:'instagram', endpoint:'/me/media?fields=id,caption', method:'GET'.`;

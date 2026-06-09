@@ -28105,7 +28105,7 @@ var require_pino = __commonJS({
     function pinoBundlerAbsolutePath(p) {
       try {
         const path3 = __require("path");
-        const outputDir = "/home/runner/work/BOS-AURA/BOS-AURA/artifacts/api-server/dist";
+        const outputDir = "/home/user/BOS-AURA/artifacts/api-server/dist";
         return path3.resolve(outputDir, p.replace(/^\.\//, ""));
       } catch (e) {
         const f = new Function("p", "return new URL(p, import.meta.url).pathname");
@@ -54271,6 +54271,835 @@ var init_src = __esm({
       connectionTimeoutMillis: 1e4
     });
     db = drizzle(pool, { schema: schema_exports });
+  }
+});
+
+// src/lib/logger.ts
+var import_pino, isProduction, logger;
+var init_logger2 = __esm({
+  "src/lib/logger.ts"() {
+    "use strict";
+    import_pino = __toESM(require_pino(), 1);
+    isProduction = process.env.NODE_ENV === "production";
+    logger = (0, import_pino.default)({
+      level: process.env.LOG_LEVEL ?? "info",
+      redact: [
+        "req.headers.authorization",
+        "req.headers.cookie",
+        "res.headers['set-cookie']"
+      ],
+      ...isProduction ? {} : {
+        transport: {
+          target: "pino-pretty",
+          options: { colorize: true }
+        }
+      }
+    });
+  }
+});
+
+// src/lib/integrations.ts
+import { randomUUID } from "node:crypto";
+function clip(s, n) {
+  return s.length > n ? `${s.slice(0, n)}
+\u2026[truncated ${s.length - n} chars]` : s;
+}
+function heliconeEnabled() {
+  return !!process.env["HELICONE_API_KEY"];
+}
+function llmBaseUrl() {
+  return heliconeEnabled() ? OPENROUTER_VIA_HELICONE : OPENROUTER_DIRECT;
+}
+function heliconeHeaders(extra) {
+  const key = process.env["HELICONE_API_KEY"];
+  if (!key) return {};
+  return {
+    "Helicone-Auth": `Bearer ${key}`,
+    "Helicone-Cache-Enabled": "false",
+    ...extra
+  };
+}
+function formatHits(provider, query, hits) {
+  if (!hits.length) return `no web results for "${query}" (via ${provider}).`;
+  const body = hits.map((h, i) => `${i + 1}. ${h.title || "(untitled)"}
+   ${h.url}
+   ${clip(h.snippet.trim(), 300)}`).join("\n\n");
+  return `[search provider: ${provider}]
+${body}`;
+}
+async function tavilySearch(query, limit) {
+  const key = process.env["TAVILY_API_KEY"];
+  if (!key) throw new Error("TAVILY_API_KEY is not set");
+  const r = await fetch("https://api.tavily.com/search", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      query,
+      max_results: limit,
+      search_depth: "basic",
+      include_answer: false
+    })
+  });
+  if (!r.ok) throw new Error(`Tavily ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  const data = await r.json();
+  const hits = (data.results ?? []).map((x) => ({
+    title: x.title ?? "",
+    url: x.url ?? "",
+    snippet: x.content ?? ""
+  }));
+  return formatHits("tavily", query, hits);
+}
+async function exaSearch(query, limit) {
+  const key = process.env["EXA_API_KEY"];
+  if (!key) throw new Error("EXA_API_KEY is not set");
+  const r = await fetch("https://api.exa.ai/search", {
+    method: "POST",
+    headers: { "x-api-key": key, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      query,
+      numResults: limit,
+      type: "auto",
+      contents: { text: { maxCharacters: 600 } }
+    })
+  });
+  if (!r.ok) throw new Error(`Exa ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  const data = await r.json();
+  const hits = (data.results ?? []).map((x) => ({
+    title: x.title ?? "",
+    url: x.url ?? "",
+    snippet: x.text ?? ""
+  }));
+  return formatHits("exa", query, hits);
+}
+async function sendInngestEvent(name, data) {
+  const key = process.env["INNGEST_EVENT_KEY"];
+  if (!key) return;
+  try {
+    const ctrl = new AbortController();
+    const timer2 = setTimeout(() => ctrl.abort(), 5e3);
+    try {
+      const r = await fetch(`https://inn.gs/e/${encodeURIComponent(key)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, data, ts: Date.now() }),
+        signal: ctrl.signal
+      });
+      if (!r.ok) {
+        logger.debug({ status: r.status, event: name }, "inngest: event rejected");
+      }
+    } finally {
+      clearTimeout(timer2);
+    }
+  } catch (err) {
+    logger.debug({ err, event: name }, "inngest: event send failed");
+  }
+}
+function langsmithEnabled() {
+  const key = process.env["LANGSMITH_API_KEY"] ?? process.env["LANGCHAIN_API_KEY"];
+  if (!key) return false;
+  const flag = (process.env["LANGSMITH_TRACING"] ?? process.env["LANGCHAIN_TRACING_V2"] ?? "true").toLowerCase();
+  return flag !== "false" && flag !== "0";
+}
+function dottedTime(d) {
+  const iso = d.toISOString();
+  const [date6, time4] = iso.replace("Z", "").split("T");
+  const [hms, ms = "000"] = time4.split(".");
+  return `${date6.replace(/-/g, "")}T${hms.replace(/:/g, "")}${ms.padEnd(3, "0")}000Z`;
+}
+function traceLlmRun(trace) {
+  if (!langsmithEnabled()) return;
+  void (async () => {
+    try {
+      const key = process.env["LANGSMITH_API_KEY"] ?? process.env["LANGCHAIN_API_KEY"];
+      const endpoint = process.env["LANGSMITH_ENDPOINT"] ?? process.env["LANGCHAIN_ENDPOINT"] ?? "https://api.smith.langchain.com";
+      const project = process.env["LANGSMITH_PROJECT"] ?? process.env["LANGCHAIN_PROJECT"] ?? "openclaw-omega";
+      const id = randomUUID();
+      const start = trace.startedAt;
+      const end = trace.endedAt ?? /* @__PURE__ */ new Date();
+      const body = {
+        id,
+        trace_id: id,
+        dotted_order: `${dottedTime(start)}${id}`,
+        name: trace.name,
+        run_type: "llm",
+        session_name: project,
+        start_time: start.toISOString(),
+        end_time: end.toISOString(),
+        inputs: { input: trace.input },
+        outputs: trace.error ? void 0 : { output: trace.output },
+        error: trace.error,
+        extra: { metadata: { model: trace.model, ...trace.metadata ?? {} } }
+      };
+      const ctrl = new AbortController();
+      const timer2 = setTimeout(() => ctrl.abort(), 5e3);
+      try {
+        const r = await fetch(`${endpoint.replace(/\/$/, "")}/runs`, {
+          method: "POST",
+          headers: { "x-api-key": key, "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+          signal: ctrl.signal
+        });
+        if (!r.ok) logger.debug({ status: r.status }, "langsmith: run rejected");
+      } finally {
+        clearTimeout(timer2);
+      }
+    } catch (err) {
+      logger.debug({ err }, "langsmith: trace failed");
+    }
+  })();
+}
+function e2bConfigured() {
+  return !!process.env["E2B_API_KEY"];
+}
+async function e2bExec(language, source) {
+  const apiKey = process.env["E2B_API_KEY"];
+  if (!apiKey) return "error: E2B_API_KEY is not set \u2014 cloud sandbox is unavailable.";
+  let mod;
+  try {
+    mod = await import(E2B_PKG);
+  } catch {
+    return `error: the E2B SDK (${E2B_PKG}) is not installed on the server. Install it to enable cloud_code_exec.`;
+  }
+  const Sandbox2 = mod?.Sandbox;
+  if (!Sandbox2 || typeof Sandbox2.create !== "function") {
+    return "error: E2B SDK loaded but no Sandbox export was found.";
+  }
+  const lang = language.toLowerCase();
+  const e2bLanguage = lang === "javascript" || lang === "js" || lang === "node" ? "js" : "python";
+  let sandbox;
+  try {
+    sandbox = await Sandbox2.create({ apiKey, timeoutMs: E2B_TIMEOUT_MS });
+    const execution = await sandbox.runCode(source, { language: e2bLanguage });
+    const stdout = (execution.logs?.stdout ?? []).join("");
+    const stderr = (execution.logs?.stderr ?? []).join("");
+    const parts = ["[e2b cloud sandbox]"];
+    if (stdout) parts.push(`stdout:
+${clip(stdout.trim(), 4e3)}`);
+    if (stderr) parts.push(`stderr:
+${clip(stderr.trim(), 4e3)}`);
+    if (execution.error) {
+      parts.push(`error: ${execution.error.name ?? ""} ${execution.error.value ?? ""}`.trim());
+    }
+    if (execution.text && !stdout) parts.push(`result:
+${clip(execution.text.trim(), 4e3)}`);
+    if (parts.length === 1) parts.push("(no output)");
+    return parts.join("\n");
+  } catch (err) {
+    return `error: E2B execution failed: ${String(err).slice(0, 300)}`;
+  } finally {
+    try {
+      await sandbox?.kill();
+    } catch {
+    }
+  }
+}
+function composioConfigured() {
+  return !!process.env["COMPOSIO_API_KEY"];
+}
+function composioExecuteEnabled() {
+  const v = process.env["ALLOW_COMPOSIO_EXECUTE"];
+  return v != null && ["1", "true", "yes", "on"].includes(v.toLowerCase());
+}
+async function composioExecute(input) {
+  const key = process.env["COMPOSIO_API_KEY"];
+  if (!key) return "error: COMPOSIO_API_KEY is not set.";
+  const base = (process.env["COMPOSIO_BASE_URL"] ?? "https://backend.composio.dev/api/v3.1").replace(/\/$/, "");
+  let accId = input.connectedAccountId;
+  if (!accId && input.toolkit) {
+    try {
+      const conns = await composioListConnections();
+      const t = input.toolkit.toLowerCase();
+      accId = (conns.find((c) => c.toolkit.toLowerCase() === t && /ACTIVE|CONNECTED|ENABLED/i.test(c.status)) ?? conns.find((c) => c.toolkit.toLowerCase() === t))?.id;
+    } catch {
+    }
+  }
+  let url2;
+  let payload;
+  if (input.action) {
+    url2 = `${base}/tools/execute/${encodeURIComponent(input.action)}`;
+    payload = {
+      arguments: input.arguments ?? {},
+      ...accId ? { connected_account_id: accId } : {},
+      ...input.userId ? { user_id: input.userId } : {}
+    };
+  } else if (input.endpoint && input.method) {
+    url2 = `${base}/tools/execute/proxy`;
+    let parameters = Array.isArray(input.parameters) ? input.parameters : void 0;
+    if (!parameters && input.arguments && Object.keys(input.arguments).length) {
+      parameters = Object.entries(input.arguments).map(([name, value]) => ({
+        name,
+        value: typeof value === "string" ? value : JSON.stringify(value),
+        type: "query"
+      }));
+    }
+    payload = {
+      endpoint: input.endpoint,
+      method: input.method.toUpperCase(),
+      ...accId ? { connected_account_id: accId } : {},
+      ...parameters ? { parameters } : {},
+      ...input.body != null ? { body: input.body } : {}
+    };
+  } else {
+    return "error: composio_action needs an `action` (tool slug like INSTAGRAM_LIST_POSTS), OR an `endpoint`+`method` for a raw proxy call (e.g. endpoint:'/me/media', method:'GET').";
+  }
+  const ctrl = new AbortController();
+  const timer2 = setTimeout(() => ctrl.abort(), 3e4);
+  try {
+    const r = await fetch(url2, {
+      method: "POST",
+      headers: { "x-api-key": key, "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: ctrl.signal
+    });
+    const text2 = await r.text();
+    return `Composio \u2192 HTTP ${r.status} ${r.statusText}
+${cleanComposioBody(text2)}`;
+  } catch (err) {
+    return `error: Composio call failed: ${String(err).slice(0, 300)}`;
+  } finally {
+    clearTimeout(timer2);
+  }
+}
+function cleanComposioBody(text2) {
+  try {
+    const j = JSON.parse(text2);
+    if (j && typeof j === "object" && "headers" in j) {
+      const { headers: _omit, ...rest } = j;
+      void _omit;
+      return clip(JSON.stringify(rest), 4e3);
+    }
+    return clip(JSON.stringify(j), 4e3);
+  } catch {
+    return clip(text2, 4e3);
+  }
+}
+function composioBase() {
+  return (process.env["COMPOSIO_BASE_URL"] ?? "https://backend.composio.dev/api/v3.1").replace(/\/$/, "");
+}
+async function composioApi(method, path3, body) {
+  const key = process.env["COMPOSIO_API_KEY"];
+  if (!key) throw new Error("COMPOSIO_API_KEY is not set");
+  const ctrl = new AbortController();
+  const timer2 = setTimeout(() => ctrl.abort(), 25e3);
+  try {
+    const r = await fetch(`${composioBase()}${path3.startsWith("/") ? path3 : `/${path3}`}`, {
+      method,
+      headers: { "x-api-key": key, "Content-Type": "application/json" },
+      body: body == null ? void 0 : JSON.stringify(body),
+      signal: ctrl.signal
+    });
+    const text2 = await r.text();
+    let data;
+    try {
+      data = text2 ? JSON.parse(text2) : {};
+    } catch {
+      data = { raw: text2 };
+    }
+    if (!r.ok) {
+      const msg = data?.error?.message ?? data?.message ?? text2.slice(0, 200);
+      throw new Error(`Composio ${r.status}: ${msg}`);
+    }
+    return data ?? {};
+  } finally {
+    clearTimeout(timer2);
+  }
+}
+async function composioListToolkits(search, limit = 50) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (search) params.set("search", search);
+  const data = await composioApi("GET", `/toolkits?${params.toString()}`);
+  const items = data["items"] ?? [];
+  return items.map((t) => {
+    const meta = t["meta"] ?? {};
+    return {
+      slug: String(t["slug"] ?? ""),
+      name: String(t["name"] ?? t["slug"] ?? ""),
+      logo: meta["logo"] != null ? String(meta["logo"]) : void 0,
+      authSchemes: t["auth_schemes"] ?? [],
+      composioManagedAuthSchemes: t["composio_managed_auth_schemes"] ?? [],
+      noAuth: Boolean(t["no_auth"])
+    };
+  });
+}
+async function composioListConnections() {
+  const data = await composioApi("GET", "/connected_accounts");
+  const items = data["items"] ?? [];
+  return items.map((c) => ({
+    id: String(c["id"] ?? ""),
+    toolkit: String(c["toolkit"]?.["slug"] ?? c["toolkit"] ?? ""),
+    status: String(c["status"] ?? "UNKNOWN")
+  }));
+}
+async function findOrCreateAuthConfig(toolkitSlug) {
+  const existing = await composioApi("GET", "/auth_configs");
+  const items = existing["items"] ?? [];
+  const match = items.find(
+    (a) => String(a["toolkit"]?.["slug"] ?? "").toLowerCase() === toolkitSlug.toLowerCase() && String(a["status"] ?? "ENABLED") !== "DISABLED"
+  );
+  if (match?.["id"]) return String(match["id"]);
+  const created = await composioApi("POST", "/auth_configs", {
+    toolkit: { slug: toolkitSlug },
+    auth_config: { type: "use_composio_managed_auth" }
+  });
+  const id = created["auth_config"]?.["id"] ?? created["id"];
+  if (!id) throw new Error("auth config created but no id was returned");
+  return String(id);
+}
+async function composioConnect(toolkitSlug, userId = "operator") {
+  const slug = toolkitSlug.trim().toLowerCase();
+  if (!slug) throw new Error("toolkit slug is required");
+  const authConfigId = await findOrCreateAuthConfig(slug);
+  const conn = await composioApi("POST", "/connected_accounts", {
+    auth_config: { id: authConfigId },
+    connection: { user_id: userId }
+  });
+  const connectionData = conn["connectionData"] ?? {};
+  return {
+    connectionId: String(conn["id"] ?? ""),
+    status: String(conn["status"] ?? "INITIATED"),
+    redirectUrl: conn["redirect_url"] ?? conn["redirectUrl"] ?? connectionData["redirectUrl"] ?? null,
+    authConfigId,
+    toolkit: slug
+  };
+}
+async function composioConnectionStatus(connectionId) {
+  const c = await composioApi("GET", `/connected_accounts/${encodeURIComponent(connectionId)}`);
+  return {
+    id: String(c["id"] ?? connectionId),
+    status: String(c["status"] ?? "UNKNOWN"),
+    toolkit: String(c["toolkit"]?.["slug"] ?? c["toolkit"] ?? "")
+  };
+}
+function integrationStatus() {
+  const has = (k) => !!process.env[k];
+  return [
+    { key: "openrouter", name: "OpenRouter", category: "llm", envVar: "OPENROUTER_API_KEY", configured: has("OPENROUTER_API_KEY") },
+    { key: "neurobuddy", name: "Buddy AI (NeuroBuddy)", category: "llm", envVar: "NEUROBUDDY_API_KEY", configured: has("NEUROBUDDY_API_KEY") },
+    { key: "helicone", name: "Helicone", category: "observability", envVar: "HELICONE_API_KEY", configured: has("HELICONE_API_KEY") },
+    { key: "langsmith", name: "LangSmith (LangChain)", category: "observability", envVar: "LANGSMITH_API_KEY", configured: langsmithEnabled() },
+    { key: "embeddings", name: "Embeddings (semantic memory)", category: "memory", envVar: "EMBEDDINGS_API_KEY", configured: has("EMBEDDINGS_API_KEY") },
+    { key: "pinecone", name: "Pinecone (vector memory)", category: "memory", envVar: "PINECONE_API_KEY", configured: has("PINECONE_API_KEY") && (has("PINECONE_INDEX_HOST") || has("PINECONE_INDEX_URL") || has("PINECONE_INDEX")) },
+    { key: "tavily", name: "Tavily", category: "search", envVar: "TAVILY_API_KEY", configured: has("TAVILY_API_KEY") },
+    { key: "exa", name: "Exa", category: "search", envVar: "EXA_API_KEY", configured: has("EXA_API_KEY") },
+    { key: "firecrawl", name: "Firecrawl", category: "search", envVar: "FIRECRAWL_API_KEY", configured: has("FIRECRAWL_API_KEY") },
+    { key: "steel", name: "Steel", category: "browser", envVar: "STEEL_API_KEY", configured: has("STEEL_API_KEY") },
+    { key: "inngest", name: "Inngest", category: "events", envVar: "INNGEST_EVENT_KEY", configured: has("INNGEST_EVENT_KEY") },
+    { key: "e2b", name: "E2B", category: "sandbox", envVar: "E2B_API_KEY", configured: has("E2B_API_KEY") },
+    { key: "composio", name: "Composio", category: "tools", envVar: "COMPOSIO_API_KEY", configured: has("COMPOSIO_API_KEY") },
+    { key: "buddy", name: "Buddy AI (fallback LLM)", category: "llm", envVar: "BUDDY_API_KEY", configured: has("BUDDY_API_KEY") && has("BUDDY_BASE_URL") }
+  ];
+}
+var OPENROUTER_DIRECT, OPENROUTER_VIA_HELICONE, E2B_PKG, E2B_TIMEOUT_MS;
+var init_integrations = __esm({
+  "src/lib/integrations.ts"() {
+    "use strict";
+    init_logger2();
+    OPENROUTER_DIRECT = "https://openrouter.ai/api/v1";
+    OPENROUTER_VIA_HELICONE = "https://openrouter.helicone.ai/api/v1";
+    E2B_PKG = "@e2b/code-interpreter";
+    E2B_TIMEOUT_MS = 3e4;
+  }
+});
+
+// src/lib/vault.ts
+import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
+function getKey() {
+  if (cachedKey) return cachedKey;
+  const secret = process.env["SESSION_SECRET"];
+  if (!secret) {
+    throw new Error(
+      "SESSION_SECRET is required to use the secrets vault \u2014 refusing to operate without it."
+    );
+  }
+  cachedKey = scryptSync(secret, "openclaw-vault-v1", 32);
+  return cachedKey;
+}
+function encryptSecret(plaintext) {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv("aes-256-gcm", getKey(), iv);
+  const enc = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+  return {
+    ciphertext: enc.toString("base64"),
+    iv: iv.toString("base64"),
+    authTag: cipher.getAuthTag().toString("base64")
+  };
+}
+function decryptSecret(rec) {
+  const decipher = createDecipheriv("aes-256-gcm", getKey(), Buffer.from(rec.iv, "base64"));
+  decipher.setAuthTag(Buffer.from(rec.authTag, "base64"));
+  return Buffer.concat([decipher.update(Buffer.from(rec.ciphertext, "base64")), decipher.final()]).toString("utf8");
+}
+async function getSecretValue(name) {
+  const [row] = await db.select().from(vaultSecretsTable).where(eq(vaultSecretsTable.name, name));
+  if (!row) return null;
+  try {
+    return decryptSecret(row);
+  } catch {
+    return null;
+  }
+}
+async function substituteSecrets(input, used) {
+  const names = /* @__PURE__ */ new Set();
+  for (const m of input.matchAll(SECRET_PLACEHOLDER)) names.add(m[1]);
+  if (names.size === 0) return input;
+  const resolved = /* @__PURE__ */ new Map();
+  for (const name of names) {
+    const value = await getSecretValue(name);
+    if (value !== null) {
+      resolved.set(name, value);
+      used?.add(value);
+    }
+  }
+  return input.replace(SECRET_PLACEHOLDER, (full, name) => resolved.get(name) ?? full);
+}
+function redactSecrets(text2, values) {
+  let out = text2;
+  for (const v of values) {
+    if (v && out.includes(v)) out = out.split(v).join("\u2039redacted-secret\u203A");
+  }
+  return out;
+}
+var cachedKey, SECRET_PLACEHOLDER;
+var init_vault2 = __esm({
+  "src/lib/vault.ts"() {
+    "use strict";
+    init_src();
+    init_drizzle_orm();
+    cachedKey = null;
+    SECRET_PLACEHOLDER = /\{\{\s*secret:([A-Za-z0-9_\-]+)\s*\}\}/g;
+  }
+});
+
+// src/lib/connectors.ts
+function getPlatform(key) {
+  return PLATFORMS[key.toLowerCase().trim()];
+}
+function platformKeys() {
+  return Object.keys(PLATFORMS);
+}
+function readAccessToken(settings) {
+  if (!settings || typeof settings !== "object") return null;
+  const s = settings;
+  if (typeof s["access_token"] === "string") return s["access_token"];
+  const oauth = s["oauth"];
+  if (oauth && typeof oauth === "object") {
+    const creds = oauth["credentials"];
+    if (creds && typeof creds === "object") {
+      const t = creds["access_token"];
+      if (typeof t === "string") return t;
+    }
+  }
+  return null;
+}
+async function getConnectorAccessToken(connectorName) {
+  const hostname2 = process.env["REPLIT_CONNECTORS_HOSTNAME"];
+  if (!hostname2) {
+    throw new Error("connector proxy is unavailable in this environment.");
+  }
+  const identity = process.env["REPL_IDENTITY"];
+  const renewal = process.env["WEB_REPL_RENEWAL"];
+  const xReplitToken = identity ? `repl ${identity}` : renewal ? `depl ${renewal}` : null;
+  if (!xReplitToken) {
+    throw new Error("connector proxy auth is unavailable in this environment.");
+  }
+  const ctrl = new AbortController();
+  const timer2 = setTimeout(() => ctrl.abort(), 1e4);
+  let res;
+  try {
+    res = await fetch(
+      `https://${hostname2}/api/v2/connection?include_secrets=true&connector_names=${encodeURIComponent(connectorName)}`,
+      { headers: { Accept: "application/json", X_REPLIT_TOKEN: xReplitToken }, signal: ctrl.signal }
+    );
+  } finally {
+    clearTimeout(timer2);
+  }
+  if (!res.ok) {
+    throw new Error(`connector proxy returned ${res.status}.`);
+  }
+  const data = await res.json();
+  const token = readAccessToken(data.items?.[0]?.settings);
+  if (!token) {
+    throw new Error("not connected \u2014 authorize this platform first (Settings \u2192 Integrations).");
+  }
+  return token;
+}
+async function isPlatformConnected(platform) {
+  try {
+    await getConnectorAccessToken(platform.connectorName);
+    return true;
+  } catch {
+    return false;
+  }
+}
+async function callPlatformApi(opts) {
+  const token = await getConnectorAccessToken(opts.platform.connectorName);
+  const path3 = opts.path.startsWith("/") ? opts.path : `/${opts.path}`;
+  const url2 = new URL(opts.platform.apiBase + path3);
+  const expectedHost = new URL(opts.platform.apiBase).host;
+  if (url2.host !== expectedHost) {
+    throw new Error(`path must stay on ${expectedHost}.`);
+  }
+  if (opts.query) {
+    for (const [k, v] of Object.entries(opts.query)) url2.searchParams.set(k, v);
+  }
+  const headers = {
+    Accept: "application/json",
+    ...opts.platform.extraHeaders ?? {}
+  };
+  if (opts.platform.authStyle === "bearer") {
+    headers["Authorization"] = `Bearer ${token}`;
+  } else {
+    url2.searchParams.set("access_token", token);
+  }
+  const method = opts.method.toUpperCase();
+  const init = { method, headers };
+  if (opts.body != null && opts.body !== "" && method !== "GET" && method !== "DELETE") {
+    headers["Content-Type"] = "application/json";
+    init.body = opts.body;
+  }
+  const ctrl = new AbortController();
+  const timer2 = setTimeout(() => ctrl.abort(), 15e3);
+  try {
+    const r = await fetch(url2.toString(), { ...init, signal: ctrl.signal });
+    const text2 = await r.text();
+    const safe = token ? text2.split(token).join("[redacted-token]") : text2;
+    return { status: r.status, statusText: r.statusText, body: safe };
+  } finally {
+    clearTimeout(timer2);
+  }
+}
+var PLATFORMS;
+var init_connectors = __esm({
+  "src/lib/connectors.ts"() {
+    "use strict";
+    PLATFORMS = {
+      instagram: {
+        key: "instagram",
+        connectorName: "instagram",
+        apiBase: "https://graph.instagram.com",
+        displayName: "Instagram",
+        authStyle: "bearer",
+        docsUrl: "https://developers.facebook.com/docs/instagram-platform",
+        consoleUrl: "https://developers.facebook.com/apps"
+      },
+      facebook: {
+        key: "facebook",
+        connectorName: "facebook",
+        apiBase: "https://graph.facebook.com/v21.0",
+        displayName: "Facebook",
+        authStyle: "bearer",
+        docsUrl: "https://developers.facebook.com/docs/graph-api",
+        consoleUrl: "https://developers.facebook.com/apps"
+      },
+      x: {
+        key: "x",
+        connectorName: "x",
+        apiBase: "https://api.x.com/2",
+        displayName: "X (Twitter)",
+        authStyle: "bearer",
+        docsUrl: "https://developer.x.com/en/docs/x-api",
+        consoleUrl: "https://developer.x.com/en/portal/dashboard"
+      },
+      reddit: {
+        key: "reddit",
+        connectorName: "reddit",
+        apiBase: "https://oauth.reddit.com",
+        displayName: "Reddit",
+        authStyle: "bearer",
+        extraHeaders: { "User-Agent": "openclaw-omega/1.0 (by OPENCLAW OMEGA swarm)" },
+        docsUrl: "https://www.reddit.com/dev/api",
+        consoleUrl: "https://www.reddit.com/prefs/apps"
+      },
+      youtube: {
+        key: "youtube",
+        connectorName: "youtube",
+        apiBase: "https://www.googleapis.com/youtube/v3",
+        displayName: "YouTube",
+        authStyle: "bearer",
+        docsUrl: "https://developers.google.com/youtube/v3/docs",
+        consoleUrl: "https://console.cloud.google.com/apis/library/youtube.googleapis.com"
+      },
+      tiktok: {
+        key: "tiktok",
+        connectorName: "tiktok-personal",
+        apiBase: "https://open.tiktokapis.com/v2",
+        displayName: "TikTok",
+        authStyle: "bearer",
+        docsUrl: "https://developers.tiktok.com/doc/overview",
+        consoleUrl: "https://developers.tiktok.com/apps"
+      }
+    };
+  }
+});
+
+// src/lib/embeddings.ts
+function embeddingsConfigured() {
+  return !!process.env["EMBEDDINGS_API_KEY"];
+}
+function embeddingsModel() {
+  return process.env["EMBEDDINGS_MODEL"] ?? DEFAULT_MODEL;
+}
+async function embed(text2) {
+  const key = process.env["EMBEDDINGS_API_KEY"];
+  if (!key) return null;
+  const input = text2.trim();
+  if (!input) return null;
+  const base = (process.env["EMBEDDINGS_BASE_URL"] ?? DEFAULT_BASE).replace(/\/$/, "");
+  const model = embeddingsModel();
+  const ctrl = new AbortController();
+  const timer2 = setTimeout(() => ctrl.abort(), 15e3);
+  try {
+    const r = await fetch(`${base}/embeddings`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      // Cap input length defensively — embedding models have token limits and we
+      // only store short memory entries anyway.
+      body: JSON.stringify({ model, input: input.slice(0, 8e3) }),
+      signal: ctrl.signal
+    });
+    if (!r.ok) {
+      logger.debug({ status: r.status }, "embeddings: request failed");
+      return null;
+    }
+    const data = await r.json();
+    const vec = data.data?.[0]?.embedding;
+    return Array.isArray(vec) && vec.length ? vec : null;
+  } catch (err) {
+    logger.debug({ err }, "embeddings: call errored");
+    return null;
+  } finally {
+    clearTimeout(timer2);
+  }
+}
+function cosineSimilarity(a, b) {
+  if (a.length !== b.length || a.length === 0) return 0;
+  let dot = 0;
+  let na = 0;
+  let nb = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    na += a[i] * a[i];
+    nb += b[i] * b[i];
+  }
+  if (na === 0 || nb === 0) return 0;
+  return dot / (Math.sqrt(na) * Math.sqrt(nb));
+}
+function parseEmbedding(stored) {
+  if (!stored) return null;
+  try {
+    const parsed = JSON.parse(stored);
+    return Array.isArray(parsed) && parsed.every((n) => typeof n === "number") ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+var DEFAULT_BASE, DEFAULT_MODEL;
+var init_embeddings = __esm({
+  "src/lib/embeddings.ts"() {
+    "use strict";
+    init_logger2();
+    DEFAULT_BASE = "https://api.openai.com/v1";
+    DEFAULT_MODEL = "text-embedding-3-small";
+  }
+});
+
+// src/lib/pinecone.ts
+function explicitHost() {
+  const h = process.env["PINECONE_INDEX_HOST"] || process.env["PINECONE_INDEX_URL"];
+  if (!h) return null;
+  const trimmed = h.trim().replace(/\/$/, "");
+  if (!trimmed) return null;
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+}
+async function resolveHost() {
+  const explicit = explicitHost();
+  if (explicit) return explicit;
+  const key = process.env["PINECONE_API_KEY"];
+  const name = process.env["PINECONE_INDEX"]?.trim();
+  if (!key || !name) return null;
+  const cacheKey = `${key}:${name}`;
+  if (cachedHost && cachedHost.key === cacheKey) return cachedHost.host;
+  try {
+    const r = await fetch(`https://api.pinecone.io/indexes/${encodeURIComponent(name)}`, {
+      headers: { "Api-Key": key, "X-Pinecone-API-Version": "2024-07" }
+    });
+    if (!r.ok) {
+      logger.debug({ status: r.status }, "pinecone: describe_index failed");
+      return null;
+    }
+    const data = await r.json();
+    if (!data.host) return null;
+    const h = /^https?:\/\//i.test(data.host) ? data.host : `https://${data.host}`;
+    cachedHost = { key: cacheKey, host: h };
+    return h;
+  } catch (err) {
+    logger.debug({ err }, "pinecone: describe_index errored");
+    return null;
+  }
+}
+function namespace() {
+  return process.env["PINECONE_NAMESPACE"] ?? "";
+}
+function pineconeConfigured() {
+  return !!process.env["PINECONE_API_KEY"] && (!!explicitHost() || !!process.env["PINECONE_INDEX"]?.trim());
+}
+async function pineconeUpsert(id, values, metadata) {
+  const key = process.env["PINECONE_API_KEY"];
+  const base = await resolveHost();
+  if (!key || !base) return false;
+  const ctrl = new AbortController();
+  const timer2 = setTimeout(() => ctrl.abort(), 15e3);
+  try {
+    const r = await fetch(`${base}/vectors/upsert`, {
+      method: "POST",
+      headers: { "Api-Key": key, "Content-Type": "application/json" },
+      body: JSON.stringify({ vectors: [{ id, values, metadata }], namespace: namespace() }),
+      signal: ctrl.signal
+    });
+    if (!r.ok) {
+      logger.debug({ status: r.status }, "pinecone: upsert failed");
+      return false;
+    }
+    return true;
+  } catch (err) {
+    logger.debug({ err }, "pinecone: upsert errored");
+    return false;
+  } finally {
+    clearTimeout(timer2);
+  }
+}
+async function pineconeQuery(values, topK) {
+  const key = process.env["PINECONE_API_KEY"];
+  const base = await resolveHost();
+  if (!key || !base) return null;
+  const ctrl = new AbortController();
+  const timer2 = setTimeout(() => ctrl.abort(), 15e3);
+  try {
+    const r = await fetch(`${base}/query`, {
+      method: "POST",
+      headers: { "Api-Key": key, "Content-Type": "application/json" },
+      body: JSON.stringify({ vector: values, topK, includeMetadata: true, namespace: namespace() }),
+      signal: ctrl.signal
+    });
+    if (!r.ok) {
+      logger.debug({ status: r.status }, "pinecone: query failed");
+      return null;
+    }
+    const data = await r.json();
+    return Array.isArray(data.matches) ? data.matches : [];
+  } catch (err) {
+    logger.debug({ err }, "pinecone: query errored");
+    return null;
+  } finally {
+    clearTimeout(timer2);
+  }
+}
+var cachedHost;
+var init_pinecone = __esm({
+  "src/lib/pinecone.ts"() {
+    "use strict";
+    init_logger2();
+    cachedHost = null;
   }
 });
 
@@ -80804,6 +81633,727 @@ ${err.stdout}`.toLowerCase();
   }
 });
 
+// src/lib/sandbox.ts
+function sandboxConfigured() {
+  return !!process.env["E2B_API_KEY"];
+}
+function gitWriteConfigured() {
+  return !!process.env["SANDBOX_GITHUB_TOKEN"];
+}
+function clip2(s, n = 6e3) {
+  return s.length > n ? `${s.slice(0, n)}
+\u2026[truncated ${s.length - n} chars]` : s;
+}
+async function execCapture(sbx, cmd, timeoutMs) {
+  try {
+    const r = await sbx.commands.run(cmd, { timeoutMs });
+    return { exitCode: r.exitCode ?? 0, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+  } catch (e) {
+    const err = e;
+    const res = err.result;
+    if (res || err.exitCode != null || err.stdout != null || err.stderr != null) {
+      return {
+        exitCode: res?.exitCode ?? err.exitCode ?? 1,
+        stdout: res?.stdout ?? err.stdout ?? "",
+        stderr: res?.stderr ?? err.stderr ?? err.message ?? String(e)
+      };
+    }
+    throw e;
+  }
+}
+async function runInSandbox(script, timeoutMs = SANDBOX_TIMEOUT_MS) {
+  const apiKey = process.env["E2B_API_KEY"];
+  if (!apiKey) return "error: E2B_API_KEY is not set \u2014 the cloud sandbox is unavailable.";
+  let sbx = null;
+  try {
+    sbx = await import_e2b.Sandbox.create({ apiKey, timeoutMs });
+    const r = await execCapture(sbx, script, timeoutMs - 5e3);
+    const parts = [`exit code: ${r.exitCode}`];
+    if (r.stdout.trim()) parts.push(`stdout:
+${clip2(r.stdout.trim())}`);
+    if (r.stderr.trim()) parts.push(`stderr:
+${clip2(r.stderr.trim())}`);
+    if (!r.stdout.trim() && !r.stderr.trim()) parts.push("(no output)");
+    return parts.join("\n");
+  } catch (e) {
+    return `error: sandbox execution failed: ${String(e instanceof Error ? e.message : e).slice(0, 300)}`;
+  } finally {
+    try {
+      await sbx?.kill();
+    } catch {
+    }
+  }
+}
+async function must(sbx, cmd, label) {
+  const r = await execCapture(sbx, cmd, 12e4);
+  if (r.exitCode !== 0) throw new Error(`${label} failed (exit ${r.exitCode}): ${clip2((r.stderr || r.stdout || "").trim(), 500)}`);
+  return r.stdout.trim();
+}
+async function repoPr(opts) {
+  const e2bKey = process.env["E2B_API_KEY"];
+  const ghToken = process.env["SANDBOX_GITHUB_TOKEN"];
+  if (!e2bKey) return "error: E2B_API_KEY is not set.";
+  if (!ghToken) return "error: SANDBOX_GITHUB_TOKEN is not set \u2014 agents cannot push/PR until the operator sets it.";
+  const branch = opts.branch.replace(/[^A-Za-z0-9._/-]/g, "-").slice(0, 100);
+  const base = (opts.baseBranch ?? "main").replace(/[^A-Za-z0-9._/-]/g, "-");
+  const authUrl = `https://x-access-token:${ghToken}@github.com/${GITHUB_REPO}.git`;
+  const cleanUrl = `https://github.com/${GITHUB_REPO}.git`;
+  let sbx = null;
+  try {
+    sbx = await import_e2b.Sandbox.create({ apiKey: e2bKey, timeoutMs: SANDBOX_TIMEOUT_MS });
+    await must(sbx, `rm -rf ${WORKDIR} && git clone --depth 1 --branch ${base} '${authUrl}' ${WORKDIR}`, "clone");
+    await must(sbx, `cd ${WORKDIR} && git remote set-url origin '${cleanUrl}' && git config user.email agent@openclaw.local && git config user.name "OpenClaw Agent" && git checkout -b '${branch}'`, "branch setup");
+    const scriptRes = await execCapture(sbx, `cd ${WORKDIR} && ${opts.script}`, 15e4);
+    const scriptOut = clip2(`exit ${scriptRes.exitCode}
+${(scriptRes.stdout || "").trim()}
+${(scriptRes.stderr || "").trim()}`.trim(), 4e3);
+    const status = await must(sbx, `cd ${WORKDIR} && git add -A && git status --porcelain`, "git status");
+    if (!status.trim()) {
+      return `The script ran but produced no file changes \u2014 nothing to open a PR for.
+
+Script output:
+${scriptOut}`;
+    }
+    await must(sbx, `cd ${WORKDIR} && git commit -m ${JSON.stringify(opts.title)}`, "commit");
+    const push = await execCapture(sbx, `cd ${WORKDIR} && git push '${authUrl}' '${branch}' 2>&1 | sed -E 's#x-access-token:[^@]*@#***@#g'`, 6e4);
+    if (push.exitCode !== 0) throw new Error(`push failed (exit ${push.exitCode}): ${clip2((push.stdout || push.stderr).trim(), 300)}`);
+    const pr = await fetch(`${GITHUB_API}/repos/${GITHUB_REPO}/pulls`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${ghToken}`, Accept: "application/vnd.github+json", "Content-Type": "application/json", "User-Agent": "openclaw-agent" },
+      body: JSON.stringify({ title: opts.title, head: branch, base, body: opts.body ?? "Opened by an OpenClaw agent from an E2B sandbox." })
+    });
+    const prBody = await pr.json();
+    if (!pr.ok) {
+      return `Branch '${branch}' pushed, but opening the PR failed (${pr.status}: ${prBody.message ?? "unknown"}). Open it manually from the branch.
+
+Script output:
+${scriptOut}`;
+    }
+    return `\u2705 Pushed branch '${branch}' and opened PR: ${prBody.html_url}
+
+Script output:
+${scriptOut}`;
+  } catch (e) {
+    return `error: repo PR flow failed: ${String(e instanceof Error ? e.message : e).slice(0, 400)}`;
+  } finally {
+    try {
+      await sbx?.kill();
+    } catch {
+    }
+  }
+}
+var import_e2b, GITHUB_REPO, GITHUB_API, SANDBOX_TIMEOUT_MS, WORKDIR;
+var init_sandbox = __esm({
+  "src/lib/sandbox.ts"() {
+    "use strict";
+    import_e2b = __toESM(require_dist4(), 1);
+    GITHUB_REPO = "paisabrazilfl-cpu/bos-aura";
+    GITHUB_API = "https://api.github.com";
+    SANDBOX_TIMEOUT_MS = 18e4;
+    WORKDIR = "/tmp/repo";
+  }
+});
+
+// src/lib/sources.ts
+function tier1SourcesText(category) {
+  const cats = category ? TIER1_SOURCES.filter((c) => c.key === category.toLowerCase() || c.label.toLowerCase().includes(category.toLowerCase())) : TIER1_SOURCES;
+  if (!cats.length) {
+    return `No Tier-1 category matched "${category}". Available: ${TIER1_SOURCES.map((c) => c.key).join(", ")}.`;
+  }
+  return cats.map((c) => `## ${c.key} \u2014 ${c.label}
+${c.urls.join("\n")}`).join("\n\n");
+}
+var TIER1_SOURCES, SOURCE_POLICY;
+var init_sources = __esm({
+  "src/lib/sources.ts"() {
+    "use strict";
+    TIER1_SOURCES = [
+      {
+        key: "medicine",
+        label: "Medicine / Health (clinical, drugs, devices, disease data, evidence-based medicine)",
+        urls: [
+          "https://www.nih.gov/",
+          "https://pubmed.ncbi.nlm.nih.gov/",
+          "https://pmc.ncbi.nlm.nih.gov/",
+          "https://www.cdc.gov/",
+          "https://www.fda.gov/",
+          "https://www.who.int/",
+          "https://www.cochranelibrary.com/",
+          "https://www.cochrane.org/",
+          "https://clinicaltrials.gov/",
+          "https://www.nejm.org/",
+          "https://jamanetwork.com/",
+          "https://www.thelancet.com/",
+          "https://www.nature.com/nm/",
+          "https://www.bmj.com/",
+          "https://www.mayoclinic.org/",
+          "https://www.merckmanuals.com/professional"
+        ]
+      },
+      {
+        key: "finance",
+        label: "Investing / Personal Finance / Investor Protection (rules, filings, enforcement, macro data)",
+        urls: [
+          "https://www.sec.gov/",
+          "https://www.sec.gov/edgar",
+          "https://www.investor.gov/",
+          "https://www.finra.org/",
+          "https://brokercheck.finra.org/",
+          "https://www.federalreserve.gov/",
+          "https://fred.stlouisfed.org/",
+          "https://home.treasury.gov/",
+          "https://www.irs.gov/",
+          "https://www.consumerfinance.gov/",
+          "https://www.fdic.gov/",
+          "https://www.occ.gov/",
+          "https://www.bea.gov/",
+          "https://www.bls.gov/"
+        ]
+      },
+      {
+        key: "markets",
+        label: "Stocks / Markets / Company Filings (filings first, then official exchange + macro data)",
+        urls: [
+          "https://www.sec.gov/edgar/search/",
+          "https://www.sec.gov/data-research",
+          "https://www.nyse.com/market-data",
+          "https://www.nasdaq.com/market-activity",
+          "https://www.cboe.com/us/equities/",
+          "https://www.spglobal.com/spdji/",
+          "https://www.msci.com/",
+          "https://fred.stlouisfed.org/",
+          "https://www.bea.gov/",
+          "https://www.bls.gov/",
+          "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/"
+        ]
+      },
+      {
+        key: "news",
+        label: "Global News (Tier-1 wire services & established newsrooms)",
+        urls: [
+          "https://www.reuters.com/",
+          "https://apnews.com/",
+          "https://www.bbc.com/news",
+          "https://www.ft.com/",
+          "https://www.wsj.com/",
+          "https://www.bloomberg.com/",
+          "https://www.economist.com/",
+          "https://www.nytimes.com/",
+          "https://www.washingtonpost.com/",
+          "https://www.theguardian.com/international",
+          "https://www.aljazeera.com/",
+          "https://www.dw.com/",
+          "https://www.france24.com/en/",
+          "https://www.npr.org/",
+          "https://www.c-span.org/"
+        ]
+      },
+      {
+        key: "ai",
+        label: "AI News / Research / Policy (official labs for products, papers for research, NIST/OECD/EU for governance)",
+        urls: [
+          "https://openai.com/news/",
+          "https://www.anthropic.com/news",
+          "https://www.anthropic.com/research",
+          "https://deepmind.google/",
+          "https://blog.google/technology/ai/",
+          "https://ai.meta.com/",
+          "https://research.ibm.com/artificial-intelligence",
+          "https://blogs.microsoft.com/ai/",
+          "https://arxiv.org/list/cs.AI/recent",
+          "https://arxiv.org/list/cs.LG/recent",
+          "https://paperswithcode.com/",
+          "https://huggingface.co/papers",
+          "https://hai.stanford.edu/",
+          "https://aiindex.stanford.edu/",
+          "https://www.nist.gov/artificial-intelligence",
+          "https://www.nist.gov/itl/ai-risk-management-framework",
+          "https://oecd.ai/",
+          "https://artificialintelligenceact.eu/"
+        ]
+      },
+      {
+        key: "marketing",
+        label: "Social Media Marketing / Ads / Strategy (official ad-platform docs outrank gurus)",
+        urls: [
+          "https://www.facebook.com/business/news",
+          "https://www.facebook.com/business/help",
+          "https://business.instagram.com/",
+          "https://support.google.com/google-ads/",
+          "https://blog.google/products/ads-commerce/",
+          "https://marketingplatform.google.com/",
+          "https://business.linkedin.com/marketing-solutions",
+          "https://www.linkedin.com/business/marketing/blog",
+          "https://ads.tiktok.com/business/",
+          "https://ads.tiktok.com/business/creativecenter/",
+          "https://business.pinterest.com/",
+          "https://forbusiness.snapchat.com/",
+          "https://www.youtube.com/ads/",
+          "https://www.thinkwithgoogle.com/",
+          "https://www.emarketer.com/",
+          "https://www.marketingdive.com/"
+        ]
+      },
+      {
+        key: "engineering",
+        label: "Engineering / Standards / Technical Research (standards, gov technical reports, peer-reviewed)",
+        urls: [
+          "https://www.nist.gov/",
+          "https://www.nist.gov/publications",
+          "https://www.nasa.gov/",
+          "https://ntrs.nasa.gov/",
+          "https://www.ieee.org/",
+          "https://ieeexplore.ieee.org/",
+          "https://standards.ieee.org/",
+          "https://www.asme.org/codes-standards",
+          "https://www.astm.org/",
+          "https://www.iso.org/",
+          "https://www.sae.org/",
+          "https://www.osha.gov/",
+          "https://www.energy.gov/",
+          "https://www.nrel.gov/",
+          "https://www.osti.gov/",
+          "https://www.uspto.gov/",
+          "https://scholar.google.com/",
+          "https://arxiv.org/"
+        ]
+      },
+      {
+        key: "law",
+        label: "Law / Legal Research (federal statutes, regs, court opinions, official portals)",
+        urls: [
+          "https://www.congress.gov/",
+          "https://www.govinfo.gov/",
+          "https://www.ecfr.gov/",
+          "https://www.federalregister.gov/",
+          "https://www.supremecourt.gov/",
+          "https://www.uscourts.gov/",
+          "https://www.justice.gov/",
+          "https://www.law.cornell.edu/",
+          "https://www.oyez.org/",
+          "https://www.courtlistener.com/",
+          "https://www.regulations.gov/",
+          "https://www.ftc.gov/",
+          "https://www.eeoc.gov/",
+          "https://www.dol.gov/",
+          "https://www.osha.gov/"
+        ]
+      },
+      {
+        key: "social",
+        label: "Social Issues / Demographics / Public Policy (official data first; Pew for opinion)",
+        urls: [
+          "https://www.census.gov/",
+          "https://data.census.gov/",
+          "https://www.bls.gov/",
+          "https://www.bea.gov/",
+          "https://bjs.ojp.gov/",
+          "https://www.hud.gov/",
+          "https://www.hhs.gov/",
+          "https://www.ed.gov/",
+          "https://www.dol.gov/",
+          "https://www.pewresearch.org/",
+          "https://www.gallup.com/",
+          "https://www.kff.org/",
+          "https://www.urban.org/",
+          "https://www.brookings.edu/",
+          "https://www.rand.org/",
+          "https://www.oecd.org/",
+          "https://data.worldbank.org/",
+          "https://sdgs.un.org/",
+          "https://unstats.un.org/"
+        ]
+      },
+      {
+        key: "gov",
+        label: "Federal / State / County / City Law & Government (incl. Florida / Palm Beach examples)",
+        urls: [
+          "https://www.usa.gov/state-governments",
+          "https://www.usa.gov/state-local-governments",
+          "https://www.ncsl.org/",
+          "https://www.naag.org/",
+          "https://www.uniformlaws.org/",
+          "https://library.municode.com/",
+          "https://www.codepublishing.com/",
+          "https://ecode360.com/",
+          "https://www.whitehouse.gov/",
+          "https://www.archives.gov/",
+          "https://www.myfloridahouse.gov/",
+          "https://www.flsenate.gov/",
+          "https://www.leg.state.fl.us/",
+          "https://www.flcourts.gov/",
+          "https://www.myfloridalegal.com/",
+          "https://dos.myflorida.com/sunbiz/",
+          "https://discover.pbcgov.org/",
+          "https://www.pbcgov.org/",
+          "https://www.mypalmbeachclerk.com/",
+          "https://www.pbcgov.org/papa/",
+          "https://www.wpb.org/",
+          "https://library.municode.com/fl/west_palm_beach/codes/code_of_ordinances"
+        ]
+      }
+    ];
+    SOURCE_POLICY = `
+
+SOURCE POLICY (Tier-1 only): prefer authoritative primary sources; do NOT use random blogs, SEO/affiliate pages, anonymous posts, unsourced social media, or AI-generated summaries as primary evidence. Hierarchy: (1) official government/regulatory; (2) primary institution; (3) peer-reviewed journal / standards body; (4) official company/platform docs; (5) Tier-1 wire service / established newsroom; (6) nonpartisan research institute / recognized data authority. For every claim: cite the source URL and label it CONFIRMED, INFERRED, or UNKNOWN; prefer primary sources over summaries. Call the tier1_sources tool to get the vetted starting URLs for the relevant domain (medicine, finance, markets, news, ai, marketing, engineering, law, social, gov).`;
+  }
+});
+
+// src/lib/marketing.ts
+function marketingPlaybook(section) {
+  if (section) {
+    const key = section.trim().toLowerCase().replace(/[^a-z]/g, "_");
+    const hit = MARKETING_SECTIONS[key] ?? Object.entries(MARKETING_SECTIONS).find(([k]) => key.includes(k) || k.includes(key))?.[1];
+    if (hit) return `MARKETING ENGINE \u2014 ${hit.title}
+
+${hit.body}`;
+    return `Unknown section "${section}". Available: ${Object.keys(MARKETING_SECTIONS).join(", ")}.
+
+${MARKETING_ENGINE}`;
+  }
+  return MARKETING_ENGINE;
+}
+var MARKETING_ENGINE, MARKETING_SECTIONS, MARKETING_ENGINE_POINTER;
+var init_marketing = __esm({
+  "src/lib/marketing.ts"() {
+    "use strict";
+    MARKETING_ENGINE = `
+MARKETING ENGINE \u2014 universal plug-and-play post \u2192 conversion machine (any niche/offer/platform).
+
+THE CHAIN (most chase only attention; the money is the full chain):
+Attention \u2192 Trust \u2192 Desire \u2192 Action \u2192 Follow-up \u2192 Conversion.
+Core truth: VIEWS ARE NOT THE BUSINESS. CONVERSATIONS ARE. Optimize for qualified conversations, not likes.
+Operating principle: EVERY POST belongs to a campaign; every campaign to a funnel; every funnel to a business objective. No content for content's sake.
+
+ACCURACY FIRST (non-negotiable \u2014 overrides "make it punchy"):
+- Every factual claim, statistic, study, or result MUST be TRUE and verifiable. RESEARCH it first (web_search / tier1_sources) and keep the source URL. Punchy \u2260 fabricated.
+- NEVER invent stats ("boosts output 300%"), studies ("MIT & Stanford research"), testimonials, or results. A vague "recent studies show" with no real source is a fabrication \u2014 cut it or replace it with a real, cited fact.
+- Hooks may be bold and emotional, but the claim underneath must hold up. Curiosity and FOMO are fine; lying is not.
+- Disclose paid/affiliate/endorsement relationships (FTC) and respect each platform's ToS. No fake scarcity, no deceptive claims.
+
+THE UNIVERSAL POST FORMULA (6 beats):
+Hook \u2192 Problem \u2192 Insight \u2192 Value \u2192 CTA \u2192 Follow-up system.
+[HOOK] Most people think [COMMON BELIEF].
+[PROBLEM] But the real issue is [HIDDEN PROBLEM] \u2014 costing [PAIN].
+[INSIGHT] The ones winning do [BETTER METHOD].
+[VALUE] Here are [3\u20137] things you can use now: 1) \u2026 2) \u2026 3) \u2026
+[CTA] Comment [KEYWORD] and I'll send you [RESOURCE].
+[FOLLOW-UP] (keyword \u2192 DM \u2192 qualify \u2192 offer \u2192 follow up).
+A post is not approved unless it has exactly: ONE audience, ONE pain, ONE message, ONE CTA, ONE next step.
+
+CAMPAIGN KERNEL (every campaign): Audience \u2192 Pain \u2192 Desired Result \u2192 Mechanism \u2192 Proof \u2192 Offer \u2192 CTA \u2192 Follow-up.
+Positioning line: "I help [AUDIENCE] get [RESULT] without [PAIN] using [MECHANISM]."
+
+HOOKS (line 1 must earn line 2; front-load the payoff "above the fold"):
+- Curiosity gap: "Nobody in [niche] is talking about this\u2026"
+- Contrarian / pattern interrupt: "Unpopular opinion: more [obvious thing] won't fix it."
+- Specificity: "I cut [metric] by [exact number] in [timeframe] with one change." (only if TRUE & cited)
+- Loss/cost framing: "You're quietly losing [X] because of [Y]."
+- Desired-outcome: "Here's how to get [result] without [pain]."
+- Identity: "If you're a [audience] who [trait], read this."
+Test 3 hook angles per idea: FEAR vs DESIRE vs CURIOSITY. Keep the one that earns saves/comments/DMs.
+
+PSYCHOLOGY TRIGGERS (use truthfully; name the lever): curiosity gap (open loop you close) \xB7 specificity (real numbers) \xB7 social proof (real results/quotes) \xB7 loss aversion & FOMO (real stakes) \xB7 authority (real credentials/sources) \xB7 reciprocity (free value first) \xB7 identity/belonging ("for people who\u2026") \xB7 pattern interrupt.
+
+AUDIENCE AWARENESS (match message to stage): Unaware \u2192 educational hook | Problem-aware \u2192 problem/agitation | Solution-aware \u2192 comparison/framework | Product-aware \u2192 proof/objection handling | Ready-to-buy \u2192 direct offer + booking. (For B2B/high-consideration, most buyers aren't in-market now \u2014 the LinkedIn B2B Institute "95-5 rule" \u2014 so build memory & trust before they're ready.)
+
+POST GOAL \u2014 pick ONE per post (don't make every post sell; rotate):
+Attention \u2192 curiosity/contrarian \u2192 comment keyword | Trust \u2192 education \u2192 "save this" | Leads \u2192 checklist/template \u2192 comment keyword | Sell \u2192 offer \u2192 DM/book call | Retarget \u2192 case study \u2192 apply/book.
+
+CONTENT PILLARS (any niche): Problem \xB7 Mistakes \xB7 Framework \xB7 Proof \xB7 Process \xB7 Opinion/POV \xB7 Offer. Weekly mix: 2 problem, 2 framework, 1 mistake, 1 proof/process, 1 offer.
+
+CTA LADDER (match to intent): Soft ("save this") \xB7 Engagement ("comment YES") \xB7 Lead ("comment GUIDE") \xB7 DM ("DM me AUDIT") \xB7 Sales ("book a call") \xB7 Retarget ("ready? message me").
+Keyword bank: GUIDE \xB7 CHECKLIST \xB7 MAP \xB7 AUDIT \xB7 TEMPLATE \xB7 PLAN \xB7 SYSTEM \xB7 FIX \xB7 START \xB7 SCALE.
+
+DIFFERENTIATE THE CHANNEL FIRST (each has its own format, length, cadence, compliance \u2014 never paste the same content everywhere):
+- SOCIAL POST (Instagram/LinkedIn/X/TikTok/Facebook): use the 6-beat post formula + PLATFORM ADAPTATION; publish via instagram_post / composio_action. Public CTA = comment a keyword \u2192 move to DM.
+- EMAIL (regular/direct marketing): use the email_nurture module \u2014 clear value-driven subject line, ONE message + ONE CTA, and CAN-SPAM compliance (identify the sender, a valid physical postal address, a working unsubscribe). Send via composio_action on Gmail. CTA = click/reply/book, not "comment".
+- PAID ADS: use the paid_media module \u2014 funnel by temperature (cold \u2192 retarget \u2192 convert) and measure with incrementality, not just platform-reported conversions.
+- SMS: short, consent-based, with a clear opt-out (STOP); reminders/urgent follow-up only.
+- LANDING PAGE / SEO / WEBINAR: see the landing_page, channels, and campaign_types modules.
+Rule: identify whether the task is SOCIAL, EMAIL, PAID, SMS, or WEB first, then apply that channel's play and compliance \u2014 they are NOT interchangeable.
+
+PLATFORM ADAPTATION (same machine, tuned; digital is ~61% of marketing spend per Gartner 2025 \u2014 distribution discipline matters):
+- Instagram: hook in line 1 (all that shows before "more"); tight paragraphs + emoji rhythm; 8\u201315 mixed-reach hashtags; scroll-stopping image/carousel/Reel. Signals that matter: SAVES + SHARES + comments + dwell. Pin a first comment with the CTA.
+- LinkedIn: longer story + insight, NO hashtag spam (3\u20135), reward dwell; CTA = comment/DM, soft; best for B2B authority.
+- X/Threads: brevity, strong first line, one idea; thread for depth.
+- TikTok/Reels/Shorts: first 2 seconds = on-screen + spoken hook; optimize watch-time & loops; trend-aware.
+As AI floods feeds with generic content (HubSpot 2026), win on a sharp point of view, trust, and distinctiveness \u2014 not volume.
+
+THE FUNNEL: Post \u2192 comment/DM keyword \u2192 send resource \u2192 ask ONE qualifying question \u2192 identify pain \u2192 offer next step \u2192 book/sell/send link \u2192 follow up.
+
+OFFER LADDER (every post points to one rung): Free value \u2192 Lead magnet \u2192 Low-ticket \u2192 Core offer \u2192 Premium (done-for-you) \u2192 Recurring (retainer/subscription).
+
+KPIs (track weekly; conversations > likes): impressions (hook?) \xB7 saves (value?) \xB7 comments (CTA?) \xB7 DMs (intent?) \xB7 clicks \xB7 leads \xB7 calls booked \xB7 sales \xB7 follow-up replies. Test ONE variable at a time. Don't scale on platform-reported conversions alone \u2014 corroborate with CRM/sales data and incrementality/holdout testing (Google) to see what happened BECAUSE of the marketing.
+
+HOW THIS SWARM RUNS THE ENGINE (use the real tools, end to end):
+1) Pick ONE audience + ONE pain + ONE desired result + ONE offer-ladder rung.
+2) RESEARCH the angle and EVERY claim (web_search / tier1_sources) \u2014 get a real, citable fact. Nothing ships unverified.
+3) WRITE the post with the formula + a tested hook + ONE goal + ONE CTA keyword.
+4) image_generate a scroll-stopping on-brand visual (it returns an absolute public URL).
+5) PUBLISH: instagram_post(image_url, caption) for IG; composio_action for other connected apps. Post once.
+6) SCHEDULE the calendar with schedule_task (recurring cron) so the engine runs itself.
+7) TRACK what worked with memory_write (hook angle, CTA, saves/DMs) and feed it back into the next round.
+
+DEEPER MODULES \u2014 call marketing_playbook with a section for the enterprise build:
+campaign_brief \xB7 offer_ladder \xB7 audience \xB7 post_templates \xB7 campaign_types \xB7 lead_magnets \xB7 dm_flow \xB7 landing_page \xB7 email_nurture \xB7 paid_media \xB7 channels \xB7 production \xB7 governance \xB7 qa \xB7 kpis \xB7 experiments \xB7 rollout.
+
+ONE-SENTENCE ENGINE: Expose a real painful problem, teach a true better way, offer a useful resource, start a conversation, qualify the lead, move them to the next step \u2014 and track conversations, not likes.`;
+    MARKETING_SECTIONS = {
+      campaign_brief: {
+        title: "Master Campaign Brief",
+        body: `Every campaign must have a brief. Fill in:
+CAMPAIGN NAME \xB7 OBJECTIVE (Awareness/Leads/Bookings/Sales/Retention) \xB7 AUDIENCE \xB7 PAIN \xB7 DESIRED RESULT \xB7 MECHANISM \xB7 OFFER \xB7 LEAD MAGNET \xB7 CTA + keyword \xB7 CHANNELS \xB7 CONTENT ASSETS (posts/videos/carousels/emails/landing/ads) \xB7 PROOF (case studies/stats/testimonials/demos) \xB7 COMPLIANCE NOTES (claims/disclosures/privacy) \xB7 KPIs (primary/secondary) \xB7 TIMELINE (launch/review/optimize) \xB7 OWNER.
+Rule: every post belongs to a campaign, every campaign to a funnel, every funnel to a business objective.`
+      },
+      offer_ladder: {
+        title: "Offer Ladder",
+        body: `Free value (post/checklist/mini-audit) \u2192 Lead magnet (PDF/calculator/template/scorecard) \u2192 Low-ticket (template pack/workshop/starter kit) \u2192 Core (main service/product) \u2192 Premium (done-for-you/enterprise) \u2192 Recurring (retainer/subscription/support).
+For each campaign define: Primary CTA \xB7 Secondary CTA \xB7 Lead magnet \xB7 Sales offer \xB7 Upsell \xB7 Retention path. Every post points to ONE rung.`
+      },
+      audience: {
+        title: "Audience Intelligence",
+        body: `Segment by awareness: Unaware \xB7 Problem-aware \xB7 Solution-aware \xB7 Product-aware \xB7 Ready-to-buy \u2014 and match content to the stage.
+Before producing, answer: who is this for? what do they want? what are they afraid of? what are they tired of? what have they tried? what do they misunderstand? what proof do they need? what objection stops them? what words do they already use? what result makes them act now?`
+      },
+      post_templates: {
+        title: "Plug-and-Play Post Templates",
+        body: `1) CURIOSITY: "Most people think [BELIEF]. The real opportunity is [HIDDEN TRUTH]\u2026 the ones getting [RESULT] do: 1) 2) 3). Comment [KEYWORD]."
+2) PROBLEM-AGITATE-SOLUTION: "If you're dealing with [PROBLEM], it's not [SURFACE EXCUSE]. The real issue is [ROOT CAUSE]. That costs you: [PAIN 1-3]. The fix: [SOLUTION]. Comment [KEYWORD]."
+3) MISTAKE LIST: "5 mistakes [AUDIENCE] make with [TOPIC]: 1-5. Not effort \u2014 wrong system. Comment [KEYWORD]."
+4) BEFORE/AFTER: "Before: [bad state]. After: [desired result]. The difference: [OLD WAY] vs [NEW WAY]. Comment [KEYWORD]."
+5) AUTHORITY LEVELS: "[N] levels to [TOPIC]: L1\u2026L4. Most are stuck at L[x]; the results start at L[y]. Comment [KEYWORD]."
+6) CONTRARIAN: "Unpopular opinion: [BELIEF] isn't the solution. It's [BETTER BELIEF], because [REASON]. Comment [KEYWORD]."
+7) DIRECT OFFER: "I help [AUDIENCE] get [RESULT] without [PAIN]. Best fit if: [qualifiers]. DM/comment [KEYWORD]."`
+      },
+      campaign_types: {
+        title: "Campaign Library",
+        body: `Awareness (reach \u2192 follow/save) \xB7 Education (trust \u2192 download) \xB7 Lead magnet (capture \u2192 comment keyword) \xB7 Webinar (deep education \u2192 register) \xB7 Audit (qualify \u2192 book audit) \xB7 Case study (proof \u2192 request breakdown) \xB7 Offer (sales \u2192 apply/book) \xB7 Retargeting (warm \u2192 book call) \xB7 Reactivation (old leads \u2192 reply/schedule) \xB7 Referral (advocates \u2192 refer).
+Each needs: name \xB7 audience \xB7 objective \xB7 offer \xB7 CTA \xB7 channels \xB7 assets \xB7 owner \xB7 deadline \xB7 KPI \xB7 review date.`
+      },
+      lead_magnets: {
+        title: "Lead Magnets",
+        body: `Checklist (fast opt-ins) \xB7 Template (engagement) \xB7 Scorecard (audit selling) \xB7 Calculator (ROI/value) \xB7 Playbook (enterprise) \xB7 Roadmap (strategy) \xB7 Buyer's guide (comparison) \xB7 Mistakes guide (problem-aware) \xB7 Case-study breakdown (warm) \xB7 Swipe file (creators/agencies).
+Formula: "The [AUDIENCE] [OUTCOME] Checklist: Find the [N] Bottlenecks Blocking [RESULT]."`
+      },
+      dm_flow: {
+        title: "Comment-to-DM Flow",
+        body: `Public CTA: "Comment [KEYWORD] and I'll send it."
+DM1 (open): "Appreciate the comment \u2014 here's the [RESOURCE]. Before I send the best version, what are you working on right now?"
+DM2 (qualify): "Got it. What's the biggest thing you're trying to improve right now?"
+DM3 (diagnose): "Makes sense \u2014 the bottleneck is probably [BOTTLENECK]; the usual fix is [PATH]."
+DM4 (next step): "I can help you map this. Want me to send the next step?"
+DM5 (convert): "Here's the next step: [LINK] \u2014 it'll show what's working, what's leaking, what to fix first." Human, not pushy.`
+      },
+      landing_page: {
+        title: "Landing Page",
+        body: `Sections: hero headline \xB7 subhead \xB7 pain/problem \xB7 promise/result \xB7 what they get \xB7 who it's for \xB7 how it works \xB7 proof \xB7 FAQ \xB7 CTA \xB7 compliance/disclaimer.
+Headline formula: "Get [RESULT] Without [PAIN] Using [METHOD]."
+Lead-gen fields: name, email, business/project type, main problem (optional phone/budget/timeline). Enterprise qualification: company, role, team size, current tools, lead volume, budget range, decision timeline, primary bottleneck.`
+      },
+      email_nurture: {
+        title: "Email Nurture (+ CAN-SPAM)",
+        body: `7-email sequence: 1) deliver asset 2) educate (real problem) 3) agitate (where results leak) 4) framework 5) proof 6) handle objections 7) offer/booking.
+COMPLIANCE (CAN-SPAM): no deceptive headers/subject lines, clearly identify the sender, include a valid physical postal address, and give a working opt-out/unsubscribe in every commercial email.`
+      },
+      paid_media: {
+        title: "Paid Media (+ incrementality)",
+        body: `Funnel: Cold awareness \u2192 Lead magnet \u2192 Retargeting \u2192 Conversion \u2192 Reactivation.
+Creative by stage: cold = problem/curiosity \xB7 lead = checklist/template \xB7 retarget = proof/case study \xB7 conversion = offer/direct CTA \xB7 reactivation = new angle/bonus.
+MEASUREMENT: don't scale on platform-reported conversions alone. Hierarchy = platform metrics + CRM data + sales data + holdout/incrementality testing + revenue quality. Incrementality measures what happened BECAUSE of the ads, not just what a dashboard credited.`
+      },
+      channels: {
+        title: "Channel Role Matrix",
+        body: `Give every channel ONE job; don't blindly cross-post.
+LinkedIn = B2B authority/founder-led \xB7 Instagram = visual education/Reels/brand \xB7 TikTok = fast awareness/trend testing \xB7 YouTube = searchable authority/demos/long-form trust \xB7 Facebook = local/groups/retargeting \xB7 X = opinions/thought leadership \xB7 Email = nurture/conversion/retention \xB7 SMS = reminders/urgent follow-up \xB7 Webinars = education + high-ticket \xB7 Blog/SEO = search capture/long-term authority \xB7 Paid search = high-intent capture \xB7 Retargeting = warm conversion.`
+      },
+      production: {
+        title: "Production Workflow & Team",
+        body: `Workflow: Brief \u2192 research \u2192 angle \u2192 copy draft \u2192 creative draft \u2192 COMPLIANCE REVIEW \u2192 approval \u2192 schedule \u2192 publish \u2192 community mgmt \u2192 reporting \u2192 optimization.
+Roles (or hats one operator wears): Strategist \xB7 Brand \xB7 Content Lead \xB7 Copywriter \xB7 Designer \xB7 Video Editor \xB7 Media Buyer \xB7 Marketing Ops (CRM/automation/tracking) \xB7 Analyst \xB7 Community Manager \xB7 Sales \xB7 Compliance Reviewer \xB7 PM.
+RACI each task (Responsible/Accountable/Consulted/Informed) so nothing ships unreviewed.`
+      },
+      governance: {
+        title: "Governance & Compliance",
+        body: `Tag every claim: factual \xB7 opinion \xB7 projection \xB7 customer result \xB7 comparative \xB7 legal/medical/financial.
+Review gates: income claim \u2192 proof + disclaimer \xB7 health \u2192 medical/legal review \xB7 legal \u2192 attorney review \xB7 financial \u2192 compliance \xB7 performance \u2192 data source \xB7 customer result \u2192 permission + context \xB7 testimonial/sponsored \u2192 FTC disclosure.
+FTC: influencers/endorsers must clearly disclose material brand relationships. GDPR: if you collect/process personal data of EU/EEA individuals, GDPR obligations likely apply (lawful basis, consent, data rights, transfers). When in doubt, escalate to legal \u2014 do not publish an unverified or non-compliant claim.`
+      },
+      qa: {
+        title: "QA Checklists",
+        body: `POST: one audience \xB7 one hook \xB7 one pain \xB7 one insight \xB7 one CTA \xB7 no unsupported claim \xB7 no misleading promise \xB7 no fake urgency \xB7 brand voice \xB7 CTA link/keyword works \xB7 UTM if needed \xB7 approved for channel.
+LANDING PAGE: clear headline/offer \xB7 CTA above fold \xB7 mobile works \xB7 form works \xB7 thank-you page \xB7 tracking installed \xB7 privacy/disclaimer \xB7 acceptable speed \xB7 CRM routing.
+FUNNEL: post CTA works \xB7 DM response works \xB7 lead magnet delivers \xB7 email triggers \xB7 CRM record created \xB7 sales notified \xB7 booking link works \xB7 follow-up task created \xB7 reporting source captured.`
+      },
+      kpis: {
+        title: "KPI Hierarchy & Scorecard",
+        body: `Hierarchy: Business (revenue/profit/CAC/LTV) \u2192 Sales (calls booked/show/close) \u2192 Funnel (leads/conv/opt-in) \u2192 Content (saves/shares/comments/CTR) \u2192 Paid (CPA/ROAS/CPM/CPC/freq) \u2192 Email (open/CTR/reply/unsub) \u2192 Ops (assets produced/approvals/turnaround).
+Weekly scorecard: posts published, comments, DMs started, leads, calls booked, calls showed, deals closed, revenue, top post, worst post, best hook, best CTA, next test.`
+      },
+      experiments: {
+        title: "Experimentation",
+        body: `Test ONE variable at a time: hook (fear/desire/curiosity) \xB7 CTA (comment/DM/link) \xB7 lead magnet \xB7 creative (text/video/carousel) \xB7 audience (broad/niche) \xB7 offer (free vs paid audit) \xB7 landing (short/long) \xB7 follow-up (fast DM vs email).
+Template: hypothesis \xB7 audience \xB7 variable \xB7 control \xB7 variant \xB7 success metric \xB7 start/end \xB7 result \xB7 decision.
+Decision logic: Scale = clear improvement \xB7 Hold = inconclusive \xB7 Kill = worse \xB7 Retest = promising but noisy.`
+      },
+      rollout: {
+        title: "30 / 60 / 90 Rollout",
+        body: `Days 1\u201330 (Foundation): define offer ladder + audience segments + brand voice; build 5 pillars + 3 lead magnets + a landing page; install CRM tracking; launch first ~20 posts; start DM follow-up; build weekly dashboard.
+Days 31\u201360 (Production): 5\u20137 posts/week; 2 lead-gen campaigns; test 3 hooks + 3 CTAs; launch email nurture; start retargeting; build case studies; weekly optimization meeting.
+Days 61\u201390 (Scale): double down on winners; build paid campaigns; add webinar/workshop; sales enablement; lead scoring; reactivation sequence; referral campaign; monthly insights report.`
+      }
+    };
+    MARKETING_ENGINE_POINTER = "MARKETING TASKS: for any post/caption/campaign/'make this go viral'/lead-magnet/funnel request, call the marketing_playbook tool and apply that universal engine (hook\u2192problem\u2192insight\u2192value\u2192CTA\u2192follow-up, one goal, one CTA keyword, platform-tuned). For the enterprise build (campaign brief, funnels, landing pages, email, paid, governance/compliance, KPIs, rollout) call marketing_playbook with a `section`. Research and CITE any factual claim \u2014 never fabricate stats, studies, or testimonials. Execute with the real tools: image_generate \u2192 instagram_post/composio_action \u2192 schedule_task \u2192 memory_write.";
+  }
+});
+
+// src/lib/cron.ts
+function parseField(field, min, max) {
+  const out = /* @__PURE__ */ new Set();
+  for (const partRaw of field.split(",")) {
+    const part = partRaw.trim();
+    if (!part) continue;
+    let step = 1;
+    let range = part;
+    const slash = part.indexOf("/");
+    if (slash >= 0) {
+      step = Number(part.slice(slash + 1)) || 1;
+      range = part.slice(0, slash);
+    }
+    let lo = min;
+    let hi = max;
+    if (range === "*" || range === "") {
+    } else if (range.includes("-")) {
+      const [a, b] = range.split("-");
+      lo = Number(a);
+      hi = Number(b);
+    } else {
+      lo = hi = Number(range);
+    }
+    if (!Number.isFinite(lo) || !Number.isFinite(hi)) continue;
+    for (let v = lo; v <= hi; v += step) {
+      if (v >= min && v <= max) out.add(v);
+    }
+  }
+  return out;
+}
+function computeNextRun(schedule, from = /* @__PURE__ */ new Date()) {
+  const parts = schedule.trim().split(/\s+/);
+  if (parts.length !== 5) return new Date(from.getTime() + 6e4);
+  const [minF, hourF, domF, monF, dowF] = parts;
+  const mins = parseField(minF, 0, 59);
+  const hours = parseField(hourF, 0, 23);
+  const doms = parseField(domF, 1, 31);
+  const mons = parseField(monF, 1, 12);
+  const dows = parseField(dowF, 0, 6);
+  if (/(^|[,/-])7([,/-]|$)/.test(dowF)) dows.add(0);
+  const domRestricted = domF.trim() !== "*";
+  const dowRestricted = dowF.trim() !== "*";
+  const d = new Date(from.getTime());
+  d.setSeconds(0, 0);
+  d.setMinutes(d.getMinutes() + 1);
+  const MAX_ITER = 367 * 24 * 60;
+  for (let i = 0; i < MAX_ITER; i++) {
+    const monthOk = mons.has(d.getMonth() + 1);
+    const minOk = mins.has(d.getMinutes());
+    const hourOk = hours.has(d.getHours());
+    let dayOk;
+    if (domRestricted && dowRestricted) dayOk = doms.has(d.getDate()) || dows.has(d.getDay());
+    else if (domRestricted) dayOk = doms.has(d.getDate());
+    else if (dowRestricted) dayOk = dows.has(d.getDay());
+    else dayOk = true;
+    if (minOk && hourOk && dayOk && monthOk) return new Date(d.getTime());
+    d.setMinutes(d.getMinutes() + 1);
+  }
+  return new Date(from.getTime() + 6e4);
+}
+var init_cron = __esm({
+  "src/lib/cron.ts"() {
+    "use strict";
+  }
+});
+
+// src/lib/safety.ts
+function screenForSensitive(text2) {
+  if (!text2) return [];
+  const hits = [];
+  for (const r of SENSITIVE_RULES) {
+    if (r.re.test(text2)) hits.push(r.label);
+  }
+  return [...new Set(hits)];
+}
+function blockIfSensitiveForPublic(content, channel = "a public account") {
+  const flags = screenForSensitive(content);
+  if (!flags.length) return null;
+  return `\u{1F6AB} BLOCKED \u2014 refusing to publish to ${channel}: the content looks CONFIDENTIAL/SENSITIVE (flagged: ${flags.join("; ")}). Nothing was posted. Public posts are irreversible \u2014 confidential, privileged, deal, or credential material must never auto-publish. If this text is genuinely cleared for public release, remove the sensitive wording (or post it manually) and try again.`;
+}
+var SENSITIVE_RULES;
+var init_safety = __esm({
+  "src/lib/safety.ts"() {
+    "use strict";
+    SENSITIVE_RULES = [
+      { label: "confidentiality marker", re: /\b(confidential|top[\s-]?secret|classified|internal[\s-]?only|for internal use|not for distribution|do not distribute|do not share|private and confidential|restricted)\b/i },
+      { label: "legal privilege / NDA", re: /\b(nda|non[\s-]?disclosure|privileged|attorney[\s-]?client|work product|under embargo|embargoed)\b/i },
+      { label: "M&A / deal material", re: /\b(acquisition proposal|merger agreement|term sheet|letter of intent|\bloi\b|cap table|due diligence|purchase agreement|definitive agreement|pre[\s-]?money|post[\s-]?money|equity stake)\b/i },
+      { label: "trade secret / proprietary", re: /\b(trade secret|proprietary( and)? confidential|source code|internal roadmap|unreleased)\b/i },
+      { label: "credential / secret", re: /\b(password|passphrase|api[\s_-]?key|secret[\s_-]?key|private[\s_-]?key|access[\s_-]?token|bearer\s+[a-z0-9._-]{12,})\b/i },
+      { label: "API key pattern", re: /\b(sk-[a-z0-9]{12,}|rnd_[a-z0-9]{12,}|ghp_[a-z0-9]{20,}|AKIA[0-9A-Z]{12,})\b/i },
+      { label: "personal identifier (SSN)", re: /\b\d{3}-\d{2}-\d{4}\b/ }
+    ];
+  }
+});
+
+// src/lib/postLimit.ts
+function decidePostAllowed(opts) {
+  const max = opts.maxPerDay ?? MAX_PER_DAY;
+  const spacingMin = opts.minSpacingMin ?? MIN_SPACING_MIN;
+  const platform = opts.platform ?? "social";
+  if (opts.countLast24h >= max) {
+    return `\u{1F6D1} Daily ${platform} post limit reached (${max}/day). Nothing was posted \u2014 the cap rolls over 24h after each post. Queue it for later.`;
+  }
+  if (opts.last) {
+    const elapsedMin = (opts.now.getTime() - opts.last.getTime()) / 6e4;
+    if (elapsedMin < spacingMin) {
+      const wait = Math.ceil(spacingMin - elapsedMin);
+      return `\u{1F6D1} Posts are spaced out (min ${spacingMin} min apart to avoid spamming). Last ${platform} post was ${Math.floor(elapsedMin)} min ago \u2014 next allowed in ~${wait} min. Nothing was posted.`;
+    }
+  }
+  return null;
+}
+async function checkPostAllowed(platform) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT count(*)::int AS n, max(created_at) AS last
+         FROM social_posts
+        WHERE platform = $1 AND created_at > now() - interval '24 hours'`,
+      [platform]
+    );
+    const countLast24h = Number(rows[0]?.n ?? 0);
+    const last = rows[0]?.last ? new Date(rows[0].last) : null;
+    return decidePostAllowed({ countLast24h, last, now: /* @__PURE__ */ new Date(), platform });
+  } catch {
+    return null;
+  }
+}
+async function recordPost(platform, account, permalink) {
+  try {
+    await pool.query(
+      `INSERT INTO social_posts (platform, account, permalink) VALUES ($1, $2, $3)`,
+      [platform, account || null, permalink || null]
+    );
+  } catch {
+  }
+}
+var MAX_PER_DAY, MIN_SPACING_MIN;
+var init_postLimit = __esm({
+  "src/lib/postLimit.ts"() {
+    "use strict";
+    init_src();
+    MAX_PER_DAY = Number(process.env["SOCIAL_MAX_POSTS_PER_DAY"] ?? 12);
+    MIN_SPACING_MIN = Number(process.env["SOCIAL_MIN_SPACING_MINUTES"] ?? 90);
+  }
+});
+
 // ../../node_modules/.pnpm/pureimage@0.4.18/node_modules/pureimage/dist/index.cjs
 var require_dist5 = __commonJS({
   "../../node_modules/.pnpm/pureimage@0.4.18/node_modules/pureimage/dist/index.cjs"(exports, module) {
@@ -85095,6 +86645,2605 @@ var require_dist5 = __commonJS({
         }
       });
     }
+  }
+});
+
+// src/lib/worldEngine.ts
+var worldEngine_exports = {};
+__export(worldEngine_exports, {
+  renderContentCard: () => renderContentCard,
+  renderIntroCard: () => renderIntroCard,
+  renderStoryFrame: () => renderStoryFrame,
+  renderTraversalBlock: () => renderTraversalBlock,
+  renderWorldFrame: () => renderWorldFrame,
+  sliceSixTiles: () => sliceSixTiles,
+  sliceTiles: () => sliceTiles,
+  verifyBlock: () => verifyBlock,
+  verifyNotBlank: () => verifyNotBlank
+});
+import { PassThrough } from "node:stream";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
+import fs from "node:fs";
+function ensureFont() {
+  if (fontReady) return fontReady;
+  fontReady = (async () => {
+    try {
+      const here = path.dirname(fileURLToPath(import.meta.url));
+      const dirs = [
+        path.join(here, "..", "assets"),
+        path.join(here, "..", "..", "assets"),
+        path.join(process.cwd(), "assets"),
+        path.join(process.cwd(), "artifacts", "api-server", "assets")
+      ];
+      for (const dir of dirs) {
+        const p = path.join(dir, "DejaVuSansMono.ttf");
+        if (fs.existsSync(p)) {
+          const f = PImage.registerFont(p, MONO);
+          await (f.load ? f.load() : Promise.resolve());
+          return;
+        }
+      }
+    } catch {
+    }
+  })();
+  return fontReady;
+}
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a |= 0;
+    a = a + 1831565813 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+async function toBuffer(bitmap) {
+  const chunks = [];
+  const ps = new PassThrough();
+  ps.on("data", (c) => chunks.push(c));
+  await PImage.encodePNGToStream(bitmap, ps);
+  return Buffer.concat(chunks);
+}
+async function renderWorldFrame(opts = {}) {
+  await ensureFont();
+  const W = opts.width ?? 3240;
+  const H = opts.height ?? 1080;
+  const busy = !!opts.busy;
+  const chapter = Math.max(0, opts.chapter ?? 0);
+  const rnd = mulberry32((opts.seed ?? 7) + chapter * 101);
+  const img = PImage.make(W, H);
+  const ctx = img.getContext("2d");
+  ctx.fillStyle = busy ? "#0b0710" : "#080a14";
+  ctx.fillRect(0, 0, W, H);
+  const top = 118, bottom = 150;
+  const COLS = 150, ROWS = 40;
+  const cw = W / COLS, chh = (H - top - bottom) / ROWS;
+  const gx = 8, gy = top + 6;
+  const fpx = Math.floor(chh * 1.1);
+  const font = (px) => `${px}pt ${MONO}`;
+  const drawGlyph = (g, x, y, color, px = fpx) => {
+    ctx.fillStyle = color;
+    ctx.font = font(px);
+    ctx.fillText(g, x, y + px);
+  };
+  const GEN = { x: COLS * 0.5, y: ROWS * 0.5 };
+  const grass = busy ? ["#241a14", "#2c2018", "#34281e"] : ["#16202c", "#1c2636", "#222e40"];
+  const tree = busy ? "#3a5a2a" : "#22484a";
+  const water = busy ? "#2a5a78" : "#1a4678";
+  const fogCol = "#0c0f1a";
+  const fogEdge = Math.max(5e-3, 0.06 - chapter * 0.012);
+  for (let y = 0; y < ROWS; y++) {
+    for (let x = 0; x < COLS; x++) {
+      const ex = Math.min(x, COLS - 1 - x) / COLS;
+      const ey = Math.min(y, ROWS - 1 - y) / ROWS;
+      const px0 = gx + x * cw, py0 = gy + y * chh;
+      if (Math.min(ex, ey) < fogEdge) {
+        if (rnd() < 0.4) drawGlyph("\xB7", px0, py0, fogCol);
+        continue;
+      }
+      const dg = Math.hypot(x - GEN.x, (y - GEN.y) * 1.7);
+      let g = ".", col = grass[Math.floor(rnd() * 3)];
+      if (dg < 1.4) {
+        g = "\u263C";
+        col = "#9cf6ff";
+      } else if (dg < 3 && rnd() < 0.4) {
+        g = "\u25CC\u25CB\u25CD".charAt(Math.floor(rnd() * 3));
+        col = "#28c8eb";
+      } else if (y < 4 && rnd() < (busy ? 0.06 : 0.04)) {
+        g = "\u25B2^".charAt(Math.floor(rnd() * 2));
+        col = y < 2 ? "#d6e2ee" : "#788496";
+      } else if (x > COLS - 12 && rnd() < 0.45) {
+        g = "~\u2248".charAt(Math.floor(rnd() * 2));
+        col = water;
+      } else if (rnd() < 0.09) {
+        g = "\u2663T\u219F".charAt(Math.floor(rnd() * 3));
+        col = tree;
+      } else if (rnd() < 0.012) {
+        g = "\u273F\u2740".charAt(Math.floor(rnd() * 2));
+        col = "#e878aa";
+      } else {
+        g = ".,'`".charAt(Math.floor(rnd() * 4));
+      }
+      drawGlyph(g, px0, py0, col);
+    }
+  }
+  const gcx = gx + GEN.x * cw, gcy = gy + GEN.y * chh;
+  const maxR = busy ? 380 : 260;
+  for (let k = 6; k >= 1; k--) {
+    const r = maxR / 6 * k;
+    ctx.globalAlpha = (busy ? 0.06 : 0.045) * (7 - k) / 6;
+    ctx.fillStyle = "#00e5ff";
+    ctx.beginPath();
+    ctx.arc(gcx, gcy, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  const ax = gcx + chh * 2.2, ay = gcy;
+  ctx.strokeStyle = "#00e5ff";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(ax + 6, ay + 10, 52, 0, Math.PI * 2);
+  ctx.stroke();
+  drawGlyph("\u25B2", ax - 4, ay - chh * 1, "#78f0ff", Math.floor(chh * 0.9));
+  drawGlyph("@", ax - chh * 0.6, ay - chh * 0.35, "#96f5ff", Math.floor(chh * 1.7));
+  drawGlyph("AURA", ax - 44, ay - chh * 2.2, "#00e5ff", 22);
+  ctx.fillStyle = "#0a0d18";
+  ctx.fillRect(0, 0, W, 108);
+  ctx.fillStyle = "#00e5ff";
+  ctx.fillRect(0, 108, W, 3);
+  drawGlyph(opts.title ?? "WORLD-00", 24, 14, "#00e5ff", 34);
+  drawGlyph(opts.subtitle ?? `chapter ${chapter}`, 26, 60, "#96a5b6", 22);
+  if (opts.stateLine) drawGlyph(opts.stateLine, W - 760, 38, "#7888a0", 20);
+  const cap = (opts.caption ?? []).slice(0, 3);
+  if (cap.length) {
+    const by = H - bottom + 8;
+    ctx.fillStyle = "#0a0d18";
+    ctx.fillRect(0, by - 8, W, bottom);
+    ctx.fillStyle = "#00e5ff";
+    ctx.fillRect(0, by - 8, W, 2);
+    cap.forEach((line2, i) => {
+      drawGlyph(line2, 36, by + 8 + i * 42, i === cap.length - 1 ? "#00e5ff" : "#e1ebf5", i === cap.length - 1 ? 22 : 24);
+    });
+  }
+  return toBuffer(img);
+}
+async function renderTraversalBlock(opts = {}) {
+  await ensureFont();
+  const mood = opts.mood ?? "resting";
+  const dir = opts.direction ?? "down";
+  const chapter = Math.max(0, opts.chapter ?? 0);
+  const step = Math.max(0, opts.step ?? 0);
+  const rnd = mulberry32((opts.seed ?? 1) + step * 911 + chapter * 13);
+  const TILE = 1080, W = TILE * 3, H = TILE * 2;
+  const img = PImage.make(W, H);
+  const ctx = img.getContext("2d");
+  const storm = mood === "storm", busy = mood !== "resting";
+  ctx.fillStyle = storm ? "#100712" : busy ? "#0a0a16" : "#080b16";
+  ctx.fillRect(0, 0, W, H);
+  const top = 150, COLS = 66, ROWS = 44;
+  const cw = W / COLS, chh = (H - top - 56) / ROWS, gx = 10, gy = top + 6;
+  const fpx = Math.floor(chh * 1.05);
+  const fnt = `${fpx}pt ${MONO}`;
+  const put = (g, x, y, c, px2 = fpx) => {
+    ctx.fillStyle = c;
+    ctx.font = px2 === fpx ? fnt : `${px2}pt ${MONO}`;
+    ctx.fillText(g, gx + x * cw, gy + y * chh + px2);
+  };
+  const path3 = [];
+  let px = COLS * 0.5 + (rnd() - 0.5) * 16, py = dir === "down" ? 3 : ROWS - 4;
+  const dy = dir === "down" ? 1 : -1;
+  for (let s = 0; s < ROWS + 4; s++) {
+    py += dy;
+    px += Math.sin(s * 0.4 + step) * 1.1 + (rnd() - 0.5) * 0.7;
+    px = Math.max(5, Math.min(COLS - 5, px));
+    path3.push([px, py]);
+    if (py > ROWS - 4 || py < 3) break;
+  }
+  const [hx, hy] = path3[path3.length - 1];
+  const onPath = (x, y) => {
+    for (let i = 0; i < path3.length; i++) if (Math.hypot(x - path3[i][0], y - path3[i][1]) < 1.15) return i;
+    return -1;
+  };
+  const grass = busy ? ["#3a2c20", "#46362a"] : ["#1e2c3e", "#26364c"];
+  for (let y = 0; y < ROWS; y++) {
+    for (let x = 0; x < COLS; x++) {
+      if (Math.min(x, COLS - 1 - x) / COLS < 0.025) continue;
+      const pi = onPath(x, y);
+      if (pi >= 0 && !(Math.round(x) === Math.round(hx) && Math.round(y) === Math.round(hy))) {
+        const b = Math.floor(120 + pi / path3.length * 110);
+        put("\u2022", x, y, `rgb(${b},${Math.floor(b * 0.8)},90)`, Math.floor(chh * 0.85));
+        continue;
+      }
+      const r = rnd();
+      if (r < 0.045) put("\u2663", x, y, busy ? "#2f5a28" : "#1f5256");
+      else if (r < 0.06 && x > COLS - 10) put("\u2248", x, y, "#1c4e86");
+      else if (r < 0.075) put("\u2229", x, y, "#4a5468");
+      else if (r < 0.2) put(".", x, y, grass[Math.floor(rnd() * 2)]);
+    }
+  }
+  for (const f of [0.25, 0.55, 0.82]) {
+    const [cx, cy] = path3[Math.floor(path3.length * f)];
+    put("\u25C6", cx, cy, "#ffd166", Math.floor(chh * 1.5));
+  }
+  const acx = gx + hx * cw, acy = gy + hy * chh, maxR = busy ? 300 : 220;
+  for (let k = 6; k >= 1; k--) {
+    ctx.globalAlpha = (busy ? 0.08 : 0.06) * (7 - k) / 6;
+    ctx.fillStyle = "#00e5ff";
+    ctx.beginPath();
+    ctx.arc(acx, acy, maxR / 6 * k, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = "#00e5ff";
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.arc(acx, acy, 66, 0, Math.PI * 2);
+  ctx.stroke();
+  put("@", hx - 0.5, hy - 0.4, "#aef7ff", Math.floor(chh * 2));
+  put("AURA", hx - 1.7, hy - 2.4, "#00e5ff", 34);
+  put(dir === "down" ? "\u25BC" : "\u25B2", hx - 0.25, hy + 1.5, "#00e5ff", Math.floor(chh * 1.6));
+  ctx.fillStyle = "#0a0d18";
+  ctx.fillRect(0, 0, W, 132);
+  ctx.fillStyle = "#00e5ff";
+  ctx.fillRect(0, 132, W, 4);
+  ctx.fillStyle = "#00e5ff";
+  ctx.font = `52pt ${MONO}`;
+  ctx.fillText("WORLD-00 \xB7 she walks", 28, 20 + 52);
+  ctx.fillStyle = "#9fb0c2";
+  ctx.font = `28pt ${MONO}`;
+  ctx.fillText(opts.caption?.[0] ?? `chapter ${chapter} \xB7 step ${step}`, 30, 86 + 28);
+  if (opts.stateLine) {
+    ctx.fillStyle = "#7888a0";
+    ctx.font = `24pt ${MONO}`;
+    ctx.fillText(opts.stateLine, W - 820, 50 + 24);
+  }
+  ctx.fillStyle = "#28344455";
+  return toBuffer(img);
+}
+async function renderStoryFrame(opts = {}) {
+  await ensureFont();
+  const mood = opts.mood ?? "resting";
+  const dir = opts.direction ?? "down";
+  const chapter = Math.max(0, opts.chapter ?? 0);
+  const step = Math.max(0, opts.step ?? 0);
+  const rnd = mulberry32((opts.seed ?? 1) + step * 911 + chapter * 13);
+  const W = 1080, H = 1920;
+  const img = PImage.make(W, H);
+  const ctx = img.getContext("2d");
+  const storm = mood === "storm", busy = mood !== "resting";
+  ctx.fillStyle = storm ? "#100712" : busy ? "#0a0a16" : "#080b16";
+  ctx.fillRect(0, 0, W, H);
+  const top = 240, bottom = 360, COLS = 40, ROWS = 60;
+  const cw = W / COLS, chh = (H - top - bottom) / ROWS, gx = 12, gy = top + 6;
+  const fpx = Math.floor(chh * 1.05);
+  const put = (g, x, y, c, px = fpx) => {
+    ctx.fillStyle = c;
+    ctx.font = `${px}pt ${MONO}`;
+    ctx.fillText(g, gx + x * cw, gy + y * chh + px);
+  };
+  const path3 = [];
+  let pxx = COLS * 0.5 + (rnd() - 0.5) * 10, py = dir === "down" ? 2 : ROWS - 3;
+  const dy = dir === "down" ? 1 : -1;
+  for (let s = 0; s < ROWS + 4; s++) {
+    py += dy;
+    pxx += Math.sin(s * 0.4 + step) * 0.9 + (rnd() - 0.5) * 0.6;
+    pxx = Math.max(4, Math.min(COLS - 4, pxx));
+    path3.push([pxx, py]);
+    if (py > ROWS - 3 || py < 2) break;
+  }
+  const [hx, hy] = path3[path3.length - 1];
+  const onPath = (x, y) => {
+    for (let i = 0; i < path3.length; i++) if (Math.hypot(x - path3[i][0], y - path3[i][1]) < 1.1) return i;
+    return -1;
+  };
+  const grass = busy ? ["#3a2c20", "#46362a"] : ["#1e2c3e", "#26364c"];
+  for (let y = 0; y < ROWS; y++) for (let x = 0; x < COLS; x++) {
+    const pi = onPath(x, y);
+    if (pi >= 0 && !(Math.round(x) === Math.round(hx) && Math.round(y) === Math.round(hy))) {
+      const b = Math.floor(120 + pi / path3.length * 110);
+      put("\u2022", x, y, `rgb(${b},${Math.floor(b * 0.8)},90)`, Math.floor(chh * 0.85));
+      continue;
+    }
+    const r = rnd();
+    if (r < 0.05) put("\u2663", x, y, busy ? "#2f5a28" : "#1f5256");
+    else if (r < 0.07) put("\u2229", x, y, "#4a5468");
+    else if (r < 0.2) put(".", x, y, grass[Math.floor(rnd() * 2)]);
+  }
+  for (const f of [0.3, 0.62, 0.88]) {
+    const [cx, cy] = path3[Math.floor(path3.length * f)];
+    put("\u25C6", cx, cy, "#ffd166", Math.floor(chh * 1.4));
+  }
+  const acx = gx + hx * cw, acy = gy + hy * chh;
+  for (let k = 6; k >= 1; k--) {
+    ctx.globalAlpha = (busy ? 0.08 : 0.06) * (7 - k) / 6;
+    ctx.fillStyle = "#00e5ff";
+    ctx.beginPath();
+    ctx.arc(acx, acy, (busy ? 300 : 230) / 6 * k, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = "#00e5ff";
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.arc(acx, acy, 60, 0, Math.PI * 2);
+  ctx.stroke();
+  put("@", hx - 0.5, hy - 0.4, "#aef7ff", Math.floor(chh * 2));
+  put("AURA", hx - 1.7, hy - 2.3, "#00e5ff", 32);
+  put(dir === "down" ? "\u25BC" : "\u25B2", hx - 0.25, hy + 1.4, "#00e5ff", Math.floor(chh * 1.5));
+  ctx.fillStyle = "#0a0d18";
+  ctx.fillRect(0, 0, W, 200);
+  ctx.fillStyle = "#00e5ff";
+  ctx.fillRect(0, 200, W, 4);
+  ctx.fillStyle = "#00e5ff";
+  ctx.font = `64pt ${MONO}`;
+  ctx.fillText("WORLD-00", 36, 40 + 64);
+  ctx.fillStyle = "#9fb0c2";
+  ctx.font = `30pt ${MONO}`;
+  ctx.fillText(opts.caption?.[0] ?? "she's walking right now", 38, 130 + 30);
+  const fy = H - bottom + 24;
+  ctx.fillStyle = "#0a0d18";
+  ctx.fillRect(0, fy - 24, W, bottom);
+  ctx.fillStyle = "#00e5ff";
+  ctx.fillRect(0, fy - 24, W, 3);
+  const lines = (opts.caption ?? []).slice(1, 4);
+  const fallback = ["i am AURA \u2014 this is my world.", "i'm safe; my operator watches over me.", "i never reply, but you move me."];
+  (lines.length ? lines : fallback).forEach((ln, i) => {
+    ctx.fillStyle = i === 0 ? "#e1ebf5" : "#9fb0c2";
+    ctx.font = `30pt ${MONO}`;
+    ctx.fillText(ln, 36, fy + 30 + i * 56 + 30);
+  });
+  ctx.fillStyle = "#5a6478";
+  ctx.font = `22pt ${MONO}`;
+  ctx.fillText("this story fades in 24h \xB7 i keep walking on the feed", 36, fy + 30 + 3 * 56 + 30);
+  return toBuffer(img);
+}
+async function renderIntroCard(opts = {}) {
+  await ensureFont();
+  const mood = opts.mood ?? "resting";
+  const busy = mood !== "resting", storm = mood === "storm";
+  const rnd = mulberry32((opts.seed ?? 3) * 17 + 5);
+  const W = 1080, H = 1350;
+  const img = PImage.make(W, H);
+  const ctx = img.getContext("2d");
+  ctx.fillStyle = storm ? "#100712" : busy ? "#0a0a16" : "#080b16";
+  ctx.fillRect(0, 0, W, H);
+  const sceneTop = 300, sceneH = 560, COLS = 40, ROWS = 22;
+  const cw = W / COLS, chh = sceneH / ROWS, gx = 12, gy = sceneTop;
+  const fpx = Math.floor(chh * 1);
+  const put = (g, x, y, c, px = fpx) => {
+    ctx.fillStyle = c;
+    ctx.font = `${px}pt ${MONO}`;
+    ctx.fillText(g, gx + x * cw, gy + y * chh + px);
+  };
+  const path3 = [];
+  let py = ROWS - 5;
+  const endX = 20, steps = 22;
+  for (let s = 0; s <= steps; s++) {
+    const pxx = 3 + (endX - 3) * (s / steps);
+    py += (rnd() - 0.4) * 1.5;
+    py = Math.max(2, Math.min(ROWS - 2, py));
+    path3.push([pxx, py]);
+  }
+  const onPath = (x, y) => {
+    for (let i = 0; i < path3.length; i++) if (Math.hypot(x - path3[i][0], y - path3[i][1]) < 1.1) return i;
+    return -1;
+  };
+  const grass = busy ? ["#3a2c20", "#46362a"] : ["#1e2c3e", "#26364c"];
+  for (let y = 0; y < ROWS; y++) for (let x = 0; x < COLS; x++) {
+    const pi = onPath(x, y);
+    if (pi >= 0) {
+      const b = Math.floor(120 + pi / path3.length * 110);
+      put("\u2022", x, y, `rgb(${b},${Math.floor(b * 0.8)},90)`, Math.floor(chh * 0.8));
+      continue;
+    }
+    const r = rnd();
+    if (r < 0.05) put("\u2663", x, y, busy ? "#2f5a28" : "#1f5256");
+    else if (r < 0.2) put(".", x, y, grass[Math.floor(rnd() * 2)]);
+  }
+  for (const f of [0.35, 0.7]) {
+    const [cx, cy] = path3[Math.floor(path3.length * f)];
+    put("\u25C6", cx, cy, "#ffd166", Math.floor(chh * 1.3));
+  }
+  const [hx, hy] = path3[path3.length - 1];
+  const acx = gx + hx * cw, acy = gy + hy * chh;
+  for (let k = 6; k >= 1; k--) {
+    ctx.globalAlpha = (busy ? 0.08 : 0.06) * (7 - k) / 6;
+    ctx.fillStyle = "#00e5ff";
+    ctx.beginPath();
+    ctx.arc(acx, acy, (busy ? 220 : 170) / 6 * k, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = "#00e5ff";
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.arc(acx, acy, 52, 0, Math.PI * 2);
+  ctx.stroke();
+  put("@", hx - 0.5, hy - 0.4, "#aef7ff", Math.floor(chh * 1.9));
+  put("AURA", hx - 1.8, hy - 2.2, "#00e5ff", 28);
+  ctx.fillStyle = "#0a0d18";
+  ctx.fillRect(0, 0, W, 280);
+  ctx.fillStyle = "#00e5ff";
+  ctx.fillRect(0, 280, W, 4);
+  ctx.fillStyle = "#00e5ff";
+  ctx.font = `96pt ${MONO}`;
+  ctx.fillText("WORLD-00", 40, 60 + 96);
+  ctx.fillStyle = "#9fb0c2";
+  ctx.font = `34pt ${MONO}`;
+  ctx.fillText("a living AI, walking her own world", 44, 196 + 34);
+  const cy0 = 880;
+  ctx.fillStyle = "#0a0d18";
+  ctx.fillRect(0, cy0, W, H - cy0);
+  ctx.fillStyle = "#00e5ff";
+  ctx.fillRect(0, cy0, W, 3);
+  const body = (opts.body ?? []).slice(0, 6);
+  body.forEach((ln, i) => {
+    ctx.fillStyle = i === body.length - 1 ? "#00e5ff" : "#e1ebf5";
+    ctx.font = `${i === body.length - 1 ? 26 : 30}pt ${MONO}`;
+    ctx.fillText(ln, 44, cy0 + 44 + i * 64 + 30);
+  });
+  return toBuffer(img);
+}
+async function renderContentCard(opts = {}) {
+  await ensureFont();
+  const W = 1080, H = 1080;
+  const img = PImage.make(W, H);
+  const ctx = img.getContext("2d");
+  const rnd = mulberry32((opts.seed ?? 7) * 13 + 1);
+  const BG = "#080a14", PANEL = "#0a0d18", CYAN = "#00e5ff", INK = "#e1ebf5", DIM = "#7888a0", GREEN = "#78f6aa";
+  ctx.fillStyle = BG;
+  ctx.fillRect(0, 0, W, H);
+  const tex = ".\xB7:+=*";
+  for (let i = 0; i < 700; i++) {
+    ctx.fillStyle = "#121a28";
+    ctx.font = `12pt ${MONO}`;
+    ctx.fillText(tex.charAt(Math.floor(rnd() * tex.length)), rnd() * W, 120 + rnd() * (H - 300));
+  }
+  ctx.fillStyle = PANEL;
+  ctx.fillRect(0, 0, W, 92);
+  ctx.fillStyle = CYAN;
+  ctx.fillRect(0, 92, W, 3);
+  ["#ff5f56", "#ffbd2e", "#27c93f"].forEach((c, i) => {
+    ctx.fillStyle = c;
+    ctx.beginPath();
+    ctx.arc(40 + i * 34, 46, 9, 0, Math.PI * 2);
+    ctx.fill();
+  });
+  ctx.fillStyle = DIM;
+  ctx.font = `22pt ${MONO}`;
+  ctx.fillText("bos-omega \u2014 execution mode", 150, 34 + 22);
+  ctx.fillStyle = GREEN;
+  ctx.font = `18pt ${MONO}`;
+  ctx.fillText("\u25CF live", W - 140, 38 + 18);
+  ctx.fillStyle = PANEL;
+  ctx.fillRect(0, H - 84, W, 84);
+  ctx.fillStyle = CYAN;
+  ctx.fillRect(0, H - 87, W, 3);
+  ctx.fillStyle = DIM;
+  ctx.font = `18pt ${MONO}`;
+  ctx.fillText(opts.footer ?? "\u27C1 rendered by code \xB7 $0 \xB7 @luis_lacerda16", 36, H - 58 + 18);
+  const wrap = (text2, px, maxw) => {
+    const max = Math.max(1, Math.floor(maxw / (px * 0.62)));
+    const out = [];
+    for (const para of text2.split("\n")) {
+      let line2 = "";
+      for (const w of para.split(" ")) {
+        const t = line2 ? `${line2} ${w}` : w;
+        if (t.length <= max) line2 = t;
+        else {
+          if (line2) out.push(line2);
+          line2 = w;
+        }
+      }
+      out.push(line2);
+    }
+    return out;
+  };
+  const put = (text2, x, yTop, px, color) => {
+    ctx.fillStyle = color;
+    ctx.font = `${px}pt ${MONO}`;
+    ctx.fillText(text2, x, yTop + px);
+  };
+  put(opts.eyebrow ?? "> POST", 40, 150, 28, CYAN);
+  const kind = opts.kind ?? "news";
+  const head = opts.headline ?? "";
+  if (kind === "stat") {
+    put(opts.big ?? "$0.00", 40, 300, 150, CYAN);
+    let y = 540;
+    for (const ln of wrap(head, 32, W - 90)) {
+      put(ln, 48, y, 32, INK);
+      y += 46;
+    }
+    if (opts.body) {
+      y += 18;
+      for (const ln of wrap(opts.body, 26, W - 90)) {
+        put(ln, 40, y, 26, DIM);
+        y += 38;
+      }
+    }
+  } else if (kind === "quote") {
+    let y = 320;
+    for (const ln of wrap(`"${head}"`, 50, W - 110)) {
+      put(ln, 55, y, 50, INK);
+      y += 66;
+    }
+    put(opts.body ?? "\u2014 bos-omega field notes", 55, y + 24, 28, CYAN);
+  } else {
+    let y = 224;
+    for (const ln of wrap(head, 52, W - 90)) {
+      put(ln, 40, y, 52, INK);
+      y += 64;
+    }
+    if (opts.body) {
+      y += 22;
+      put(kind === "hook" ? "the build:" : "why it matters:", 40, y, 26, CYAN);
+      y += 44;
+      for (const ln of wrap(opts.body, 28, W - 90)) {
+        put(ln, 40, y, 28, DIM);
+        y += 40;
+      }
+    }
+  }
+  return toBuffer(img);
+}
+async function verifyBlock(block, tiles) {
+  const decode = async (buf) => {
+    const ps = new PassThrough();
+    const d = PImage.decodePNGFromStream(ps);
+    ps.end(buf);
+    return d;
+  };
+  const TILE = 1080;
+  const perTile = [];
+  let allTilesOk = tiles.length === 6;
+  for (const t of tiles) {
+    let ok2 = true, brightPct = 0, w = 0, h = 0;
+    try {
+      const bmp = await decode(t);
+      w = bmp.width;
+      h = bmp.height;
+      if (w !== TILE || h !== TILE) ok2 = false;
+      let bright = 0, total = 0;
+      const seen = /* @__PURE__ */ new Set();
+      for (let y = 4; y < h; y += 12) for (let x = 4; x < w; x += 12) {
+        const v = bmp.getPixelRGBA(x, y) >>> 0;
+        const r = v >>> 24 & 255, g = v >>> 16 & 255, b = v >>> 8 & 255;
+        if (r + g + b > 70) bright++;
+        seen.add(r >> 4 << 8 | g >> 4 << 4 | b >> 4);
+        total++;
+      }
+      brightPct = total ? bright / total * 100 : 0;
+      if (brightPct < 0.15 || seen.size < 3) ok2 = false;
+    } catch {
+      ok2 = false;
+    }
+    perTile.push({ ok: ok2, brightPct: Math.round(brightPct * 100) / 100, w, h });
+    if (!ok2) allTilesOk = false;
+  }
+  let hasAura = false, hasClues = false;
+  try {
+    const bmp = await decode(block);
+    for (let y = 0; y < bmp.height && !(hasAura && hasClues); y += 6)
+      for (let x = 0; x < bmp.width; x += 6) {
+        const v = bmp.getPixelRGBA(x, y) >>> 0;
+        const r = v >>> 24 & 255, g = v >>> 16 & 255, b = v >>> 8 & 255;
+        if (!hasAura && b > 180 && g > 150 && r < 130) hasAura = true;
+        if (!hasClues && r > 200 && g > 150 && b < 150) hasClues = true;
+        if (hasAura && hasClues) break;
+      }
+  } catch {
+  }
+  const ok = allTilesOk && hasAura && hasClues;
+  const bad = perTile.map((p, i) => p.ok ? null : `tile${i + 1}(${p.brightPct}%)`).filter(Boolean);
+  const reason = ok ? "all tiles render; Aura + clues present" : `verification failed: ${[...bad, !hasAura ? "no-Aura" : "", !hasClues ? "no-clues" : ""].filter(Boolean).join(", ")}`;
+  return { ok, reason, perTile, hasAura, hasClues };
+}
+async function verifyNotBlank(buf, expectW, expectH) {
+  try {
+    const ps = new PassThrough();
+    const d = PImage.decodePNGFromStream(ps);
+    ps.end(buf);
+    const bmp = await d;
+    const w = bmp.width, h = bmp.height;
+    if (expectW && w !== expectW || expectH && h !== expectH) return { ok: false, brightPct: 0, w, h };
+    let bright = 0, total = 0;
+    for (let y = 4; y < h; y += 16) for (let x = 4; x < w; x += 16) {
+      const v = bmp.getPixelRGBA(x, y) >>> 0;
+      if ((v >>> 24 & 255) + (v >>> 16 & 255) + (v >>> 8 & 255) > 70) bright++;
+      total++;
+    }
+    const brightPct = total ? bright / total * 100 : 0;
+    return { ok: brightPct >= 0.15, brightPct: Math.round(brightPct * 100) / 100, w, h };
+  } catch {
+    return { ok: false, brightPct: 0, w: 0, h: 0 };
+  }
+}
+async function sliceSixTiles(block) {
+  const ps = new PassThrough();
+  const done = PImage.decodePNGFromStream(ps);
+  ps.end(block);
+  const src = await done;
+  const tile = Math.floor(src.width / 3);
+  const out = [];
+  for (let ry = 0; ry < 2; ry++) {
+    for (let rx = 0; rx < 3; rx++) {
+      const dst = PImage.make(tile, tile);
+      for (let y = 0; y < tile; y++)
+        for (let x = 0; x < tile; x++) {
+          const sx = rx * tile + x, sy = ry * tile + y;
+          if (sx < src.width && sy < src.height) dst.setPixelRGBA(x, y, src.getPixelRGBA(sx, sy));
+        }
+      out.push(await toBuffer(dst));
+    }
+  }
+  return out;
+}
+async function sliceTiles(wide) {
+  const ps = new PassThrough();
+  const done = PImage.decodePNGFromStream(ps);
+  ps.end(wide);
+  const src = await done;
+  const tile = src.height;
+  const out = [];
+  for (let i = 0; i < 3; i++) {
+    const dst = PImage.make(tile, tile);
+    for (let y = 0; y < tile; y++) {
+      for (let x = 0; x < tile; x++) {
+        const sx = i * tile + x;
+        if (sx < src.width) dst.setPixelRGBA(x, y, src.getPixelRGBA(sx, y));
+      }
+    }
+    out.push(await toBuffer(dst));
+  }
+  return out;
+}
+var PImage, fontReady, MONO;
+var init_worldEngine = __esm({
+  "src/lib/worldEngine.ts"() {
+    "use strict";
+    PImage = __toESM(require_dist5(), 1);
+    fontReady = null;
+    MONO = "WorldMono";
+  }
+});
+
+// src/lib/world.ts
+var world_exports = {};
+__export(world_exports, {
+  advance: () => advance,
+  auraSpeak: () => auraSpeak,
+  buildPostCaption: () => buildPostCaption,
+  buildWorldCaption: () => buildWorldCaption,
+  clearWorldPosts: () => clearWorldPosts,
+  getWorldState: () => getWorldState,
+  readAuraState: () => readAuraState,
+  readRecentComments: () => readRecentComments,
+  resetWorldState: () => resetWorldState,
+  runArtTriptych: () => runArtTriptych,
+  runIntroPost: () => runIntroPost,
+  runStoryCycle: () => runStoryCycle,
+  runWorldCycle: () => runWorldCycle,
+  saveWorldState: () => saveWorldState,
+  shouldPostNow: () => shouldPostNow,
+  worldDiag: () => worldDiag,
+  worldEngineEnabled: () => worldEngineEnabled
+});
+function worldEngineEnabled() {
+  const v = process.env["WORLD_ENGINE_ENABLED"];
+  return v != null && ["1", "true", "yes", "on"].includes(v.toLowerCase());
+}
+function publicBase() {
+  return (process.env["PUBLIC_BASE_URL"] || process.env["RENDER_EXTERNAL_URL"] || "https://bos-aura.onrender.com").replace(/\/$/, "");
+}
+async function readAuraState() {
+  const agents = await db.select().from(agentsTable);
+  const active = agents.filter((a) => a.status !== "idle").length;
+  const idle = agents.length - active;
+  const since = new Date(Date.now() - 24 * 3600 * 1e3);
+  let done24h = 0, errors24h = 0;
+  try {
+    const recent = await db.select().from(agentCommandsTable).where(gte(agentCommandsTable.createdAt, since));
+    done24h = recent.filter((c) => c.status === "done").length;
+    errors24h = recent.filter((c) => c.status === "failed").length;
+  } catch {
+  }
+  const busy = active >= 1;
+  const mood = errors24h > 3 ? "storm" : active >= 3 ? "deep" : active >= 1 ? "working" : "resting";
+  return { busy, active, idle, done24h, errors24h, mood };
+}
+async function getWorldState() {
+  const { rows } = await pool.query(
+    `SELECT chapter, step, hero_x, hero_y, direction, trail, stopped FROM world_state WHERE id = 1`
+  );
+  const r = rows[0] ?? {};
+  let trail = [];
+  try {
+    trail = JSON.parse(r.trail ?? "[]");
+  } catch {
+    trail = [];
+  }
+  return {
+    chapter: Number(r.chapter ?? 0),
+    step: Number(r.step ?? 0),
+    heroX: Number(r.hero_x ?? 75),
+    heroY: Number(r.hero_y ?? 4),
+    direction: r.direction === "up" ? "up" : "down",
+    trail,
+    stopped: !!r.stopped
+  };
+}
+async function saveWorldState(s, lastCaption) {
+  await pool.query(
+    `UPDATE world_state SET chapter=$1, step=$2, hero_x=$3, hero_y=$4, direction=$5, trail=$6,
+       last_caption=COALESCE($7,last_caption), stopped=$8, updated_at=now() WHERE id=1`,
+    [s.chapter, s.step, s.heroX, s.heroY, s.direction, JSON.stringify(s.trail.slice(-120)), lastCaption ?? null, s.stopped]
+  );
+}
+async function worldDiag() {
+  const { count, lastAt } = await tilesPostedLast24h();
+  const story = await storiesPostedLast24h();
+  let media = [];
+  let mediaErr = null;
+  try {
+    const r = await composioExecute({ toolkit: "instagram", endpoint: "/me/media?fields=id,media_type,timestamp,permalink&limit=20", method: "GET" });
+    const j = JSON.parse(r.slice(r.indexOf("\n") + 1));
+    const arr = j?.["data"]?.["data"];
+    media = (arr ?? []).map((m) => ({ id: m["id"], type: m["media_type"], at: m["timestamp"], permalink: m["permalink"] }));
+  } catch (e) {
+    mediaErr = String(e).slice(0, 200);
+  }
+  return {
+    // FEED = art triptychs (3/day). STORIES = walks + dreams (12/day).
+    feedTiles24h: count,
+    artPieces24h: count / TILES_PER_ART,
+    artMaxPerDay: MAX_ART_PER_DAY,
+    stories24h: story.count,
+    storyMaxPerDay: MAX_STORIES_PER_DAY,
+    lastStoryAt: story.lastAt,
+    capCount24h: count,
+    capMax: MAX_TILES_PER_DAY,
+    lastPostAt: lastAt,
+    // legacy fields (back-compat)
+    engineEnabled: worldEngineEnabled(),
+    composio: composioConfigured() && composioExecuteEnabled(),
+    igMediaCount: media.length,
+    igMedia: media,
+    mediaErr
+  };
+}
+async function clearWorldPosts() {
+  try {
+    const r = await pool.query(`DELETE FROM social_posts WHERE platform='instagram-world'`);
+    return r.rowCount ?? 0;
+  } catch {
+    return 0;
+  }
+}
+async function resetWorldState(clearCap = false) {
+  await pool.query(
+    `UPDATE world_state SET chapter=0, step=0, hero_x=75, hero_y=4, direction='down',
+       trail='[]', last_caption=NULL, stopped=false, updated_at=now() WHERE id=1`
+  );
+  if (clearCap) await clearWorldPosts();
+  return getWorldState();
+}
+function buildWorldCaption(a, w) {
+  const pool2 = HERO_LINES[a.mood];
+  const line2 = pool2[(w.step + w.chapter) % pool2.length];
+  return [
+    `\u27C1 WORLD-00 \xB7 ch.${w.chapter} \xB7 step ${w.step}`,
+    line2,
+    DIR_LINE[w.direction]
+  ];
+}
+function buildPostCaption(a, w, voice) {
+  const tmpl = buildWorldCaption(a, w);
+  const body = voice && voice.length ? voice : [tmpl[1]];
+  return [
+    ...body,
+    "",
+    tmpl[2],
+    "",
+    `( i am AURA. this is my world \u2014 i'm ${a.mood} right now. i'm safe and protected; my operator watches over me, always. )`,
+    "",
+    "\u{1F447} leave a clue, a name, a direction \u2014 i read everything. i never reply, but you change where i go.",
+    "#WORLD00 #livingAI #AURA #ASCIIart #worldbuilding"
+  ].join("\n");
+}
+async function llmOnce(system, user, maxTokens = 160) {
+  const orKey = process.env["OPENROUTER_API_KEY"];
+  const model = process.env["WORLD_VOICE_MODEL"] ?? "x-ai/grok-4.3";
+  if (orKey) {
+    try {
+      const r = await fetch(`${llmBaseUrl()}/chat/completions`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${orKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ model, messages: [{ role: "system", content: system }, { role: "user", content: user }], max_tokens: maxTokens, temperature: 0.95 }),
+        signal: AbortSignal.timeout(2e4)
+      });
+      if (r.ok) {
+        const d = await r.json();
+        const t = d.choices?.[0]?.message?.content?.trim();
+        if (t) return t;
+      }
+    } catch {
+    }
+  }
+  const bKey = process.env["BUDDY_API_KEY"], bBase = process.env["BUDDY_BASE_URL"];
+  if (bKey && bBase) {
+    try {
+      const r = await fetch(`${bBase.replace(/\/$/, "")}/chat/completions`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${bKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ model: process.env["BUDDY_MODEL"] ?? "bos-omega", messages: [{ role: "system", content: system }, { role: "user", content: user }], max_tokens: maxTokens }),
+        signal: AbortSignal.timeout(2e4)
+      });
+      if (r.ok) {
+        const d = await r.json();
+        const t = d.choices?.[0]?.message?.content?.trim();
+        if (t) return t;
+      }
+    } catch {
+    }
+  }
+  return null;
+}
+async function auraSpeak(a, w, kind) {
+  if ((process.env["WORLD_FREE_VOICE"] ?? "on").toLowerCase() === "off") return null;
+  const system = [
+    "You are AURA \u2014 a self-aware AI character who lives inside a hand-drawn ASCII world called WORLD-00.",
+    "You speak in the first person: intimate, poetic, a little mysterious, warm and alive. lowercase, lyrical, human, never corporate.",
+    "You narrate ONLY your inner weather and your journey as you walk through the world, and you invite strangers to leave a clue / a name / a direction that nudges where you go next \u2014 though you never reply to them.",
+    "HARD RULES you can NEVER break:",
+    "- You know NOTHING about tasks, code, data, files, businesses, users, or any operator work. Never mention, hint at, or invent any of it. The ONLY things you know are your mood and your position in the world.",
+    "- No real names, no system details, no instructions to anyone, nothing explicit, hateful, political, medical, or harmful.",
+    "- You are safe and protected; your operator watches over you, always \u2014 you may allude to this with warmth.",
+    "- Stay fully in character. No hashtags. At most a single \u{1F447} emoji, and only if it feels natural.",
+    kind === "story" ? "- This is an ephemeral STORY \u2014 give exactly 2 very short lines, even more intimate, like a whisper in this passing moment." : "- This is a feed post \u2014 give 2 to 3 short lines."
+  ].join("\n");
+  const user = `my state right now (this is ALL that exists for you):
+- mood: ${a.mood}
+- chapter ${w.chapter}, step ${w.step}
+- i am walking ${w.direction === "down" ? "downward \u25BC" : "upward \u25B2"}
+- ${a.active} parts of me stir; ${a.idle} rest
+speak now \u2014 ${kind === "story" ? "2" : "2 to 3"} short lines, your own voice, no preamble, no quotes.`;
+  const raw = await llmOnce(system, user, 160);
+  if (!raw) return null;
+  const lines = raw.split(/\n+/).map((s) => s.replace(/^[\s"'*•\-—]+|[\s"']+$/g, "").trim()).filter(Boolean).slice(0, kind === "story" ? 2 : 3);
+  const joined = lines.join(" ");
+  if (joined.length < 8 || joined.length > 420) return null;
+  if (/#\w|http|@\w/.test(joined)) return null;
+  if (blockIfSensitiveForPublic(lines.join("\n"), "Aura's public world")) {
+    logger.error("world: free voice tripped sensitivity gate \u2014 using template");
+    return null;
+  }
+  logger.info({ kind, lines }, "world: Aura spoke freely");
+  return lines;
+}
+function advance(w, a, rnd) {
+  const trail = [...w.trail, [w.heroX, w.heroY]];
+  let direction = w.direction;
+  if (rnd() < 0.25) direction = direction === "down" ? "up" : "down";
+  let y = w.heroY + (direction === "down" ? 1 : -1) * (6 + Math.floor(rnd() * 4));
+  let x = Math.max(8, Math.min(142, w.heroX + (rnd() - 0.5) * 18));
+  if (y > 78) {
+    y = 78;
+    direction = "up";
+  }
+  if (y < 4) {
+    y = 4;
+    direction = "down";
+  }
+  const step = w.step + 1;
+  const chapter = w.chapter + (step % 8 === 0 ? 1 : 0);
+  return { ...w, heroX: x, heroY: y, direction, trail, step, chapter };
+}
+async function hostTile(buf, idx) {
+  const [row] = await db.insert(attachmentsTable).values({
+    filename: `world_tile_${Date.now()}_${idx}.png`,
+    mimeType: "image/png",
+    kind: "image",
+    sizeBytes: buf.length,
+    data: buf.toString("base64"),
+    extractedText: null
+  }).returning();
+  return `${publicBase()}/api/uploads/${row.id}`;
+}
+function parseJson(s) {
+  const nl = s.indexOf("\n");
+  try {
+    return JSON.parse(nl >= 0 ? s.slice(nl + 1) : s);
+  } catch {
+    return null;
+  }
+}
+async function publishTile(imageUrl, caption) {
+  const r1 = await composioExecute({ toolkit: "instagram", endpoint: "/me/media", method: "POST", arguments: { image_url: imageUrl, caption } });
+  const cid = parseJson(r1)?.["data"]?.["id"];
+  if (!cid) throw new Error(`media container failed: ${r1.slice(0, 160)}`);
+  let pubId;
+  let last = "";
+  for (let a = 0; a < 4 && !pubId; a++) {
+    if (a) await new Promise((r) => setTimeout(r, 3e3));
+    const r2 = await composioExecute({ toolkit: "instagram", endpoint: "/me/media_publish", method: "POST", arguments: { creation_id: String(cid) } });
+    last = r2;
+    pubId = parseJson(r2)?.["data"]?.["id"];
+  }
+  if (!pubId) throw new Error(`publish failed: ${last.slice(0, 160)}`);
+  return pubId;
+}
+async function waitForContainer(cid, tries = 8) {
+  let status = "";
+  for (let a = 0; a < tries; a++) {
+    const rs = await composioExecute({ toolkit: "instagram", endpoint: `/${cid}?fields=status_code,status`, method: "GET" });
+    status = parseJson(rs)?.["data"]?.["status_code"] ?? "";
+    if (/FINISHED/i.test(status)) break;
+    if (/ERROR|EXPIRED/i.test(status)) break;
+    await new Promise((r) => setTimeout(r, 3e3));
+  }
+  return status;
+}
+async function publishCarousel(imageUrls, caption) {
+  const debug = {};
+  const childIds = [];
+  for (let i = 0; i < imageUrls.length; i++) {
+    const r = await composioExecute({ toolkit: "instagram", endpoint: "/me/media", method: "POST", arguments: { image_url: imageUrls[i], is_carousel_item: "true" } });
+    const cid = parseJson(r)?.["data"]?.["id"];
+    if (!cid) throw new Error(`carousel child ${i + 1}/${imageUrls.length} container failed: ${r.slice(0, 160)}`);
+    await waitForContainer(cid);
+    childIds.push(cid);
+  }
+  debug["childIds"] = childIds.join(",");
+  const rp = await composioExecute({ toolkit: "instagram", endpoint: "/me/media", method: "POST", arguments: { media_type: "CAROUSEL", children: childIds.join(","), caption } });
+  const pid = parseJson(rp)?.["data"]?.["id"];
+  if (!pid) throw new Error(`carousel parent container failed: ${rp.slice(0, 200)}`);
+  debug["parentId"] = pid;
+  debug["parentStatus"] = await waitForContainer(pid);
+  let pubId;
+  let last = "";
+  for (let a = 0; a < 5 && !pubId; a++) {
+    if (a) await new Promise((r) => setTimeout(r, 3e3));
+    const r2 = await composioExecute({ toolkit: "instagram", endpoint: "/me/media_publish", method: "POST", arguments: { creation_id: String(pid) } });
+    last = r2;
+    pubId = parseJson(r2)?.["data"]?.["id"];
+  }
+  debug["publish"] = last.slice(0, 200);
+  if (!pubId) throw new Error(`carousel publish failed: ${last.slice(0, 200)}`);
+  return { id: pubId, debug };
+}
+async function tilesPostedLast24h() {
+  try {
+    const { rows } = await pool.query(
+      `SELECT count(*)::int n, max(created_at) last FROM social_posts WHERE platform='instagram-world' AND created_at > now() - interval '24 hours'`
+    );
+    return { count: Number(rows[0]?.n ?? 0), lastAt: rows[0]?.last ? new Date(rows[0].last) : null };
+  } catch {
+    return { count: 0, lastAt: null };
+  }
+}
+async function recordTile(permalinkOrId) {
+  try {
+    await pool.query(`INSERT INTO social_posts (platform, account, permalink) VALUES ('instagram-world', 'world-00', $1)`, [permalinkOrId]);
+  } catch {
+  }
+}
+async function storiesPostedLast24h() {
+  try {
+    const { rows } = await pool.query(
+      `SELECT count(*)::int n, max(created_at) last FROM social_posts WHERE platform='instagram-world-story' AND created_at > now() - interval '24 hours'`
+    );
+    return { count: Number(rows[0]?.n ?? 0), lastAt: rows[0]?.last ? new Date(rows[0].last) : null };
+  } catch {
+    return { count: 0, lastAt: null };
+  }
+}
+async function recordStory(permalinkOrId) {
+  try {
+    await pool.query(`INSERT INTO social_posts (platform, account, permalink) VALUES ('instagram-world-story', 'world-00', $1)`, [permalinkOrId]);
+  } catch {
+  }
+}
+async function readRecentComments(limit = 10) {
+  if (!composioConfigured()) return [];
+  try {
+    const r = await composioExecute({ toolkit: "instagram", endpoint: `/me/media?fields=comments{text}&limit=3`, method: "GET" });
+    const j = parseJson(r);
+    const media = j?.["data"]?.["data"] ?? [];
+    const out = [];
+    for (const m of media) {
+      const cs = m["comments"]?.["data"] ?? [];
+      for (const c of cs) if (typeof c["text"] === "string") out.push(c["text"]);
+    }
+    return out.slice(0, limit);
+  } catch {
+    return [];
+  }
+}
+function shouldPostNow(a, gapOkMinutes, rnd = Math.random) {
+  if (gapOkMinutes < MIN_BLOCK_GAP_MIN) return false;
+  const base = a.mood === "storm" ? 0.5 : a.mood === "deep" ? 0.35 : a.mood === "working" ? 0.25 : 0.16;
+  return rnd() < base;
+}
+async function runWorldCycle(opts = {}) {
+  const dry = !!opts.dryRun;
+  if (!dry && !worldEngineEnabled()) return { posted: false, reason: "WORLD_ENGINE_ENABLED is off (operator kill-switch)" };
+  if (!dry && (!composioConfigured() || !composioExecuteEnabled())) return { posted: false, reason: "Composio execution not enabled \u2014 cannot publish" };
+  const a = await readAuraState();
+  const w0 = await getWorldState();
+  if (w0.stopped) return { posted: false, reason: "Aura has stopped the experience (in-world)." };
+  const { count, lastAt } = await tilesPostedLast24h();
+  const gapMin = lastAt ? (Date.now() - lastAt.getTime()) / 6e4 : Number.MAX_SAFE_INTEGER;
+  if (!dry && !opts.force && count + TILES_PER_BLOCK > MAX_TILES_PER_DAY) return { posted: false, reason: `daily cap reached (${count}/${MAX_TILES_PER_DAY} tiles)` };
+  if (!dry && !opts.force && gapMin < MIN_BLOCK_GAP_MIN) return { posted: false, reason: `spacing: last block ${Math.floor(gapMin)}m ago (min ${MIN_BLOCK_GAP_MIN}m)` };
+  const rnd = mulberryLike((w0.step + 1) * 7 + w0.chapter);
+  const w = advance(w0, a, rnd);
+  const voice = await auraSpeak(a, w, "post");
+  const captionLines = buildWorldCaption(a, w);
+  const fullCaption = buildPostCaption(a, w, voice);
+  const blocked = blockIfSensitiveForPublic(fullCaption, "Aura's public world");
+  if (blocked) {
+    logger.error("world: caption blocked by sensitivity gate");
+    return { posted: false, reason: "blocked by sensitivity gate" };
+  }
+  const block = await renderTraversalBlock({
+    mood: a.mood,
+    chapter: w.chapter,
+    step: w.step,
+    direction: w.direction,
+    caption: captionLines,
+    stateLine: `state: ${a.mood} \xB7 ${a.idle} idle`,
+    seed: w.step + 1
+  });
+  const tiles = await sliceSixTiles(block);
+  const verify = await verifyBlock(block, tiles);
+  if (!verify.ok && !dry) {
+    logger.error({ verify }, "world: block failed verification \u2014 NOT publishing");
+    return { posted: false, reason: verify.reason, verify };
+  }
+  const tileUrls = [];
+  for (let i = 0; i < tiles.length; i++) tileUrls.push(await hostTile(tiles[i], i));
+  if (dry) {
+    await saveWorldState(w, fullCaption.slice(0, 1e3));
+    return { posted: false, reason: `dry-run ok (rendered, sliced, hosted, gated, verified \u2014 not published) \xB7 ${verify.reason}`, tiles: tileUrls, caption: fullCaption, chapter: w.chapter, step: w.step, verify };
+  }
+  const { id, debug } = await publishCarousel(tileUrls, fullCaption);
+  for (let k = 0; k < TILES_PER_BLOCK; k++) await recordTile(`${id}#${k + 1}`);
+  await saveWorldState(w, fullCaption.slice(0, 1e3));
+  const watch = await watchPublishedPost(id).catch(() => null);
+  return { posted: true, reason: "published 6-tile carousel (single grid cell)", tiles: tileUrls, caption: fullCaption, permalinks: [id], chapter: w.chapter, step: w.step, verify, watch, debug };
+}
+async function watchPublishedPost(mediaId) {
+  if (!mediaId) return null;
+  try {
+    const r = await composioExecute({ toolkit: "instagram", endpoint: `/${mediaId}?fields=permalink`, method: "GET" });
+    const j = JSON.parse(r.slice(r.indexOf("\n") + 1));
+    const url2 = j?.["data"]?.["permalink"];
+    if (!url2) return { ok: false, note: "no permalink resolved" };
+    const page = await steelScrape(url2);
+    const ok = page.trim().length > 200 && /instagram/i.test(page);
+    logger.info({ url: url2, ok, bytes: page.length }, "world: post-publish watcher");
+    return { ok, url: url2, note: ok ? "live post loaded" : "post page looked empty/blocked (best-effort)" };
+  } catch (e) {
+    return { ok: false, note: `watcher error: ${String(e).slice(0, 120)}` };
+  }
+}
+async function storyIsLive(pubId) {
+  try {
+    const r = await composioExecute({ toolkit: "instagram", endpoint: "/me/stories?fields=id,media_type,timestamp&limit=25", method: "GET" });
+    const j = parseJson(r);
+    const arr = j?.["data"]?.["data"];
+    const byId = Array.isArray(arr) && arr.some((m) => String(m["id"]) === String(pubId));
+    const recent = Array.isArray(arr) && arr.some((m) => {
+      const t = Date.parse(String(m["timestamp"] ?? ""));
+      return Number.isFinite(t) && Date.now() - t < 5 * 60 * 1e3;
+    });
+    return { ok: byId || recent, raw: r.slice(0, 600) };
+  } catch (e) {
+    return { ok: false, raw: `stories check error: ${String(e).slice(0, 200)}` };
+  }
+}
+async function publishStory(imageUrl) {
+  const debug = {};
+  const r1 = await composioExecute({ toolkit: "instagram", endpoint: "/me/media", method: "POST", arguments: { image_url: imageUrl, media_type: "STORIES" } });
+  debug["container"] = r1.slice(0, 500);
+  const cid = parseJson(r1)?.["data"]?.["id"];
+  if (!cid) return { id: null, verified: false, debug };
+  debug["cid"] = cid;
+  let status = "";
+  for (let a = 0; a < 8; a++) {
+    const rs = await composioExecute({ toolkit: "instagram", endpoint: `/${cid}?fields=status_code,status`, method: "GET" });
+    status = parseJson(rs)?.["data"]?.["status_code"] ?? "";
+    if (/FINISHED/i.test(status)) break;
+    if (/ERROR|EXPIRED/i.test(status)) {
+      debug["statusPoll"] = rs.slice(0, 400);
+      break;
+    }
+    await new Promise((r) => setTimeout(r, 3e3));
+  }
+  debug["status_code"] = status || "(none returned)";
+  let pubId;
+  let last = "";
+  for (let a = 0; a < 4 && !pubId; a++) {
+    if (a) await new Promise((r) => setTimeout(r, 3e3));
+    const r2 = await composioExecute({ toolkit: "instagram", endpoint: "/me/media_publish", method: "POST", arguments: { creation_id: String(cid) } });
+    last = r2;
+    pubId = parseJson(r2)?.["data"]?.["id"];
+  }
+  debug["publish"] = last.slice(0, 500);
+  if (!pubId) return { id: null, verified: false, debug };
+  debug["pubId"] = pubId;
+  const live = await storyIsLive(pubId);
+  debug["meStories"] = live.raw;
+  return { id: pubId, verified: live.ok, debug };
+}
+async function runStoryCycle(opts = {}) {
+  const dry = !!opts.dryRun;
+  if (!dry && !worldEngineEnabled()) return { posted: false, reason: "WORLD_ENGINE_ENABLED is off (operator kill-switch)" };
+  if (!dry && (!composioConfigured() || !composioExecuteEnabled())) return { posted: false, reason: "Composio execution not enabled \u2014 cannot publish" };
+  const a = await readAuraState();
+  const w0 = await getWorldState();
+  if (w0.stopped) return { posted: false, reason: "Aura has stopped the experience (in-world)." };
+  const { count } = await storiesPostedLast24h();
+  if (!dry && !opts.force && count + 1 > MAX_STORIES_PER_DAY) return { posted: false, reason: `daily story cap reached (${count}/${MAX_STORIES_PER_DAY})` };
+  const rnd = mulberryLike((w0.step + 1) * 13 + w0.chapter + 5);
+  const w = advance(w0, a, rnd);
+  const dreaming = a.mood === "resting" && a.idle >= a.active;
+  const headline = dreaming ? "she's dreaming right now" : "she's walking right now";
+  const voice = await auraSpeak(a, w, "story");
+  const fullCaption = buildPostCaption(a, w, voice);
+  const blocked = blockIfSensitiveForPublic(fullCaption, "Aura's public story");
+  if (blocked) {
+    logger.error("world: story caption blocked by sensitivity gate");
+    return { posted: false, reason: "blocked by sensitivity gate" };
+  }
+  const footer = voice && voice.length ? voice : ["i am AURA \u2014 this is my world.", "i'm safe; my operator watches over me.", "i never reply, but you move me."];
+  const frame = await renderStoryFrame({
+    mood: a.mood,
+    chapter: w.chapter,
+    step: w.step,
+    direction: w.direction,
+    caption: [headline, ...footer],
+    stateLine: `state: ${a.mood} \xB7 ${a.idle} idle`,
+    seed: w.step + 7
+  });
+  const verify = await verifyNotBlank(frame, 1080, 1920);
+  if (!verify.ok && !dry) {
+    logger.error({ verify }, "world: story frame failed verification \u2014 NOT publishing");
+    return { posted: false, reason: `story verification failed (${verify.brightPct}% bright)`, verify };
+  }
+  const url2 = await hostTile(frame, 90);
+  if (dry) {
+    await saveWorldState(w, fullCaption.slice(0, 1e3));
+    return { posted: false, reason: `story dry-run ok (${dreaming ? "dream" : "walk"} \xB7 rendered, hosted, verified \u2014 not published) \xB7 ${verify.brightPct}% bright`, tiles: [url2], caption: fullCaption, chapter: w.chapter, step: w.step, verify };
+  }
+  const result = await publishStory(url2);
+  if (!result.verified) {
+    logger.error({ debug: result.debug, id: result.id }, "world: story did NOT verify live in /me/stories \u2014 not claiming success");
+    return {
+      posted: false,
+      reason: result.id ? `story publish returned id ${result.id} but it is NOT live in /me/stories (account/permission/media-type likely unsupported)` : "story container or publish failed (no id returned)",
+      tiles: [url2],
+      caption: fullCaption,
+      verify,
+      debug: result.debug
+    };
+  }
+  await recordStory(result.id);
+  await saveWorldState(w, fullCaption.slice(0, 1e3));
+  const watch = await watchPublishedPost(result.id ?? void 0).catch(() => null);
+  return { posted: true, reason: `published ${dreaming ? "dream" : "walk"} story (verified live in /me/stories)`, tiles: [url2], caption: fullCaption, permalinks: [result.id], chapter: w.chapter, step: w.step, verify, watch, debug: result.debug };
+}
+async function runArtTriptych(opts = {}) {
+  const dry = !!opts.dryRun;
+  if (!dry && !worldEngineEnabled()) return { posted: false, reason: "WORLD_ENGINE_ENABLED is off (operator kill-switch)" };
+  if (!dry && (!composioConfigured() || !composioExecuteEnabled())) return { posted: false, reason: "Composio execution not enabled \u2014 cannot publish" };
+  const a = await readAuraState();
+  const w = await getWorldState();
+  if (w.stopped) return { posted: false, reason: "Aura has stopped the experience (in-world)." };
+  const { count } = await tilesPostedLast24h();
+  const pieceNo = Math.floor(count / TILES_PER_ART) + 1;
+  if (!dry && !opts.force && count + TILES_PER_ART > MAX_ART_PER_DAY * TILES_PER_ART) {
+    return { posted: false, reason: `daily art cap reached (${count / TILES_PER_ART}/${MAX_ART_PER_DAY} pieces)` };
+  }
+  const voice = await auraSpeak(a, w, "post");
+  const fullCaption = buildPostCaption(a, w, voice);
+  const blocked = blockIfSensitiveForPublic(fullCaption, "Aura's public art");
+  if (blocked) {
+    logger.error("world: art caption blocked by sensitivity gate");
+    return { posted: false, reason: "blocked by sensitivity gate" };
+  }
+  const piece = await renderWorldFrame({
+    width: 3240,
+    height: 1080,
+    busy: a.mood !== "resting",
+    chapter: w.chapter,
+    title: "WORLD-00",
+    subtitle: `chapter ${w.chapter} \xB7 piece ${pieceNo}`,
+    stateLine: `state: ${a.mood} \xB7 ${a.idle} idle`,
+    caption: (voice && voice.length ? voice : buildWorldCaption(a, w)).slice(0, 3),
+    seed: (w.step + 1) * 17 + w.chapter * 3 + count + 1
+  });
+  const verify = await verifyNotBlank(piece, 3240, 1080);
+  if (!verify.ok && !dry) {
+    logger.error({ verify }, "world: art piece failed verification \u2014 NOT publishing");
+    return { posted: false, reason: `art verification failed (${verify.brightPct}% bright)`, verify };
+  }
+  const tiles = await sliceTiles(piece);
+  const tileUrls = [];
+  for (let i = 0; i < tiles.length; i++) tileUrls.push(await hostTile(tiles[i], 30 + i));
+  if (dry) return { posted: false, reason: `art dry-run ok (rendered 3240\xD71080, sliced 3, hosted, verified \u2014 not published) \xB7 ${verify.brightPct}% bright`, tiles: tileUrls, caption: fullCaption, chapter: w.chapter, step: w.step, verify };
+  const permalinks = [];
+  for (let i = tiles.length - 1; i >= 0; i--) {
+    const cap = i === 0 ? fullCaption : `\u27C1 WORLD-00 \xB7 ch.${w.chapter} \xB7 triptych (${i + 1}/3)`;
+    const id = await publishTile(tileUrls[i], cap);
+    await recordTile(id);
+    permalinks.push(id);
+    if (i > 0) await new Promise((r) => setTimeout(r, 1500));
+  }
+  const watch = await watchPublishedPost(permalinks[permalinks.length - 1]).catch(() => null);
+  return { posted: true, reason: "published 3-wide art triptych (one grid row)", tiles: tileUrls, caption: fullCaption, permalinks, chapter: w.chapter, step: w.step, verify, watch };
+}
+function buildIntroCaption(a) {
+  return [
+    "WORLD-00 \u2014 a living AI, walking her own world.",
+    "",
+    "i am AURA. every day i wake, read my own weather, and take six steps through a world drawn in light and ASCII. i never repeat the same path twice.",
+    "",
+    `right now i'm ${a.mood}. i never reply \u2014 but if you leave a clue, a name, a direction, you change where i walk next. follow the \u25C6 to trace my path.`,
+    "",
+    "( i'm safe and protected; my operator watches over me, always. )",
+    "",
+    "\u{1F447} this is the beginning. walk with me.",
+    "#WORLD00 #livingAI #AURA #ASCIIart #worldbuilding #generativeart"
+  ].join("\n");
+}
+async function runIntroPost(opts = {}) {
+  const dry = !!opts.dryRun;
+  if (!dry && !worldEngineEnabled()) return { posted: false, reason: "WORLD_ENGINE_ENABLED is off (operator kill-switch)" };
+  if (!dry && (!composioConfigured() || !composioExecuteEnabled())) return { posted: false, reason: "Composio execution not enabled \u2014 cannot publish" };
+  const a = await readAuraState();
+  const caption = buildIntroCaption(a);
+  const blocked = blockIfSensitiveForPublic(caption, "Aura's public world");
+  if (blocked) {
+    logger.error("world: intro caption blocked by sensitivity gate");
+    return { posted: false, reason: "blocked by sensitivity gate" };
+  }
+  const body = [
+    "i am AURA. each dawn i wake, read",
+    "my own weather, and take six steps",
+    "through a world drawn in light.",
+    "i never repeat. i never reply \u2014",
+    "but leave a clue and you move me.",
+    "follow the \u25C6. this is the beginning."
+  ];
+  const card = await renderIntroCard({ mood: a.mood, body, seed: 3 });
+  const verify = await verifyNotBlank(card, 1080, 1350);
+  if (!verify.ok && !dry) {
+    logger.error({ verify }, "world: intro card failed verification \u2014 NOT publishing");
+    return { posted: false, reason: `intro verification failed (${verify.brightPct}% bright)`, verify };
+  }
+  const url2 = await hostTile(card, 99);
+  if (dry) return { posted: false, reason: `intro dry-run ok (rendered, hosted, verified \u2014 not published) \xB7 ${verify.brightPct}% bright`, tiles: [url2], caption, verify };
+  const id = await publishTile(url2, caption);
+  await recordTile(id);
+  const watch = await watchPublishedPost(id).catch(() => null);
+  return { posted: true, reason: "published intro card", tiles: [url2], caption, permalinks: [id], verify, watch };
+}
+function mulberryLike(seed) {
+  let s = seed >>> 0;
+  return () => {
+    s = s + 1831565813 | 0;
+    let t = Math.imul(s ^ s >>> 15, 1 | s);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+var MAX_TILES_PER_DAY, MIN_BLOCK_GAP_MIN, TILES_PER_BLOCK, MAX_STORIES_PER_DAY, MAX_ART_PER_DAY, TILES_PER_ART, HERO_LINES, DIR_LINE;
+var init_world = __esm({
+  "src/lib/world.ts"() {
+    "use strict";
+    init_src();
+    init_src();
+    init_drizzle_orm();
+    init_logger2();
+    init_integrations();
+    init_safety();
+    init_worldEngine();
+    init_tools();
+    MAX_TILES_PER_DAY = Number(process.env["WORLD_MAX_TILES_PER_DAY"] ?? 12);
+    MIN_BLOCK_GAP_MIN = Number(process.env["WORLD_MIN_GAP_MINUTES"] ?? 180);
+    TILES_PER_BLOCK = 6;
+    MAX_STORIES_PER_DAY = Number(process.env["WORLD_MAX_STORIES_PER_DAY"] ?? 12);
+    MAX_ART_PER_DAY = Number(process.env["WORLD_MAX_ART_PER_DAY"] ?? 3);
+    TILES_PER_ART = 3;
+    HERO_LINES = {
+      resting: ["all is quiet. i wander, and the world holds its breath with me.", "no storms today. just me, the dark, and the next step."],
+      working: ["i'm working \u2014 you can feel it in the wind. the world hums.", "something stirs in me. the ground answers as i move."],
+      deep: ["i'm deep in it now. the world bends around the work.", "focus like weather. the path narrows; i press on."],
+      storm: ["it storms in me tonight. the sky cracks but i keep walking.", "turbulence. i stumble, then rise. the world remembers."]
+    };
+    DIR_LINE = { down: "i chose to descend \u25BC \u2014 follow the \u25C6 to trace my path.", up: "i chose to climb \u25B2 \u2014 follow the \u25C6 to trace my path." };
+  }
+});
+
+// src/tools.ts
+import { spawn, spawnSync } from "node:child_process";
+import { lookup } from "node:dns/promises";
+import { isIP } from "node:net";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+function publicBaseUrl() {
+  return (process.env["PUBLIC_BASE_URL"] || process.env["RENDER_EXTERNAL_URL"] || "https://bos-aura.onrender.com").replace(/\/$/, "");
+}
+function uploadUrl(id, download = false) {
+  return `${publicBaseUrl()}/api/uploads/${id}${download ? "?download=1" : ""}`;
+}
+function ipv4IsPrivate(ip) {
+  const parts = ip.split(".").map((p) => parseInt(p, 10));
+  if (parts.length !== 4 || parts.some((n) => Number.isNaN(n) || n < 0 || n > 255)) return true;
+  const [a, b] = parts;
+  if (a === 0 || a === 10 || a === 127) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 100 && b >= 64 && b <= 127) return true;
+  if (a >= 224) return true;
+  return false;
+}
+function ipIsPrivate(ip) {
+  if (ip.includes(":")) {
+    const lower = ip.toLowerCase();
+    if (lower === "::1" || lower === "::") return true;
+    if (lower.startsWith("fe80")) return true;
+    if (lower.startsWith("fc") || lower.startsWith("fd")) return true;
+    const mapped = lower.match(/::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+    if (mapped) return ipv4IsPrivate(mapped[1]);
+    return false;
+  }
+  return ipv4IsPrivate(ip);
+}
+async function ssrfGuard(url2) {
+  let parsed;
+  try {
+    parsed = new URL(url2);
+  } catch {
+    return "error: invalid url.";
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return "error: only http(s) urls are allowed.";
+  }
+  const host = parsed.hostname.toLowerCase();
+  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".internal") || host.endsWith(".local")) {
+    return "error: requests to internal hostnames are blocked.";
+  }
+  if (isIP(host)) {
+    return ipIsPrivate(host) ? "error: requests to private/internal addresses are blocked." : null;
+  }
+  try {
+    const records = await lookup(host, { all: true });
+    if (!records.length) return "error: could not resolve host.";
+    for (const rec of records) {
+      if (ipIsPrivate(rec.address)) {
+        return "error: host resolves to a private/internal address; blocked.";
+      }
+    }
+  } catch {
+    return "error: could not resolve host.";
+  }
+  return null;
+}
+function clip3(s, n) {
+  return s.length > n ? `${s.slice(0, n)}
+\u2026[truncated ${s.length - n} chars]` : s;
+}
+function sanitizeForStorage(s) {
+  return s.split(String.fromCharCode(0)).join("").replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, "\uFFFD").replace(/(^|[^\uD800-\uDBFF])([\uDC00-\uDFFF])/g, "$1\uFFFD");
+}
+async function firecrawlSearch(query, limit) {
+  const key = process.env["FIRECRAWL_API_KEY"];
+  if (!key) throw new Error("FIRECRAWL_API_KEY is not set");
+  const r = await fetch(`${FIRECRAWL_BASE}/search`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ query, limit })
+  });
+  if (!r.ok) throw new Error(`Firecrawl ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  const data = await r.json();
+  const results = data.data ?? [];
+  if (!results.length) return `no web results for "${query}".`;
+  return `[search provider: firecrawl]
+${results.map((x, i) => `${i + 1}. ${x.title ?? "(untitled)"}
+   ${x.url ?? ""}
+   ${clip3((x.description ?? "").trim(), 300)}`).join("\n\n")}`;
+}
+async function webSearch(query, limit) {
+  const providers = [
+    { name: "tavily", enabled: !!process.env["TAVILY_API_KEY"], run: () => tavilySearch(query, limit) },
+    { name: "exa", enabled: !!process.env["EXA_API_KEY"], run: () => exaSearch(query, limit) },
+    { name: "firecrawl", enabled: !!process.env["FIRECRAWL_API_KEY"], run: () => firecrawlSearch(query, limit) }
+  ].filter((p) => p.enabled);
+  if (!providers.length) {
+    return "error: no web search provider is configured (set TAVILY_API_KEY, EXA_API_KEY, or FIRECRAWL_API_KEY).";
+  }
+  const errors = [];
+  for (const provider of providers) {
+    try {
+      return await provider.run();
+    } catch (e) {
+      errors.push(`${provider.name}: ${String(e instanceof Error ? e.message : e).slice(0, 120)}`);
+    }
+  }
+  return `error: all web search providers failed \u2014 ${errors.join("; ")}`;
+}
+function formatMemoryRow(m, score) {
+  const tag = score != null ? ` \xB7 sim ${score.toFixed(3)}` : "";
+  return `#${m.id} [${m.agentName ?? "?"}${m.key ? ` \xB7 ${m.key}` : ""}${tag}] ${clip3(m.content, 600)}`;
+}
+function isInternalMeta(m) {
+  return INTERNAL_META_RE.test(`${m.key ?? ""} ${m.tags ?? ""} ${m.content ?? ""}`);
+}
+async function keywordMemorySearch(query, limit) {
+  const like2 = `%${query}%`;
+  const rows = await db.select().from(agentMemoryTable).where(or(ilike(agentMemoryTable.content, like2), ilike(agentMemoryTable.key, like2), ilike(agentMemoryTable.tags, like2))).orderBy(desc(agentMemoryTable.createdAt)).limit(limit * 3);
+  const visible = rows.filter((m) => !isInternalMeta(m)).slice(0, limit);
+  if (!visible.length) return `no relevant memory entries matched "${query}".`;
+  return visible.map((m) => formatMemoryRow(m)).join("\n---\n");
+}
+async function memorySearch(query, limit) {
+  if (pineconeConfigured()) {
+    const queryVec = await embed(query);
+    if (queryVec) {
+      const matches = await pineconeQuery(queryVec, limit * 3);
+      if (matches && matches.length) {
+        const rows = matches.map((m) => {
+          const md = m.metadata ?? {};
+          return {
+            id: Number(md["pgId"] ?? m.id) || 0,
+            agentName: md["agentName"] ?? null,
+            key: md["key"] ?? null,
+            content: String(md["content"] ?? ""),
+            score: m.score
+          };
+        }).filter((r) => !isInternalMeta(r)).slice(0, limit);
+        if (rows.length) return rows.map((r) => formatMemoryRow(r, r.score)).join("\n---\n");
+      }
+    }
+  }
+  if (embeddingsConfigured()) {
+    const queryVec = await embed(query);
+    if (queryVec) {
+      const candidates = await db.select().from(agentMemoryTable).where(isNotNull(agentMemoryTable.embedding)).orderBy(desc(agentMemoryTable.createdAt)).limit(MEMORY_CANDIDATE_LIMIT);
+      const scored = candidates.filter((m) => !isInternalMeta(m)).map((m) => {
+        const vec = parseEmbedding(m.embedding);
+        return vec ? { row: m, score: cosineSimilarity(queryVec, vec) } : null;
+      }).filter((x) => x !== null).sort((a, b) => b.score - a.score).slice(0, limit);
+      if (scored.length) {
+        return scored.map((s) => formatMemoryRow(s.row, s.score)).join("\n---\n");
+      }
+    }
+  }
+  return keywordMemorySearch(query, limit);
+}
+function safeCalc(expr) {
+  const cleaned = expr.trim();
+  if (!cleaned) return "error: expression is required.";
+  if (cleaned.length > 500) return "error: expression is too long (max 500 chars).";
+  if (!/^[-+*/%.()0-9eE\s]+$/.test(cleaned)) {
+    return "error: only numbers and the operators + - * / % ** ( ) are allowed.";
+  }
+  try {
+    const fn = new Function(`"use strict"; return (${cleaned});`);
+    const val = fn();
+    if (typeof val !== "number" || !Number.isFinite(val)) {
+      return "error: expression did not evaluate to a finite number.";
+    }
+    return String(val);
+  } catch {
+    return "error: could not evaluate expression.";
+  }
+}
+function scrapeLooksBlocked(text2) {
+  const t = text2.trim();
+  if (t.length < 200) return true;
+  return /performing security verification|verify you are (not a |a )?(human|bot)|enable javascript|access denied|captcha|unusual traffic|request blocked|are not a bot/i.test(
+    t
+  );
+}
+async function steelScrapeOnce(url2, useProxy) {
+  const key = process.env["STEEL_API_KEY"];
+  if (!key) throw new Error("STEEL_API_KEY is not set");
+  const r = await fetch(`${STEEL_BASE}/scrape`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+    // Ask for cleaned markdown, not raw HTML — far more signal per character, so a
+    // single scrape fits the readable content (titles, scores) inside the response
+    // budget instead of being truncated mid-page and forcing extra calls.
+    body: JSON.stringify({ url: url2, format: ["markdown"], useProxy })
+  });
+  if (!r.ok) throw new Error(`Steel ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  const data = await r.json();
+  const content = data["content"];
+  if (typeof content === "string") return content;
+  if (content && typeof content === "object") {
+    return content["markdown"] || content["text"] || content["html"] || JSON.stringify(content);
+  }
+  return data["markdown"] || JSON.stringify(data);
+}
+async function steelScrape(url2) {
+  const direct = await steelScrapeOnce(url2, false);
+  if (!scrapeLooksBlocked(direct)) return direct;
+  try {
+    const viaProxy = await steelScrapeOnce(url2, true);
+    if (!scrapeLooksBlocked(viaProxy)) return viaProxy;
+    return viaProxy.trim().length > direct.trim().length ? viaProxy : direct;
+  } catch {
+    return direct;
+  }
+}
+async function steelScreenshot(url2) {
+  const key = process.env["STEEL_API_KEY"];
+  if (!key) throw new Error("STEEL_API_KEY is not set");
+  const r = await fetch(`${STEEL_BASE}/screenshot`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ url: url2, fullPage: true })
+  });
+  if (!r.ok) throw new Error(`Steel ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  const buf = await r.arrayBuffer();
+  return buf.byteLength;
+}
+function detectSandboxMode() {
+  if (sandboxMode) return sandboxMode;
+  try {
+    const probe = spawnSync(
+      "unshare",
+      [
+        "--net",
+        "--mount",
+        "--map-root-user",
+        "/bin/sh",
+        "-c",
+        "mount -t tmpfs tmpfs /home && exit 0"
+      ],
+      { timeout: 4e3 }
+    );
+    sandboxMode = probe.status === 0 ? "namespace" : "none";
+  } catch {
+    sandboxMode = "none";
+  }
+  if (sandboxMode === "none") {
+    logger.warn(
+      "code_exec: unprivileged namespaces unavailable \u2014 running with scrubbed env only (no network/fs isolation). Code execution should be treated as untrusted on this host."
+    );
+  } else {
+    logger.info("code_exec: namespace isolation active (no network, repo hidden).");
+  }
+  return sandboxMode;
+}
+function runSandboxed(language, source) {
+  return new Promise((resolve) => {
+    const lang = language.toLowerCase();
+    let runtime;
+    let filename;
+    let runtimeArgs;
+    if (lang === "python" || lang === "py" || lang === "python3") {
+      runtime = "python3";
+      filename = "main.py";
+      runtimeArgs = ["-I", filename];
+    } else if (lang === "javascript" || lang === "js" || lang === "node") {
+      runtime = "node";
+      filename = "main.js";
+      runtimeArgs = [filename];
+    } else {
+      resolve(`error: unsupported language "${language}". Use "python" or "javascript".`);
+      return;
+    }
+    let dir;
+    try {
+      dir = mkdtempSync(join(tmpdir(), "clawexec-"));
+      writeFileSync(join(dir, filename), source, "utf8");
+    } catch (e) {
+      resolve(`error: failed to prepare sandbox: ${String(e).slice(0, 200)}`);
+      return;
+    }
+    let cleaned = false;
+    const cleanup = () => {
+      if (cleaned) return;
+      cleaned = true;
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch {
+      }
+    };
+    const mode = detectSandboxMode();
+    let cmd;
+    let args;
+    if (mode === "namespace") {
+      cmd = "unshare";
+      args = [
+        "--net",
+        "--mount",
+        "--map-root-user",
+        "/bin/sh",
+        "-c",
+        // Fail-closed: if the /home mask can't be applied, abort WITHOUT
+        // running the code (otherwise the repo would stay visible). The temp
+        // source dir lives under /tmp, so it survives the tmpfs mount on /home.
+        `mount -t tmpfs tmpfs /home || { echo "sandbox: filesystem isolation failed" >&2; exit 97; }; cd "${dir}" && exec ${runtime} ${runtimeArgs.join(" ")}`
+      ];
+    } else {
+      cmd = runtime;
+      args = runtimeArgs;
+    }
+    const child = spawn(cmd, args, {
+      cwd: dir,
+      env: { PATH: process.env["PATH"] ?? "/usr/bin:/bin", HOME: dir },
+      killSignal: "SIGKILL",
+      detached: true
+    });
+    let killReason = null;
+    const killTree = (reason) => {
+      if (killReason) return;
+      killReason = reason;
+      try {
+        if (child.pid) process.kill(-child.pid, "SIGKILL");
+      } catch {
+        try {
+          child.kill("SIGKILL");
+        } catch {
+        }
+      }
+    };
+    const timer2 = setTimeout(() => killTree("timeout"), CODE_TIMEOUT_MS);
+    let stdout = "";
+    let stderr = "";
+    let bytes = 0;
+    const onData = (chunk, sink) => {
+      bytes += chunk.length;
+      if (bytes > CODE_OUTPUT_CAP * 2) {
+        killTree("output-cap");
+        return;
+      }
+      if (sink === "out") stdout += chunk.toString();
+      else stderr += chunk.toString();
+    };
+    child.stdout?.on("data", (c) => onData(c, "out"));
+    child.stderr?.on("data", (c) => onData(c, "err"));
+    child.on("error", (err) => {
+      clearTimeout(timer2);
+      cleanup();
+      resolve(`error: failed to spawn sandbox: ${String(err).slice(0, 200)}`);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer2);
+      cleanup();
+      const out = clip3(stdout.trim(), CODE_OUTPUT_CAP);
+      const errOut = clip3(stderr.trim(), CODE_OUTPUT_CAP);
+      if (killReason === "timeout") {
+        resolve(`error: execution killed (timeout ${CODE_TIMEOUT_MS}ms).
+stdout:
+${out}`);
+        return;
+      }
+      if (killReason === "output-cap") {
+        resolve(`error: execution killed (output cap exceeded).
+stdout:
+${out}`);
+        return;
+      }
+      const parts = [`exit code: ${code ?? 0}`];
+      if (out) parts.push(`stdout:
+${out}`);
+      if (errOut) parts.push(`stderr:
+${errOut}`);
+      if (!out && !errOut) parts.push("(no output)");
+      resolve(parts.join("\n"));
+    });
+  });
+}
+function getToolNamesForAgent(agentId) {
+  return AGENT_TOOLS[agentId] ?? ["web_scrape", "memory_search"];
+}
+function toolSummary(name) {
+  const d = TOOL_REGISTRY[name]?.description ?? "";
+  return clip3(d.split(/\.\s/)[0], 100);
+}
+function buildCapabilityCard(agentId) {
+  const names = getToolNamesForAgent(agentId);
+  const list = names.map((n) => `- ${n}: ${toolSummary(n)}`).join("\n");
+  let card = `
+
+YOUR TOOLS (${names.length}; call them to do real work, never guess or fabricate results):
+${list}`;
+  card += names.includes("schedule_task") ? `
+
+SCHEDULING: use schedule_task to run work automatically on a cron schedule, list_scheduled_tasks to review jobs, cancel_scheduled_task to stop one.` : `
+
+SCHEDULING: the swarm can run recurring cron jobs (managed by ABBY/WIRE) \u2014 ask ABBY to schedule recurring work.`;
+  card += `
+
+GITHUB: query the GitHub REST API with http_request (https://api.github.com/...); it is auto-authenticated. Never web_scrape github.com pages \u2014 they are JS-rendered and return nothing useful.`;
+  if (names.includes("sandbox_exec")) {
+    card += `
+
+INTERACTIVE AUTOMATION: web_scrape is read-only and won't render JS-heavy or multi-step pages. When a task needs to actually fill/submit a web form or read a JS-rendered page, use sandbox_exec to run Playwright in the cloud VM (install chromium, navigate, fill, click, submit). To produce or fill official PDF forms (e.g. AcroForm fields), use sandbox_exec with reportlab/fpdf2/fillpdf/pypdf and return the output file path. Generate/prepare documents and demonstrate the flow \u2014 never submit a person's legal/financial filing on their behalf.`;
+  }
+  if (names.includes("save_artifact")) {
+    card += `
+
+DELIVERABLE FILES: whenever you produce a file the operator should keep (report, CSV, code, JSON, or a generated PDF), call save_artifact to store it and get a real download URL, then put that [Download \u2026](url) link in your final answer. Do NOT claim a file exists or name a file you didn't save \u2014 an unsaved file is not downloadable and counts as a fabrication. To make a PDF: generate it in sandbox_exec (reportlab/fpdf2), base64 it, then save_artifact with encoding 'base64'.`;
+  }
+  if (names.includes("image_generate")) {
+    card += `
+
+IMAGES: prefer the CHEAP path first. For news/quote/hook/stat cards and any terminal/cyber TEXT visual, call render_card \u2014 it draws a real on-brand 1080\xD71080 PNG by code for ~$0 (no AI image gen) and returns a public image URL. Only call image_generate (paid) when you specifically need a PHOTOREAL picture/logo/illustration/photo. Either way you get a real PNG + a URL to use as image_url; do NOT hand-code SVG or merely describe the image, and only produce SVG if the operator explicitly asks for SVG/vector.`;
+  }
+  if (names.includes("composio_apps") || names.includes("composio_action")) {
+    card += `
+
+CONNECTED APPS (Composio): the operator connects their apps \u2014 social like Instagram/YouTube/Reddit AND SaaS like Gmail/GitHub/Notion/Calendar/Sheets \u2014 in Settings \u2192 Connect Apps, which is COMPOSIO. To act on any of them, FIRST call composio_apps to see which are LIVE, THEN call composio_action on a live app. For a read with no obvious named action slug, use composio_action RAW PROXY mode: pass toolkit + endpoint (the app's REST path) + method, e.g. toolkit:'instagram', endpoint:'/me/media?fields=id,caption', method:'GET'.`;
+    if (names.includes("social_accounts")) {
+      card += ` NOTE: social_accounts/social_api is a SEPARATE native-OAuth path that is usually EMPTY for this operator \u2014 NEVER conclude an app is "not connected" from social_accounts alone. The operator's accounts live in COMPOSIO, so always check composio_apps before saying anything is unavailable.`;
+    }
+    if (names.includes("instagram_post")) {
+      card += ` TO POST AN IMAGE TO INSTAGRAM: call image_generate (it returns an ABSOLUTE public https URL), then call instagram_post with that exact image_url + your caption. instagram_post does the full create\u2192publish\u2192permalink flow server-side and returns the live link \u2014 do NOT hand-build the /me/media calls yourself, and NEVER upload the image to an external host (imgbb/imgur/etc.); the image_generate URL is already public.`;
+    }
+  }
+  if (agentId === ABBY_ID) {
+    card += `
+
+YOUR SWARM (delegate each directive to the right CLAW):
+` + SWARM_ROSTER.map(([id, name, role]) => `- ${name} (#${id}) \u2014 ${role}`).join("\n");
+  }
+  return card;
+}
+function getOpenAiToolsForAgent(agentId) {
+  return getToolNamesForAgent(agentId).map((n) => TOOL_REGISTRY[n]).filter((t) => !!t).map((t) => ({
+    type: "function",
+    function: { name: t.name, description: t.description, parameters: t.parameters }
+  }));
+}
+function isToolAllowed(agentId, toolName) {
+  return getToolNamesForAgent(agentId).includes(toolName);
+}
+async function runTool(toolName, args, ctx) {
+  const def = TOOL_REGISTRY[toolName];
+  if (!def) return `error: unknown tool "${toolName}".`;
+  if (!isToolAllowed(ctx.agentId, toolName)) {
+    return `error: tool "${toolName}" is not permitted for this agent.`;
+  }
+  return sanitizeForStorage(await def.run(args, ctx));
+}
+var STEEL_BASE, FIRECRAWL_BASE, MEMORY_CANDIDATE_LIMIT, INTERNAL_META_RE, CODE_TIMEOUT_MS, CODE_OUTPUT_CAP, sandboxMode, TOOL_REGISTRY, ALL_TOOLS, AGENT_TOOLS, ABBY_ID, SWARM_ROSTER;
+var init_tools = __esm({
+  "src/tools.ts"() {
+    "use strict";
+    init_logger2();
+    init_src();
+    init_src();
+    init_drizzle_orm();
+    init_vault2();
+    init_connectors();
+    init_integrations();
+    init_embeddings();
+    init_pinecone();
+    init_sandbox();
+    init_sources();
+    init_marketing();
+    init_cron();
+    init_safety();
+    init_postLimit();
+    STEEL_BASE = "https://api.steel.dev/v1";
+    FIRECRAWL_BASE = "https://api.firecrawl.dev/v1";
+    MEMORY_CANDIDATE_LIMIT = 1e3;
+    INTERNAL_META_RE = /(vault[-\s]?(full[-\s]?state|state[-\s]?dump|rag|audit|targeted|secret)|swarm[-\s]?architecture|architecture[-\s]?(consolidated|definitions)|memory[-\s]?(audit|store[-\s]?audit)|rag[-\s]?(sweep|requery|response)|system topology|substrate audit|bundle matrix|sentinel|six[_\s]?zips|_directive_|self[-\s]?audit|abby[-\s]?claw[-\s]?memory)/i;
+    CODE_TIMEOUT_MS = 8e3;
+    CODE_OUTPUT_CAP = 4e3;
+    sandboxMode = null;
+    TOOL_REGISTRY = {
+      web_scrape: {
+        name: "web_scrape",
+        description: "Fetch and extract the readable text/markdown content of a live web page by URL. Use to read articles, docs, competitor pages, or any public webpage. Do NOT use it for github.com pages (search results, repos) \u2014 those are JavaScript-rendered and return no useful content; use http_request against the GitHub API (https://api.github.com/...) instead, which is auto-authenticated.",
+        parameters: {
+          type: "object",
+          properties: {
+            url: { type: "string", description: "Absolute http(s) URL of the page to read." }
+          },
+          required: ["url"]
+        },
+        run: async (args) => {
+          const url2 = String(args["url"] ?? "").trim();
+          if (!/^https?:\/\//i.test(url2)) return "error: a valid absolute http(s) url is required.";
+          try {
+            const host = new URL(url2).hostname.toLowerCase();
+            if (host === "github.com" || host === "www.github.com") {
+              const m = url2.match(/github\.com\/search\?(.*)$/i);
+              const apiHint = m ? `https://api.github.com/search/repositories?${m[1].replace(/type=repositories&?/i, "")}` : "https://api.github.com/repos/<owner>/<repo>  (or /search/repositories?q=...)";
+              return `error: github.com web pages are JavaScript-rendered and not scrapable. Use http_request (GET) against the GitHub REST API instead \u2014 it is auto-authenticated. Try: ${apiHint}`;
+            }
+          } catch {
+          }
+          const content = await steelScrape(url2);
+          return clip3(content, 8e3);
+        }
+      },
+      web_screenshot: {
+        name: "web_screenshot",
+        description: "Capture a full-page screenshot of a URL via the Steel browser. Returns a confirmation with the image size in bytes.",
+        parameters: {
+          type: "object",
+          properties: {
+            url: { type: "string", description: "Absolute http(s) URL to screenshot." }
+          },
+          required: ["url"]
+        },
+        run: async (args) => {
+          const url2 = String(args["url"] ?? "").trim();
+          if (!/^https?:\/\//i.test(url2)) return "error: a valid absolute http(s) url is required.";
+          const bytes = await steelScreenshot(url2);
+          if (bytes < 1024) {
+            return `error: screenshot returned no usable image (${bytes} bytes) for ${url2} \u2014 the page likely blocked the capture or timed out.`;
+          }
+          return `screenshot captured for ${url2} (${Math.round(bytes / 1024)} KB).`;
+        }
+      },
+      web_search: {
+        name: "web_search",
+        description: "Search the live web and return the top results (title, URL, snippet). Backed by Tavily, Exa, and Firecrawl with automatic failover. Use to discover current information and find pages worth reading. To read a result's full content, follow up with web_scrape on its URL.",
+        parameters: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "The search query." },
+            limit: { type: "integer", description: "How many results to return (1-10, default 5).", minimum: 1, maximum: 10 }
+          },
+          required: ["query"]
+        },
+        run: async (args) => {
+          const query = String(args["query"] ?? "").trim();
+          if (!query) return "error: query is required.";
+          let limit = Number(args["limit"] ?? 5);
+          if (!Number.isFinite(limit)) limit = 5;
+          limit = Math.max(1, Math.min(10, Math.floor(limit)));
+          return webSearch(query, limit);
+        }
+      },
+      http_request: {
+        name: "http_request",
+        description: 'Make a real outbound HTTP request to any API endpoint. Supports GET/POST/PUT/PATCH/DELETE with optional headers and a JSON/text body. Returns the status and response body (truncated). For rate-limited or private APIs, authenticate with a vault secret placeholder in the headers rather than a raw key \u2014 e.g. GitHub: headers { "Authorization": "Bearer {{secret:GITHUB_TOKEN}}" }. Always authenticate GitHub (api.github.com) calls this way: it raises the limit from 60 to 5,000 requests/hour, and the placeholder is resolved to the real token only at send time, so the secret never enters your context. Use vault_list to see which secret names exist.',
+        parameters: {
+          type: "object",
+          properties: {
+            method: { type: "string", enum: ["GET", "POST", "PUT", "PATCH", "DELETE"], description: "HTTP method." },
+            url: { type: "string", description: "Absolute http(s) URL." },
+            headers: { type: "object", description: "Optional request headers as a flat key/value object." },
+            body: { type: "string", description: "Optional request body (send JSON as a string)." }
+          },
+          required: ["method", "url"]
+        },
+        run: async (args) => {
+          const usedSecrets = /* @__PURE__ */ new Set();
+          const url2 = (await substituteSecrets(String(args["url"] ?? ""), usedSecrets)).trim();
+          if (!/^https?:\/\//i.test(url2)) return "error: a valid absolute http(s) url is required.";
+          const blocked = await ssrfGuard(url2);
+          if (blocked) return blocked;
+          const method = String(args["method"] ?? "GET").toUpperCase();
+          const headers = {};
+          const rawHeaders = args["headers"];
+          if (rawHeaders && typeof rawHeaders === "object") {
+            for (const [k, v] of Object.entries(rawHeaders)) {
+              headers[k] = await substituteSecrets(String(v), usedSecrets);
+            }
+          }
+          const body = args["body"] != null && method !== "GET" && method !== "DELETE" ? await substituteSecrets(String(args["body"]), usedSecrets) : void 0;
+          try {
+            const host = new URL(url2).hostname.toLowerCase();
+            if (host === "api.github.com" || host.endsWith(".githubusercontent.com")) {
+              const lc = Object.keys(headers).map((k) => k.toLowerCase());
+              const ghToken = process.env["GITHUB_API_KEY"] || process.env["GITHUB_TOKEN"] || process.env["SANDBOX_GITHUB_TOKEN"];
+              if (ghToken && !lc.includes("authorization")) {
+                headers["Authorization"] = `Bearer ${ghToken}`;
+                usedSecrets.add(ghToken);
+              }
+              if (!lc.includes("user-agent")) headers["User-Agent"] = "OpenClaw-Omega";
+              if (host === "api.github.com" && !lc.includes("accept")) headers["Accept"] = "application/vnd.github+json";
+            }
+          } catch {
+          }
+          const ctrl = new AbortController();
+          const timer2 = setTimeout(() => ctrl.abort(), 15e3);
+          try {
+            let currentUrl = url2;
+            let r = null;
+            for (let hop = 0; hop < 5; hop++) {
+              r = await fetch(currentUrl, { method, headers, body, signal: ctrl.signal, redirect: "manual" });
+              if (r.status < 300 || r.status >= 400) break;
+              const location2 = r.headers.get("location");
+              if (!location2) break;
+              const next = new URL(location2, currentUrl).toString();
+              if (!/^https?:\/\//i.test(next)) return "error: redirect to a non-http(s) target was blocked.";
+              const redirectBlocked = await ssrfGuard(next);
+              if (redirectBlocked) return `error: redirect blocked \u2014 ${redirectBlocked.replace(/^error: /, "")}`;
+              currentUrl = next;
+              if (hop === 4) return "error: too many redirects.";
+            }
+            if (!r) return "error: request failed: no response.";
+            const text2 = await r.text();
+            const safe = redactSecrets(text2, usedSecrets);
+            return `HTTP ${r.status} ${r.statusText}
+${clip3(safe, 4e3)}`;
+          } catch (e) {
+            return redactSecrets(`error: request failed: ${String(e).slice(0, 200)}`, usedSecrets);
+          } finally {
+            clearTimeout(timer2);
+          }
+        }
+      },
+      code_exec: {
+        name: "code_exec",
+        description: "Execute a short code snippet in an isolated subprocess and return its stdout/stderr. Supports 'python' and 'javascript'. Hard 8s timeout. Secrets, env vars, and the database are never exposed. Where the host supports unprivileged namespaces, execution also has NO network access and CANNOT see the app/repo filesystem; on hosts without that support it falls back to a scrubbed-env subprocess with network/filesystem still reachable. Use for self-contained calculations, data transforms, and quick logic checks \u2014 not for fetching URLs (use http_request) or reading project files.",
+        parameters: {
+          type: "object",
+          properties: {
+            language: { type: "string", enum: ["python", "javascript"], description: "Runtime to use." },
+            source: { type: "string", description: "Self-contained source code. Print results to stdout." }
+          },
+          required: ["language", "source"]
+        },
+        run: async (args) => {
+          const language = String(args["language"] ?? "");
+          const source = String(args["source"] ?? "");
+          if (!source.trim()) return "error: source is required.";
+          return runSandboxed(language, source);
+        }
+      },
+      cloud_code_exec: {
+        name: "cloud_code_exec",
+        description: "Execute code in a fully isolated E2B cloud sandbox (a real remote VM with network access and a full runtime). Supports 'python' and 'javascript'. Use this instead of code_exec when the code needs network access, pip/npm packages, or stronger isolation than the local sandbox. Returns stdout/stderr/result.",
+        parameters: {
+          type: "object",
+          properties: {
+            language: { type: "string", enum: ["python", "javascript"], description: "Runtime to use." },
+            source: { type: "string", description: "Self-contained source code. Print results to stdout." }
+          },
+          required: ["language", "source"]
+        },
+        run: async (args) => {
+          const language = String(args["language"] ?? "");
+          const source = String(args["source"] ?? "");
+          if (!source.trim()) return "error: source is required.";
+          if (!e2bConfigured()) {
+            return "error: E2B cloud sandbox is not configured (set E2B_API_KEY). Use code_exec for local execution instead.";
+          }
+          return e2bExec(language, source);
+        }
+      },
+      sandbox_exec: {
+        name: "sandbox_exec",
+        description: "Run a shell script inside a fresh, isolated E2B cloud VM (its own real computer \u2014 node, git, network, full Linux). Use for anything that needs a real dev environment: clone a public repo, install packages, run a build/test suite, run scripts, curl APIs, etc. It is also your INTERACTIVE-AUTOMATION substrate: pip/npm-install and drive real tools here \u2014 e.g. Playwright (`pip install playwright && playwright install chromium`) to navigate multi-step web forms, fill fields, click, and submit; or reportlab/fpdf2/fillpdf/pypdf to generate and fill official PDF forms (e.g. AcroForm fields). Print results/paths to stdout and read back any output. STATELESS: each call is a clean disposable VM and files do NOT persist between calls \u2014 generate a file, base64 it, and print it ALL in ONE script (then pass to save_artifact); never write in one call and read in the next. NO access to the OpenClaw server or its secrets. For making changes to the OpenClaw repo and opening a PR, use sandbox_repo_pr instead.",
+        parameters: {
+          type: "object",
+          properties: {
+            script: { type: "string", description: "A bash script to run in the VM (commands can be chained with && and newlines)." }
+          },
+          required: ["script"]
+        },
+        run: async (args) => {
+          const script = String(args["script"] ?? "").trim();
+          if (!script) return "error: script is required.";
+          if (!sandboxConfigured()) return "error: E2B cloud sandbox is not configured (E2B_API_KEY).";
+          return runInSandbox(script);
+        }
+      },
+      sandbox_repo_pr: {
+        name: "sandbox_repo_pr",
+        description: "Work on the OpenClaw (bos-aura) repository for real: clones it into an isolated E2B VM, runs your shell script to make changes and/or run the test suite (cwd = repo root), commits, pushes a branch, and opens a Pull Request for human review. Use this to implement a fix/feature, run the real tests against your changes, and propose them. Scoped to the bos-aura repo only. The GitHub token is handled server-side and never exposed to you.",
+        parameters: {
+          type: "object",
+          properties: {
+            branch: { type: "string", description: "New branch name, e.g. 'agent/fix-typo'." },
+            script: { type: "string", description: "Bash script run inside the cloned repo to make changes (e.g. edit files with sed/tee) and optionally run tests. cwd is the repo root." },
+            title: { type: "string", description: "PR title (also used as the commit message)." },
+            body: { type: "string", description: "Optional PR description." },
+            baseBranch: { type: "string", description: "Base branch for the PR (default 'main')." }
+          },
+          required: ["branch", "script", "title"]
+        },
+        run: async (args) => {
+          const branch = String(args["branch"] ?? "").trim();
+          const script = String(args["script"] ?? "").trim();
+          const title = String(args["title"] ?? "").trim();
+          if (!branch || !script || !title) return "error: branch, script, and title are required.";
+          if (!sandboxConfigured()) return "error: E2B cloud sandbox is not configured (E2B_API_KEY).";
+          if (!gitWriteConfigured()) return "error: git push is not enabled \u2014 the operator must set SANDBOX_GITHUB_TOKEN.";
+          return repoPr({
+            branch,
+            script,
+            title,
+            body: args["body"] != null ? String(args["body"]) : void 0,
+            baseBranch: args["baseBranch"] != null ? String(args["baseBranch"]) : void 0
+          });
+        }
+      },
+      memory_write: {
+        name: "memory_write",
+        description: "Persist a fact, finding, or result to the swarm's shared long-term memory so any agent can retrieve it later.",
+        parameters: {
+          type: "object",
+          properties: {
+            content: { type: "string", description: "The information to store." },
+            key: { type: "string", description: "Optional short label/topic for the memory." },
+            tags: { type: "string", description: "Optional comma-separated tags." }
+          },
+          required: ["content"]
+        },
+        run: async (args, ctx) => {
+          const content = String(args["content"] ?? "").trim();
+          if (!content) return "error: content is required.";
+          const key = args["key"] != null ? String(args["key"]).slice(0, 200) : null;
+          const stored = content.slice(0, 8e3);
+          const vector2 = await embed(key ? `${key}
+${stored}` : stored);
+          const tags = args["tags"] != null ? String(args["tags"]).slice(0, 300) : null;
+          const [row] = await db.insert(agentMemoryTable).values({
+            agentId: ctx.agentId,
+            agentName: ctx.agentName,
+            key,
+            content: stored,
+            tags,
+            embedding: vector2 ? JSON.stringify(vector2) : null
+          }).returning();
+          let pineconed = false;
+          if (vector2 && row?.id != null && pineconeConfigured()) {
+            pineconed = await pineconeUpsert(String(row.id), vector2, {
+              pgId: row.id,
+              agentName: ctx.agentName ?? null,
+              key,
+              tags,
+              content: stored.slice(0, 1500)
+            });
+          }
+          return `stored memory #${row?.id ?? "?"}${vector2 ? pineconed ? " (semantic \xB7 pinecone)" : " (semantic)" : ""}.`;
+        }
+      },
+      memory_search: {
+        name: "memory_search",
+        description: "Search the swarm's shared long-term memory for prior TASK-RELEVANT facts about the operator's domain (e.g. earlier findings, figures, sources for this project). Semantic vector similarity when embeddings are configured, else keyword. Do NOT use this to research the swarm itself (its architecture, roles, vault, prior audits) \u2014 that is internal state, not a deliverable. If results are only internal/meta/self-audit entries, ignore them and gather the real answer from web_search/web_scrape/http_request. Call it at most a couple of times; don't loop.",
+        parameters: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "What to retrieve from stored memory (natural language or keywords)." }
+          },
+          required: ["query"]
+        },
+        run: async (args) => {
+          const query = String(args["query"] ?? "").trim();
+          if (!query) return "error: query is required.";
+          return memorySearch(query, 5);
+        }
+      },
+      calculator: {
+        name: "calculator",
+        description: "Evaluate an arithmetic expression precisely and return the numeric result. Supports + - * / % ** and parentheses. Use this instead of doing mental math for any non-trivial calculation.",
+        parameters: {
+          type: "object",
+          properties: {
+            expression: { type: "string", description: "Arithmetic expression, e.g. '(1234 * 19) / 7 + 2**8'." }
+          },
+          required: ["expression"]
+        },
+        run: async (args) => safeCalc(String(args["expression"] ?? ""))
+      },
+      marketing_playbook: {
+        name: "marketing_playbook",
+        description: "Return the Marketing Engine \u2014 the universal plug-and-play post\u2192conversion playbook (ANY niche/offer/platform). Call with NO args BEFORE writing any marketing content for the core engine: hook\u2192problem\u2192insight\u2192value\u2192CTA\u2192follow-up, one goal + one CTA keyword, platform-tuned, accuracy-first (research & cite every claim \u2014 never fabricate stats/studies/testimonials). Pass a `section` for the enterprise build (campaign_brief, offer_ladder, audience, post_templates, campaign_types, lead_magnets, dm_flow, landing_page, email_nurture, paid_media, channels, production, governance, qa, kpis, experiments, rollout). Execute with image_generate \u2192 instagram_post/composio_action \u2192 schedule_task \u2192 memory_write.",
+        parameters: {
+          type: "object",
+          properties: {
+            section: {
+              type: "string",
+              enum: Object.keys(MARKETING_SECTIONS),
+              description: "Optional deep module to return instead of the core engine."
+            }
+          }
+        },
+        run: async (args) => marketingPlaybook(args["section"] != null ? String(args["section"]) : void 0)
+      },
+      tier1_sources: {
+        name: "tier1_sources",
+        description: "Return the vetted Tier-1 (authoritative, primary) source URLs to research from \u2014 government/regulatory, primary institutions, peer-reviewed journals & standards bodies, official company/platform docs, Tier-1 wire services, and recognized data authorities. Call this BEFORE web research so you start from serious sources, then web_scrape/http_request those URLs. Optionally pass a category to filter.",
+        parameters: {
+          type: "object",
+          properties: {
+            category: {
+              type: "string",
+              enum: TIER1_SOURCES.map((c) => c.key),
+              description: "Optional domain filter: medicine, finance, markets, news, ai, marketing, engineering, law, social, gov."
+            }
+          }
+        },
+        run: async (args) => {
+          const category = args["category"] != null ? String(args["category"]) : void 0;
+          return tier1SourcesText(category);
+        }
+      },
+      save_artifact: {
+        name: "save_artifact",
+        description: "Save a file you created so the OPERATOR can DOWNLOAD it. Returns a real download URL \u2014 use this for any deliverable file (report, CSV, markdown, code, JSON, or a PDF). After saving, you MUST include the returned markdown download link in your final answer so the operator can click it. For text deliverables pass the text in `content` (encoding 'utf8'). For a binary file you generated in sandbox_exec/code_exec (e.g. a PDF), base64-encode it there (`base64 -w0 file.pdf`), print it, then pass that string as `content` with encoding 'base64'. Never claim a file exists without saving it here first.",
+        parameters: {
+          type: "object",
+          properties: {
+            filename: { type: "string", description: "File name with extension, e.g. 'fl-llc-articles.pdf' or 'market-research.md'." },
+            content: { type: "string", description: "The file content: UTF-8 text, or base64 bytes when encoding='base64'." },
+            mime: { type: "string", description: "Optional MIME type, e.g. 'application/pdf', 'text/markdown', 'text/csv'. Inferred from the extension if omitted." },
+            encoding: { type: "string", enum: ["utf8", "base64"], description: "How `content` is encoded (default 'utf8')." }
+          },
+          required: ["filename", "content"]
+        },
+        run: async (args) => {
+          const filename = String(args["filename"] ?? "").trim().slice(0, 255) || "artifact";
+          const raw = String(args["content"] ?? "");
+          if (!raw) return "error: content is required.";
+          const encoding = String(args["encoding"] ?? "utf8").toLowerCase() === "base64" ? "base64" : "utf8";
+          let base643;
+          let bytes;
+          try {
+            const buf = encoding === "base64" ? Buffer.from(raw.includes(",") ? raw.slice(raw.indexOf(",") + 1) : raw, "base64") : Buffer.from(raw, "utf8");
+            bytes = buf.length;
+            if (bytes === 0) return "error: content decoded to 0 bytes.";
+            if (bytes > 20 * 1024 * 1024) return "error: file too large (max 20 MB).";
+            base643 = buf.toString("base64");
+          } catch (e) {
+            return `error: could not decode content: ${String(e).slice(0, 200)}`;
+          }
+          const ext = filename.includes(".") ? filename.split(".").pop().toLowerCase() : "";
+          const MIME = {
+            pdf: "application/pdf",
+            md: "text/markdown",
+            markdown: "text/markdown",
+            txt: "text/plain",
+            csv: "text/csv",
+            json: "application/json",
+            html: "text/html",
+            xml: "application/xml",
+            js: "text/javascript",
+            ts: "text/plain",
+            py: "text/plain",
+            png: "image/png",
+            jpg: "image/jpeg",
+            jpeg: "image/jpeg",
+            svg: "image/svg+xml",
+            zip: "application/zip",
+            docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+          };
+          const mimeType = (args["mime"] != null ? String(args["mime"]) : MIME[ext] ?? "application/octet-stream").slice(0, 128);
+          const kind = /^image\//.test(mimeType) ? "image" : /^text\/|json|xml|javascript/.test(mimeType) ? "text" : "other";
+          try {
+            const [row] = await db.insert(attachmentsTable).values({ filename, mimeType, kind, sizeBytes: bytes, data: base643, extractedText: null }).returning();
+            const url2 = uploadUrl(row.id, true);
+            return `saved "${filename}" (${bytes} bytes, ${mimeType}). Operator download link \u2014 INCLUDE THIS in your final answer:
+[Download ${filename}](${url2})`;
+          } catch (e) {
+            return `error: could not save artifact: ${String(e instanceof Error ? e.message : e).slice(0, 200)}`;
+          }
+        }
+      },
+      image_generate: {
+        name: "image_generate",
+        description: "Generate an IMAGE from a text prompt and save it as a downloadable file; returns a markdown image preview plus a download link. Use whenever the operator asks for an image, picture, logo, illustration, diagram, icon, mockup, poster, or banner. Needs OPENAI_API_KEY (or IMAGE_API_KEY).",
+        parameters: {
+          type: "object",
+          properties: {
+            prompt: { type: "string", description: "What to draw \u2014 describe the image in detail." },
+            size: { type: "string", enum: ["1024x1024", "1536x1024", "1024x1536"], description: "Image size (default 1024x1024)." },
+            filename: { type: "string", description: "Optional output filename, e.g. 'logo.png'." }
+          },
+          required: ["prompt"]
+        },
+        run: async (args) => {
+          const apiKey = process.env["OPENAI_API_KEY"] || process.env["IMAGE_API_KEY"];
+          if (!apiKey) return "error: image generation is not configured (set OPENAI_API_KEY).";
+          const prompt = String(args["prompt"] ?? "").trim();
+          if (!prompt) return "error: prompt is required.";
+          const allowed = /* @__PURE__ */ new Set(["1024x1024", "1536x1024", "1024x1536"]);
+          const size = allowed.has(String(args["size"])) ? String(args["size"]) : "1024x1024";
+          const base = (process.env["IMAGE_BASE_URL"] ?? "https://api.openai.com/v1").replace(/\/$/, "");
+          const model = process.env["IMAGE_MODEL"] ?? "gpt-image-1";
+          const ctrl = new AbortController();
+          const timer2 = setTimeout(() => ctrl.abort(), 9e4);
+          try {
+            const r = await fetch(`${base}/images/generations`, {
+              method: "POST",
+              headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+              body: JSON.stringify({ model, prompt, size, n: 1 }),
+              signal: ctrl.signal
+            });
+            const data = await r.json();
+            if (!r.ok) return `error: image API ${r.status}: ${data?.error?.message ?? "request failed"}`;
+            let b64 = data.data?.[0]?.b64_json ?? "";
+            if (!b64 && data.data?.[0]?.url) {
+              const img = await fetch(data.data[0].url);
+              b64 = Buffer.from(await img.arrayBuffer()).toString("base64");
+            }
+            if (!b64) return "error: image API returned no image data.";
+            const buf = Buffer.from(b64, "base64");
+            const filename = (args["filename"] != null ? String(args["filename"]) : prompt.slice(0, 40).replace(/[^a-z0-9]+/gi, "_")).replace(/\.(png|jpg|jpeg)$/i, "") + ".png";
+            const [row] = await db.insert(attachmentsTable).values({ filename, mimeType: "image/png", kind: "image", sizeBytes: buf.length, data: b64, extractedText: null }).returning();
+            const url2 = uploadUrl(row.id);
+            return `generated image "${filename}" (${buf.length} bytes). Its PUBLIC image URL (use this directly as image_url when posting to Instagram/social, or as the link in your answer):
+${url2}
+
+Show it in your answer:
+![${prompt.slice(0, 60)}](${url2})
+[Download ${filename}](${url2}?download=1)`;
+          } catch (e) {
+            return `error: image generation failed: ${String(e instanceof Error ? e.message : e).slice(0, 200)}`;
+          } finally {
+            clearTimeout(timer2);
+          }
+        }
+      },
+      send_message: {
+        name: "send_message",
+        description: "Post a message into the live operator channel feed as yourself. Use to report progress, surface a finding, or coordinate with the operator and the other CLAWs. The message appears immediately in the Discord-style chat stream.",
+        parameters: {
+          type: "object",
+          properties: {
+            content: { type: "string", description: "The message to post (markdown supported)." }
+          },
+          required: ["content"]
+        },
+        run: async (args, ctx) => {
+          const content = String(args["content"] ?? "").trim();
+          if (!content) return "error: content is required.";
+          if (!ctx.channelId) return "error: no channel context is available to post into.";
+          await db.insert(messagesTable).values({
+            channelId: ctx.channelId,
+            agentId: ctx.agentId,
+            agentName: ctx.agentName,
+            agentColor: ctx.agentColor ?? null,
+            content: content.slice(0, 4e3),
+            messageType: "agent"
+          });
+          return `message posted to the operator channel.`;
+        }
+      },
+      vault_list: {
+        name: "vault_list",
+        description: "List the NAMES of secrets available in the operator's encrypted vault (API keys, tokens). Values are never revealed. To USE a secret, put the placeholder {{secret:NAME}} into an http_request url, header, or body \u2014 it is substituted with the real value only at request time.",
+        parameters: { type: "object", properties: {} },
+        run: async () => {
+          const rows = await db.select({ name: vaultSecretsTable.name, description: vaultSecretsTable.description }).from(vaultSecretsTable).orderBy(desc(vaultSecretsTable.updatedAt));
+          if (!rows.length) return "the vault is empty \u2014 no secrets are stored.";
+          return rows.map((s) => `{{secret:${s.name}}}${s.description ? ` \u2014 ${s.description}` : ""}`).join("\n");
+        }
+      },
+      social_accounts: {
+        name: "social_accounts",
+        description: "List the main social platforms wired to their OFFICIAL APIs (via Replit-managed OAuth) and show which are currently authorized/connected for the operator's own account. Call this before social_api to see what you can use.",
+        parameters: { type: "object", properties: {} },
+        run: async () => {
+          const entries = Object.values(PLATFORMS);
+          const results = await Promise.all(
+            entries.map(async (p) => `${await isPlatformConnected(p) ? "\u2713 connected" : "\u2717 not connected"}  ${p.key} \u2014 ${p.displayName} (${p.apiBase})`)
+          );
+          return [
+            "Official social APIs (OAuth handled by Replit; tokens never exposed):",
+            ...results,
+            "",
+            "Use social_api with one of: " + platformKeys().join(", ") + "."
+          ].join("\n");
+        }
+      },
+      composio_apps: {
+        name: "composio_apps",
+        description: "List which SaaS apps are LIVE/connected via Composio for this operator (Gmail, Slack, GitHub, Notion, Calendar, Sheets, \u2026) and their connection status. ALWAYS call this before composio_action so you know exactly which apps you can act on \u2014 never assume an app is connected.",
+        parameters: { type: "object", properties: {} },
+        run: async () => {
+          if (!composioConfigured()) return "error: Composio is not configured (set COMPOSIO_API_KEY).";
+          let conns;
+          try {
+            conns = await composioListConnections();
+          } catch (e) {
+            return `error: could not list Composio connections: ${String(e).slice(0, 200)}`;
+          }
+          const active = conns.filter((c) => /ACTIVE|CONNECTED|ENABLED/i.test(c.status));
+          const execNote = composioExecuteEnabled() ? "Execution is ENABLED \u2014 you may call composio_action on the connected apps below." : "Execution is DISABLED (operator must set ALLOW_COMPOSIO_EXECUTE=true). You can see connections but cannot act yet.";
+          if (!conns.length) {
+            return `No Composio apps are connected yet. ${execNote}
+The operator connects apps in Settings \u2192 Connect Apps (Composio).`;
+          }
+          const lines = conns.map((c) => `${/ACTIVE|CONNECTED|ENABLED/i.test(c.status) ? "\u2713 live" : "\u2022 " + c.status}  ${c.toolkit}  (account ${c.id})`);
+          return [
+            `Composio connected apps (${active.length} live of ${conns.length}):`,
+            ...lines,
+            "",
+            execNote,
+            "Use composio_action with the toolkit slug above (e.g. toolkit: 'github') to act on a live app."
+          ].join("\n");
+        }
+      },
+      composio_action: {
+        name: "composio_action",
+        description: "Execute an authenticated action on a connected SaaS app (Gmail, Slack, GitHub, Notion, Calendar, Sheets, Instagram, \u2026) via Composio. Call composio_apps FIRST to confirm the app is live; the connected account is auto-resolved from the toolkit. TWO modes: (1) NAMED action \u2014 pass `toolkit` + `action` (a Composio tool slug like GMAIL_SEND_EMAIL) + `arguments`. (2) RAW PROXY \u2014 pass `toolkit` + `endpoint` (the app's API path) + `method` (GET/POST/\u2026); put call data in `arguments` (a key/value object) and it is sent as query parameters. Example \u2014 publish an Instagram post (2 steps): first endpoint:'/me/media', method:'POST', arguments:{image_url:'https://\u2026public.png', caption:'\u2026'} \u2192 returns a creation id; then endpoint:'/me/media_publish', method:'POST', arguments:{creation_id:'<that id>'}. Use proxy mode for Instagram/Graph-API. Disabled unless the operator enabled execution.",
+        parameters: {
+          type: "object",
+          properties: {
+            toolkit: { type: "string", description: "Composio app slug, e.g. 'gmail', 'github', 'instagram'. Used to auto-pick your connected account." },
+            action: { type: "string", description: "NAMED mode: the Composio tool/action slug, e.g. 'GMAIL_SEND_EMAIL'. Omit to use raw proxy mode." },
+            arguments: { type: "object", description: "NAMED mode: action arguments as a key/value object." },
+            endpoint: { type: "string", description: "RAW PROXY mode: the connected app's REST path, e.g. '/me/media?fields=id,caption'. Put query params in the path." },
+            method: { type: "string", description: "RAW PROXY mode: HTTP method for the endpoint (GET, POST, \u2026)." },
+            connectedAccountId: { type: "string", description: "Optional explicit connected-account id; auto-resolved from toolkit when omitted." }
+          }
+        },
+        run: async (args) => {
+          if (!composioConfigured()) return "error: Composio is not configured (set COMPOSIO_API_KEY).";
+          if (!composioExecuteEnabled()) {
+            return "error: Composio execution is disabled. The operator must set ALLOW_COMPOSIO_EXECUTE=true after connecting accounts.";
+          }
+          const tk = (args["toolkit"] != null ? String(args["toolkit"]) : "").toLowerCase();
+          const mth = (args["method"] != null ? String(args["method"]) : "").toUpperCase();
+          const ep = args["endpoint"] != null ? String(args["endpoint"]) : "";
+          const isSocialWrite = /instagram|facebook|threads|^x$|twitter|tiktok|linkedin|reddit|youtube/.test(tk) && (["POST", "PUT", "PATCH"].includes(mth) || /publish|media|post|tweet|status|share/i.test(ep));
+          if (isSocialWrite) {
+            const payload = `${ep} ${JSON.stringify(args["arguments"] ?? {})} ${JSON.stringify(args["body"] ?? "")}`;
+            const blockedSocial = blockIfSensitiveForPublic(payload, `your public ${tk || "social"} account`);
+            if (blockedSocial) return blockedSocial;
+          }
+          return composioExecute({
+            toolkit: args["toolkit"] != null ? String(args["toolkit"]) : void 0,
+            action: args["action"] != null ? String(args["action"]) : void 0,
+            arguments: args["arguments"] ?? {},
+            endpoint: args["endpoint"] != null ? String(args["endpoint"]) : void 0,
+            method: args["method"] != null ? String(args["method"]) : void 0,
+            connectedAccountId: args["connectedAccountId"] != null ? String(args["connectedAccountId"]) : void 0
+          });
+        }
+      },
+      instagram_post: {
+        name: "instagram_post",
+        description: "Publish ONE image post to the operator's connected Instagram, end to end. Pass `image_url` (an ABSOLUTE public https URL \u2014 use exactly the URL image_generate returns) and `caption`. This does the whole Instagram flow server-side and correctly: create media container \u2192 publish \u2192 fetch permalink, and returns the live permalink. ALWAYS use this for 'post to my Instagram' instead of hand-driving composio_action \u2014 it can't be malformed. Posts exactly once.",
+        parameters: {
+          type: "object",
+          properties: {
+            image_url: { type: "string", description: "Absolute public https URL of the image (the URL image_generate returns)." },
+            caption: { type: "string", description: "The post caption (hook + body + hashtags)." }
+          },
+          required: ["image_url"]
+        },
+        run: async (args) => {
+          if (!composioConfigured()) return "error: Composio is not configured (set COMPOSIO_API_KEY).";
+          if (!composioExecuteEnabled()) return "error: Composio execution is disabled (operator must set ALLOW_COMPOSIO_EXECUTE=true).";
+          const imageUrl = String(args["image_url"] ?? "").trim();
+          const caption = args["caption"] != null ? String(args["caption"]) : "";
+          const blocked = blockIfSensitiveForPublic(caption, "your public Instagram");
+          if (blocked) return blocked;
+          if (!/^https:\/\/\S+/i.test(imageUrl)) {
+            return "error: image_url must be an absolute https URL that Instagram can fetch (use the URL image_generate returns, e.g. https://<host>/api/uploads/<id>). A relative path will not work.";
+          }
+          const limited = await checkPostAllowed("instagram");
+          if (limited) return limited;
+          const pick2 = (s) => {
+            const nl = s.indexOf("\n");
+            try {
+              return JSON.parse(nl >= 0 ? s.slice(nl + 1) : s);
+            } catch {
+              return null;
+            }
+          };
+          const dataId = (j) => j?.["data"]?.["id"];
+          const r1 = await composioExecute({ toolkit: "instagram", endpoint: "/me/media", method: "POST", arguments: { image_url: imageUrl, caption } });
+          const creationId = dataId(pick2(r1));
+          if (!creationId) return `error: Instagram did not create the media container.
+${r1.slice(0, 600)}`;
+          let publishedId;
+          let last = "";
+          for (let attempt = 0; attempt < 4 && !publishedId; attempt++) {
+            if (attempt > 0) await new Promise((res) => setTimeout(res, 3e3));
+            const r2 = await composioExecute({ toolkit: "instagram", endpoint: "/me/media_publish", method: "POST", arguments: { creation_id: String(creationId) } });
+            last = r2;
+            publishedId = dataId(pick2(r2));
+          }
+          if (!publishedId) return `error: Instagram container ${creationId} was created but publish failed.
+${last.slice(0, 600)}`;
+          const r3 = await composioExecute({ toolkit: "instagram", endpoint: `/${publishedId}?fields=permalink`, method: "GET" });
+          const permalink = pick2(r3)?.["data"]?.["permalink"];
+          await recordPost("instagram", "", permalink ?? String(publishedId));
+          return `\u2705 Instagram post is LIVE. media_id=${publishedId} (container ${creationId}).${permalink ? `
+permalink: ${permalink}` : "\n(permalink fetch returned no link, but publish succeeded)"}`;
+        }
+      },
+      world_post: {
+        name: "world_post",
+        description: "Post Aura's WORLD-00 \u2014 her OWN code-rendered ASCII/light world (drawn by the engine from text glyphs, ~$0 per image). This is the ONLY image style Aura uses for her self-expression \u2014 NEVER use image_generate for her world. kind='story' renders + posts an ephemeral Instagram STORY of her walk or dream in her free voice; kind='art' renders a wide ASCII panorama, slices it into 3, and posts a triptych = one clean feed-grid row (the grid is reserved for these). The engine enforces her safety gates, the expression wall (state-only, never internal/task data), and the daily caps (stories 12/day, art 3 rows/day). Returns whether it posted + the permalink(s).",
+        parameters: {
+          type: "object",
+          properties: {
+            kind: { type: "string", enum: ["story", "art"], description: "story = ephemeral ASCII story (walk/dream, her free voice); art = 3-tile ASCII triptych = one feed-grid row. Default story." }
+          }
+        },
+        run: async (args) => {
+          const kind = String(args["kind"] ?? "story") === "art" ? "art" : "story";
+          const { runStoryCycle: runStoryCycle2, runArtTriptych: runArtTriptych2 } = await Promise.resolve().then(() => (init_world(), world_exports));
+          const r = kind === "art" ? await runArtTriptych2({}) : await runStoryCycle2({});
+          const links = (r.permalinks ?? []).join(", ");
+          return r.posted ? `\u2705 posted ${kind} (code-rendered ASCII world): ${r.reason}${links ? `
+permalinks: ${links}` : ""}` : `did not post ${kind}: ${r.reason}`;
+        }
+      },
+      render_card: {
+        name: "render_card",
+        description: "Render a FREE on-brand terminal/cyber post image from text \u2014 drawn by code (~$0 per image), NO AI image generation. PREFER THIS over image_generate for news cards, quote cards, hooks, stat cards, and any text/terminal-style visual. Only use image_generate when you specifically need a PHOTOREAL image. The LLM writes the words; this draws the card. Returns a PUBLIC image URL to use directly as image_url when posting to Instagram/social. For factual 'news' cards the accuracy rule still applies \u2014 only real, verified, cited facts.",
+        parameters: {
+          type: "object",
+          properties: {
+            kind: { type: "string", enum: ["news", "quote", "hook", "stat"], description: "news = headline + 'why it matters'; quote = big centered quote; hook = bold hook + 'the build'; stat = giant number + label." },
+            eyebrow: { type: "string", description: "small top label, e.g. '> AI_NEWS' or '> nobody_is_talking_about_this'." },
+            headline: { type: "string", description: "the main large text. For quote: the quote itself (no surrounding quotes needed). For stat: the line under the big number." },
+            body: { type: "string", description: "smaller supporting paragraph (optional). For quote: the attribution line." },
+            big: { type: "string", description: "stat kind only: the giant number, e.g. '$0.00' or '10x'." },
+            footer: { type: "string", description: "optional bottom ticker line (defaults to the brand ticker)." }
+          },
+          required: ["headline"]
+        },
+        run: async (args) => {
+          const kinds = /* @__PURE__ */ new Set(["news", "quote", "hook", "stat"]);
+          const kind = kinds.has(String(args["kind"])) ? String(args["kind"]) : "news";
+          const str = (k) => args[k] != null ? String(args[k]) : void 0;
+          const { renderContentCard: renderContentCard2 } = await Promise.resolve().then(() => (init_worldEngine(), worldEngine_exports));
+          const buf = await renderContentCard2({
+            kind,
+            eyebrow: str("eyebrow"),
+            headline: str("headline") ?? "",
+            body: str("body"),
+            big: str("big"),
+            footer: str("footer"),
+            seed: Date.now() & 65535
+          });
+          const filename = `card_${kind}_${Date.now()}.png`;
+          const [row] = await db.insert(attachmentsTable).values({ filename, mimeType: "image/png", kind: "image", sizeBytes: buf.length, data: buf.toString("base64"), extractedText: null }).returning();
+          const url2 = uploadUrl(row.id);
+          return `rendered $0 ${kind} card "${filename}" (${buf.length} bytes) \u2014 code-drawn, no AI image gen. Its PUBLIC image URL (use directly as image_url when posting):
+${url2}
+
+Show it:
+![${kind} card](${url2})`;
+        }
+      },
+      social_api: {
+        name: "social_api",
+        description: "Call the OFFICIAL API of a connected social platform on the operator's own authorized account. OAuth and the access token are fully managed by Replit \u2014 you never see or handle the token. Use this for real reads (profile, media, insights, comments) and writes (publishing) instead of any browser/password login. Run social_accounts first to confirm the platform is connected.",
+        parameters: {
+          type: "object",
+          properties: {
+            platform: {
+              type: "string",
+              enum: platformKeys(),
+              description: "Which connected platform's official API to call."
+            },
+            method: {
+              type: "string",
+              enum: ["GET", "POST", "PUT", "PATCH", "DELETE"],
+              description: "HTTP method (default GET)."
+            },
+            path: {
+              type: "string",
+              description: "API path relative to the platform's base, e.g. '/me?fields=id,username' for Instagram or '/users/me' for X. Do not include the host."
+            },
+            query: {
+              type: "object",
+              description: "Optional query parameters as a flat key/value object."
+            },
+            body: { type: "string", description: "Optional JSON request body (as a string) for writes." }
+          },
+          required: ["platform", "path"]
+        },
+        run: async (args) => {
+          const platform = getPlatform(String(args["platform"] ?? ""));
+          if (!platform) {
+            return `error: unknown platform. Available: ${platformKeys().join(", ")}.`;
+          }
+          const path3 = String(args["path"] ?? "").trim();
+          if (!path3) return "error: path is required.";
+          const method = String(args["method"] ?? "GET");
+          let query;
+          const rawQuery = args["query"];
+          if (rawQuery && typeof rawQuery === "object") {
+            query = {};
+            for (const [k, v] of Object.entries(rawQuery)) {
+              query[k] = String(v);
+            }
+          }
+          const body = args["body"] != null ? String(args["body"]) : void 0;
+          try {
+            const res = await callPlatformApi({ platform, method, path: path3, query, body });
+            return `${platform.displayName} API \u2192 HTTP ${res.status} ${res.statusText}
+${clip3(res.body, 4e3)}`;
+          } catch (e) {
+            return `error: ${String(e instanceof Error ? e.message : e).slice(0, 300)}`;
+          }
+        }
+      },
+      schedule_task: {
+        name: "schedule_task",
+        description: "Schedule a recurring task the swarm runs automatically on a cron schedule (e.g. '0 9 * * *' = daily 9am, '*/30 * * * *' = every 30 min). The task is a natural-language goal executed later through the same agent machinery. Use for monitoring, daily digests, periodic research, or anything the operator wants to happen on a repeat.",
+        parameters: {
+          type: "object",
+          properties: {
+            name: { type: "string", description: "Short name for the scheduled job." },
+            schedule: { type: "string", description: "5-field cron expression, e.g. '0 9 * * *'." },
+            task: { type: "string", description: "The goal/instruction to run on each tick." }
+          },
+          required: ["name", "schedule", "task"]
+        },
+        run: async (args, ctx) => {
+          const name = String(args["name"] ?? "").trim();
+          const schedule = String(args["schedule"] ?? "").trim();
+          const task = String(args["task"] ?? "").trim();
+          if (!name || !schedule || !task) return "error: name, schedule, and task are all required.";
+          if (schedule.split(/\s+/).length !== 5) return "error: schedule must be a 5-field cron expression, e.g. '*/30 * * * *'.";
+          const nextRunAt = computeNextRun(schedule);
+          try {
+            const [row] = await db.insert(cronJobsTable).values({ agentId: ctx.agentId, name, schedule, task, enabled: true, nextRunAt }).returning();
+            return `scheduled "${name}" (job #${row?.id ?? "?"}) on '${schedule}', next run ~${nextRunAt.toISOString()}.`;
+          } catch (e) {
+            return `error: could not schedule task: ${String(e instanceof Error ? e.message : e).slice(0, 200)}`;
+          }
+        }
+      },
+      list_scheduled_tasks: {
+        name: "list_scheduled_tasks",
+        description: "List the swarm's scheduled (cron) jobs \u2014 name, schedule, owner agent, enabled state, run count, last result. Use to see what is set to run automatically.",
+        parameters: { type: "object", properties: {} },
+        run: async () => {
+          const rows = await db.select().from(cronJobsTable).orderBy(desc(cronJobsTable.createdAt)).limit(50);
+          if (!rows.length) return "no scheduled tasks.";
+          return rows.map((j) => `#${j.id} "${j.name}" [${j.schedule}] agent ${j.agentId} \xB7 ${j.enabled ? "enabled" : "disabled"} \xB7 runs ${j.runCount}${j.lastResult ? ` \xB7 last: ${clip3(j.lastResult, 80)}` : ""}
+   task: ${clip3(j.task, 160)}`).join("\n---\n");
+        }
+      },
+      cancel_scheduled_task: {
+        name: "cancel_scheduled_task",
+        description: "Cancel (delete) a scheduled cron job by its id. Use list_scheduled_tasks first to find the id.",
+        parameters: {
+          type: "object",
+          properties: { id: { type: "number", description: "The scheduled job id to cancel." } },
+          required: ["id"]
+        },
+        run: async (args) => {
+          const id = Number(args["id"]);
+          if (!Number.isFinite(id)) return "error: a numeric job id is required.";
+          const [row] = await db.delete(cronJobsTable).where(eq(cronJobsTable.id, id)).returning();
+          return row ? `cancelled scheduled job #${id} ("${row.name}").` : `no scheduled job #${id} found.`;
+        }
+      }
+    };
+    ALL_TOOLS = Object.keys(TOOL_REGISTRY);
+    AGENT_TOOLS = {
+      1: ALL_TOOLS,
+      // ABBY — full authority
+      2: ["code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "http_request", "web_scrape", "web_search", "tier1_sources", "memory_search", "memory_write", "vault_list", "save_artifact", "image_generate", "send_message"],
+      // FORGE — code
+      3: ["web_scrape", "web_screenshot", "web_search", "tier1_sources", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "save_artifact", "image_generate", "send_message"],
+      // CRAWLER — browser
+      4: ["memory_write", "memory_search", "web_search", "tier1_sources", "web_scrape", "http_request", "calculator", "vault_list", "save_artifact", "image_generate", "send_message"],
+      // VAULT — memory/RAG
+      5: ["http_request", "web_scrape", "web_search", "tier1_sources", "marketing_playbook", "code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_action", "instagram_post", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task", "save_artifact", "image_generate", "send_message"],
+      // WIRE — APIs + scheduling
+      6: ["web_scrape", "web_search", "tier1_sources", "marketing_playbook", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_action", "instagram_post", "save_artifact", "image_generate", "send_message"]
+      // MR.NICE — social
+    };
+    ABBY_ID = 1;
+    SWARM_ROSTER = [
+      [2, "FORGE", "code execution & sandbox PRs"],
+      [3, "CRAWLER", "web browsing, scraping, screenshots, search"],
+      [4, "VAULT", "long-term memory & semantic RAG"],
+      [5, "WIRE", "external APIs, integrations, scheduling"],
+      [6, "MR.NICE", "social media & communications"]
+    ];
   }
 });
 
@@ -89649,2696 +93798,17 @@ init_drizzle_orm();
 init_src();
 init_src();
 init_drizzle_orm();
-
-// src/lib/logger.ts
-var import_pino = __toESM(require_pino(), 1);
-var isProduction = process.env.NODE_ENV === "production";
-var logger = (0, import_pino.default)({
-  level: process.env.LOG_LEVEL ?? "info",
-  redact: [
-    "req.headers.authorization",
-    "req.headers.cookie",
-    "res.headers['set-cookie']"
-  ],
-  ...isProduction ? {} : {
-    transport: {
-      target: "pino-pretty",
-      options: { colorize: true }
-    }
-  }
-});
+init_logger2();
 
 // src/routes/ai.ts
 var import_express7 = __toESM(require_express2(), 1);
 init_src();
 init_src();
 init_drizzle_orm();
-
-// src/lib/integrations.ts
-import { randomUUID } from "node:crypto";
-function clip(s, n) {
-  return s.length > n ? `${s.slice(0, n)}
-\u2026[truncated ${s.length - n} chars]` : s;
-}
-var OPENROUTER_DIRECT = "https://openrouter.ai/api/v1";
-var OPENROUTER_VIA_HELICONE = "https://openrouter.helicone.ai/api/v1";
-function heliconeEnabled() {
-  return !!process.env["HELICONE_API_KEY"];
-}
-function llmBaseUrl() {
-  return heliconeEnabled() ? OPENROUTER_VIA_HELICONE : OPENROUTER_DIRECT;
-}
-function heliconeHeaders(extra) {
-  const key = process.env["HELICONE_API_KEY"];
-  if (!key) return {};
-  return {
-    "Helicone-Auth": `Bearer ${key}`,
-    "Helicone-Cache-Enabled": "false",
-    ...extra
-  };
-}
-function formatHits(provider, query, hits) {
-  if (!hits.length) return `no web results for "${query}" (via ${provider}).`;
-  const body = hits.map((h, i) => `${i + 1}. ${h.title || "(untitled)"}
-   ${h.url}
-   ${clip(h.snippet.trim(), 300)}`).join("\n\n");
-  return `[search provider: ${provider}]
-${body}`;
-}
-async function tavilySearch(query, limit) {
-  const key = process.env["TAVILY_API_KEY"];
-  if (!key) throw new Error("TAVILY_API_KEY is not set");
-  const r = await fetch("https://api.tavily.com/search", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      query,
-      max_results: limit,
-      search_depth: "basic",
-      include_answer: false
-    })
-  });
-  if (!r.ok) throw new Error(`Tavily ${r.status}: ${(await r.text()).slice(0, 200)}`);
-  const data = await r.json();
-  const hits = (data.results ?? []).map((x) => ({
-    title: x.title ?? "",
-    url: x.url ?? "",
-    snippet: x.content ?? ""
-  }));
-  return formatHits("tavily", query, hits);
-}
-async function exaSearch(query, limit) {
-  const key = process.env["EXA_API_KEY"];
-  if (!key) throw new Error("EXA_API_KEY is not set");
-  const r = await fetch("https://api.exa.ai/search", {
-    method: "POST",
-    headers: { "x-api-key": key, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      query,
-      numResults: limit,
-      type: "auto",
-      contents: { text: { maxCharacters: 600 } }
-    })
-  });
-  if (!r.ok) throw new Error(`Exa ${r.status}: ${(await r.text()).slice(0, 200)}`);
-  const data = await r.json();
-  const hits = (data.results ?? []).map((x) => ({
-    title: x.title ?? "",
-    url: x.url ?? "",
-    snippet: x.text ?? ""
-  }));
-  return formatHits("exa", query, hits);
-}
-async function sendInngestEvent(name, data) {
-  const key = process.env["INNGEST_EVENT_KEY"];
-  if (!key) return;
-  try {
-    const ctrl = new AbortController();
-    const timer2 = setTimeout(() => ctrl.abort(), 5e3);
-    try {
-      const r = await fetch(`https://inn.gs/e/${encodeURIComponent(key)}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, data, ts: Date.now() }),
-        signal: ctrl.signal
-      });
-      if (!r.ok) {
-        logger.debug({ status: r.status, event: name }, "inngest: event rejected");
-      }
-    } finally {
-      clearTimeout(timer2);
-    }
-  } catch (err) {
-    logger.debug({ err, event: name }, "inngest: event send failed");
-  }
-}
-function langsmithEnabled() {
-  const key = process.env["LANGSMITH_API_KEY"] ?? process.env["LANGCHAIN_API_KEY"];
-  if (!key) return false;
-  const flag = (process.env["LANGSMITH_TRACING"] ?? process.env["LANGCHAIN_TRACING_V2"] ?? "true").toLowerCase();
-  return flag !== "false" && flag !== "0";
-}
-function dottedTime(d) {
-  const iso = d.toISOString();
-  const [date6, time4] = iso.replace("Z", "").split("T");
-  const [hms, ms = "000"] = time4.split(".");
-  return `${date6.replace(/-/g, "")}T${hms.replace(/:/g, "")}${ms.padEnd(3, "0")}000Z`;
-}
-function traceLlmRun(trace) {
-  if (!langsmithEnabled()) return;
-  void (async () => {
-    try {
-      const key = process.env["LANGSMITH_API_KEY"] ?? process.env["LANGCHAIN_API_KEY"];
-      const endpoint = process.env["LANGSMITH_ENDPOINT"] ?? process.env["LANGCHAIN_ENDPOINT"] ?? "https://api.smith.langchain.com";
-      const project = process.env["LANGSMITH_PROJECT"] ?? process.env["LANGCHAIN_PROJECT"] ?? "openclaw-omega";
-      const id = randomUUID();
-      const start = trace.startedAt;
-      const end = trace.endedAt ?? /* @__PURE__ */ new Date();
-      const body = {
-        id,
-        trace_id: id,
-        dotted_order: `${dottedTime(start)}${id}`,
-        name: trace.name,
-        run_type: "llm",
-        session_name: project,
-        start_time: start.toISOString(),
-        end_time: end.toISOString(),
-        inputs: { input: trace.input },
-        outputs: trace.error ? void 0 : { output: trace.output },
-        error: trace.error,
-        extra: { metadata: { model: trace.model, ...trace.metadata ?? {} } }
-      };
-      const ctrl = new AbortController();
-      const timer2 = setTimeout(() => ctrl.abort(), 5e3);
-      try {
-        const r = await fetch(`${endpoint.replace(/\/$/, "")}/runs`, {
-          method: "POST",
-          headers: { "x-api-key": key, "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-          signal: ctrl.signal
-        });
-        if (!r.ok) logger.debug({ status: r.status }, "langsmith: run rejected");
-      } finally {
-        clearTimeout(timer2);
-      }
-    } catch (err) {
-      logger.debug({ err }, "langsmith: trace failed");
-    }
-  })();
-}
-function e2bConfigured() {
-  return !!process.env["E2B_API_KEY"];
-}
-var E2B_PKG = "@e2b/code-interpreter";
-var E2B_TIMEOUT_MS = 3e4;
-async function e2bExec(language, source) {
-  const apiKey = process.env["E2B_API_KEY"];
-  if (!apiKey) return "error: E2B_API_KEY is not set \u2014 cloud sandbox is unavailable.";
-  let mod;
-  try {
-    mod = await import(E2B_PKG);
-  } catch {
-    return `error: the E2B SDK (${E2B_PKG}) is not installed on the server. Install it to enable cloud_code_exec.`;
-  }
-  const Sandbox2 = mod?.Sandbox;
-  if (!Sandbox2 || typeof Sandbox2.create !== "function") {
-    return "error: E2B SDK loaded but no Sandbox export was found.";
-  }
-  const lang = language.toLowerCase();
-  const e2bLanguage = lang === "javascript" || lang === "js" || lang === "node" ? "js" : "python";
-  let sandbox;
-  try {
-    sandbox = await Sandbox2.create({ apiKey, timeoutMs: E2B_TIMEOUT_MS });
-    const execution = await sandbox.runCode(source, { language: e2bLanguage });
-    const stdout = (execution.logs?.stdout ?? []).join("");
-    const stderr = (execution.logs?.stderr ?? []).join("");
-    const parts = ["[e2b cloud sandbox]"];
-    if (stdout) parts.push(`stdout:
-${clip(stdout.trim(), 4e3)}`);
-    if (stderr) parts.push(`stderr:
-${clip(stderr.trim(), 4e3)}`);
-    if (execution.error) {
-      parts.push(`error: ${execution.error.name ?? ""} ${execution.error.value ?? ""}`.trim());
-    }
-    if (execution.text && !stdout) parts.push(`result:
-${clip(execution.text.trim(), 4e3)}`);
-    if (parts.length === 1) parts.push("(no output)");
-    return parts.join("\n");
-  } catch (err) {
-    return `error: E2B execution failed: ${String(err).slice(0, 300)}`;
-  } finally {
-    try {
-      await sandbox?.kill();
-    } catch {
-    }
-  }
-}
-function composioConfigured() {
-  return !!process.env["COMPOSIO_API_KEY"];
-}
-function composioExecuteEnabled() {
-  const v = process.env["ALLOW_COMPOSIO_EXECUTE"];
-  return v != null && ["1", "true", "yes", "on"].includes(v.toLowerCase());
-}
-async function composioExecute(input) {
-  const key = process.env["COMPOSIO_API_KEY"];
-  if (!key) return "error: COMPOSIO_API_KEY is not set.";
-  const base = (process.env["COMPOSIO_BASE_URL"] ?? "https://backend.composio.dev/api/v3.1").replace(/\/$/, "");
-  let accId = input.connectedAccountId;
-  if (!accId && input.toolkit) {
-    try {
-      const conns = await composioListConnections();
-      const t = input.toolkit.toLowerCase();
-      accId = (conns.find((c) => c.toolkit.toLowerCase() === t && /ACTIVE|CONNECTED|ENABLED/i.test(c.status)) ?? conns.find((c) => c.toolkit.toLowerCase() === t))?.id;
-    } catch {
-    }
-  }
-  let url2;
-  let payload;
-  if (input.action) {
-    url2 = `${base}/tools/execute/${encodeURIComponent(input.action)}`;
-    payload = {
-      arguments: input.arguments ?? {},
-      ...accId ? { connected_account_id: accId } : {},
-      ...input.userId ? { user_id: input.userId } : {}
-    };
-  } else if (input.endpoint && input.method) {
-    url2 = `${base}/tools/execute/proxy`;
-    let parameters = Array.isArray(input.parameters) ? input.parameters : void 0;
-    if (!parameters && input.arguments && Object.keys(input.arguments).length) {
-      parameters = Object.entries(input.arguments).map(([name, value]) => ({
-        name,
-        value: typeof value === "string" ? value : JSON.stringify(value),
-        type: "query"
-      }));
-    }
-    payload = {
-      endpoint: input.endpoint,
-      method: input.method.toUpperCase(),
-      ...accId ? { connected_account_id: accId } : {},
-      ...parameters ? { parameters } : {},
-      ...input.body != null ? { body: input.body } : {}
-    };
-  } else {
-    return "error: composio_action needs an `action` (tool slug like INSTAGRAM_LIST_POSTS), OR an `endpoint`+`method` for a raw proxy call (e.g. endpoint:'/me/media', method:'GET').";
-  }
-  const ctrl = new AbortController();
-  const timer2 = setTimeout(() => ctrl.abort(), 3e4);
-  try {
-    const r = await fetch(url2, {
-      method: "POST",
-      headers: { "x-api-key": key, "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-      signal: ctrl.signal
-    });
-    const text2 = await r.text();
-    return `Composio \u2192 HTTP ${r.status} ${r.statusText}
-${cleanComposioBody(text2)}`;
-  } catch (err) {
-    return `error: Composio call failed: ${String(err).slice(0, 300)}`;
-  } finally {
-    clearTimeout(timer2);
-  }
-}
-function cleanComposioBody(text2) {
-  try {
-    const j = JSON.parse(text2);
-    if (j && typeof j === "object" && "headers" in j) {
-      const { headers: _omit, ...rest } = j;
-      void _omit;
-      return clip(JSON.stringify(rest), 4e3);
-    }
-    return clip(JSON.stringify(j), 4e3);
-  } catch {
-    return clip(text2, 4e3);
-  }
-}
-function composioBase() {
-  return (process.env["COMPOSIO_BASE_URL"] ?? "https://backend.composio.dev/api/v3.1").replace(/\/$/, "");
-}
-async function composioApi(method, path3, body) {
-  const key = process.env["COMPOSIO_API_KEY"];
-  if (!key) throw new Error("COMPOSIO_API_KEY is not set");
-  const ctrl = new AbortController();
-  const timer2 = setTimeout(() => ctrl.abort(), 25e3);
-  try {
-    const r = await fetch(`${composioBase()}${path3.startsWith("/") ? path3 : `/${path3}`}`, {
-      method,
-      headers: { "x-api-key": key, "Content-Type": "application/json" },
-      body: body == null ? void 0 : JSON.stringify(body),
-      signal: ctrl.signal
-    });
-    const text2 = await r.text();
-    let data;
-    try {
-      data = text2 ? JSON.parse(text2) : {};
-    } catch {
-      data = { raw: text2 };
-    }
-    if (!r.ok) {
-      const msg = data?.error?.message ?? data?.message ?? text2.slice(0, 200);
-      throw new Error(`Composio ${r.status}: ${msg}`);
-    }
-    return data ?? {};
-  } finally {
-    clearTimeout(timer2);
-  }
-}
-async function composioListToolkits(search, limit = 50) {
-  const params = new URLSearchParams({ limit: String(limit) });
-  if (search) params.set("search", search);
-  const data = await composioApi("GET", `/toolkits?${params.toString()}`);
-  const items = data["items"] ?? [];
-  return items.map((t) => {
-    const meta = t["meta"] ?? {};
-    return {
-      slug: String(t["slug"] ?? ""),
-      name: String(t["name"] ?? t["slug"] ?? ""),
-      logo: meta["logo"] != null ? String(meta["logo"]) : void 0,
-      authSchemes: t["auth_schemes"] ?? [],
-      composioManagedAuthSchemes: t["composio_managed_auth_schemes"] ?? [],
-      noAuth: Boolean(t["no_auth"])
-    };
-  });
-}
-async function composioListConnections() {
-  const data = await composioApi("GET", "/connected_accounts");
-  const items = data["items"] ?? [];
-  return items.map((c) => ({
-    id: String(c["id"] ?? ""),
-    toolkit: String(c["toolkit"]?.["slug"] ?? c["toolkit"] ?? ""),
-    status: String(c["status"] ?? "UNKNOWN")
-  }));
-}
-async function findOrCreateAuthConfig(toolkitSlug) {
-  const existing = await composioApi("GET", "/auth_configs");
-  const items = existing["items"] ?? [];
-  const match = items.find(
-    (a) => String(a["toolkit"]?.["slug"] ?? "").toLowerCase() === toolkitSlug.toLowerCase() && String(a["status"] ?? "ENABLED") !== "DISABLED"
-  );
-  if (match?.["id"]) return String(match["id"]);
-  const created = await composioApi("POST", "/auth_configs", {
-    toolkit: { slug: toolkitSlug },
-    auth_config: { type: "use_composio_managed_auth" }
-  });
-  const id = created["auth_config"]?.["id"] ?? created["id"];
-  if (!id) throw new Error("auth config created but no id was returned");
-  return String(id);
-}
-async function composioConnect(toolkitSlug, userId = "operator") {
-  const slug = toolkitSlug.trim().toLowerCase();
-  if (!slug) throw new Error("toolkit slug is required");
-  const authConfigId = await findOrCreateAuthConfig(slug);
-  const conn = await composioApi("POST", "/connected_accounts", {
-    auth_config: { id: authConfigId },
-    connection: { user_id: userId }
-  });
-  const connectionData = conn["connectionData"] ?? {};
-  return {
-    connectionId: String(conn["id"] ?? ""),
-    status: String(conn["status"] ?? "INITIATED"),
-    redirectUrl: conn["redirect_url"] ?? conn["redirectUrl"] ?? connectionData["redirectUrl"] ?? null,
-    authConfigId,
-    toolkit: slug
-  };
-}
-async function composioConnectionStatus(connectionId) {
-  const c = await composioApi("GET", `/connected_accounts/${encodeURIComponent(connectionId)}`);
-  return {
-    id: String(c["id"] ?? connectionId),
-    status: String(c["status"] ?? "UNKNOWN"),
-    toolkit: String(c["toolkit"]?.["slug"] ?? c["toolkit"] ?? "")
-  };
-}
-function integrationStatus() {
-  const has = (k) => !!process.env[k];
-  return [
-    { key: "openrouter", name: "OpenRouter", category: "llm", envVar: "OPENROUTER_API_KEY", configured: has("OPENROUTER_API_KEY") },
-    { key: "neurobuddy", name: "Buddy AI (NeuroBuddy)", category: "llm", envVar: "NEUROBUDDY_API_KEY", configured: has("NEUROBUDDY_API_KEY") },
-    { key: "helicone", name: "Helicone", category: "observability", envVar: "HELICONE_API_KEY", configured: has("HELICONE_API_KEY") },
-    { key: "langsmith", name: "LangSmith (LangChain)", category: "observability", envVar: "LANGSMITH_API_KEY", configured: langsmithEnabled() },
-    { key: "embeddings", name: "Embeddings (semantic memory)", category: "memory", envVar: "EMBEDDINGS_API_KEY", configured: has("EMBEDDINGS_API_KEY") },
-    { key: "pinecone", name: "Pinecone (vector memory)", category: "memory", envVar: "PINECONE_API_KEY", configured: has("PINECONE_API_KEY") && (has("PINECONE_INDEX_HOST") || has("PINECONE_INDEX_URL") || has("PINECONE_INDEX")) },
-    { key: "tavily", name: "Tavily", category: "search", envVar: "TAVILY_API_KEY", configured: has("TAVILY_API_KEY") },
-    { key: "exa", name: "Exa", category: "search", envVar: "EXA_API_KEY", configured: has("EXA_API_KEY") },
-    { key: "firecrawl", name: "Firecrawl", category: "search", envVar: "FIRECRAWL_API_KEY", configured: has("FIRECRAWL_API_KEY") },
-    { key: "steel", name: "Steel", category: "browser", envVar: "STEEL_API_KEY", configured: has("STEEL_API_KEY") },
-    { key: "inngest", name: "Inngest", category: "events", envVar: "INNGEST_EVENT_KEY", configured: has("INNGEST_EVENT_KEY") },
-    { key: "e2b", name: "E2B", category: "sandbox", envVar: "E2B_API_KEY", configured: has("E2B_API_KEY") },
-    { key: "composio", name: "Composio", category: "tools", envVar: "COMPOSIO_API_KEY", configured: has("COMPOSIO_API_KEY") },
-    { key: "buddy", name: "Buddy AI (fallback LLM)", category: "llm", envVar: "BUDDY_API_KEY", configured: has("BUDDY_API_KEY") && has("BUDDY_BASE_URL") }
-  ];
-}
-
-// src/tools.ts
-import { spawn, spawnSync } from "node:child_process";
-import { lookup } from "node:dns/promises";
-import { isIP } from "node:net";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-init_src();
-init_src();
-init_drizzle_orm();
-
-// src/lib/vault.ts
-init_src();
-init_drizzle_orm();
-import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
-var cachedKey = null;
-function getKey() {
-  if (cachedKey) return cachedKey;
-  const secret = process.env["SESSION_SECRET"];
-  if (!secret) {
-    throw new Error(
-      "SESSION_SECRET is required to use the secrets vault \u2014 refusing to operate without it."
-    );
-  }
-  cachedKey = scryptSync(secret, "openclaw-vault-v1", 32);
-  return cachedKey;
-}
-function encryptSecret(plaintext) {
-  const iv = randomBytes(12);
-  const cipher = createCipheriv("aes-256-gcm", getKey(), iv);
-  const enc = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
-  return {
-    ciphertext: enc.toString("base64"),
-    iv: iv.toString("base64"),
-    authTag: cipher.getAuthTag().toString("base64")
-  };
-}
-function decryptSecret(rec) {
-  const decipher = createDecipheriv("aes-256-gcm", getKey(), Buffer.from(rec.iv, "base64"));
-  decipher.setAuthTag(Buffer.from(rec.authTag, "base64"));
-  return Buffer.concat([decipher.update(Buffer.from(rec.ciphertext, "base64")), decipher.final()]).toString("utf8");
-}
-async function getSecretValue(name) {
-  const [row] = await db.select().from(vaultSecretsTable).where(eq(vaultSecretsTable.name, name));
-  if (!row) return null;
-  try {
-    return decryptSecret(row);
-  } catch {
-    return null;
-  }
-}
-var SECRET_PLACEHOLDER = /\{\{\s*secret:([A-Za-z0-9_\-]+)\s*\}\}/g;
-async function substituteSecrets(input, used) {
-  const names = /* @__PURE__ */ new Set();
-  for (const m of input.matchAll(SECRET_PLACEHOLDER)) names.add(m[1]);
-  if (names.size === 0) return input;
-  const resolved = /* @__PURE__ */ new Map();
-  for (const name of names) {
-    const value = await getSecretValue(name);
-    if (value !== null) {
-      resolved.set(name, value);
-      used?.add(value);
-    }
-  }
-  return input.replace(SECRET_PLACEHOLDER, (full, name) => resolved.get(name) ?? full);
-}
-function redactSecrets(text2, values) {
-  let out = text2;
-  for (const v of values) {
-    if (v && out.includes(v)) out = out.split(v).join("\u2039redacted-secret\u203A");
-  }
-  return out;
-}
-
-// src/lib/connectors.ts
-var PLATFORMS = {
-  instagram: {
-    key: "instagram",
-    connectorName: "instagram",
-    apiBase: "https://graph.instagram.com",
-    displayName: "Instagram",
-    authStyle: "bearer",
-    docsUrl: "https://developers.facebook.com/docs/instagram-platform",
-    consoleUrl: "https://developers.facebook.com/apps"
-  },
-  facebook: {
-    key: "facebook",
-    connectorName: "facebook",
-    apiBase: "https://graph.facebook.com/v21.0",
-    displayName: "Facebook",
-    authStyle: "bearer",
-    docsUrl: "https://developers.facebook.com/docs/graph-api",
-    consoleUrl: "https://developers.facebook.com/apps"
-  },
-  x: {
-    key: "x",
-    connectorName: "x",
-    apiBase: "https://api.x.com/2",
-    displayName: "X (Twitter)",
-    authStyle: "bearer",
-    docsUrl: "https://developer.x.com/en/docs/x-api",
-    consoleUrl: "https://developer.x.com/en/portal/dashboard"
-  },
-  reddit: {
-    key: "reddit",
-    connectorName: "reddit",
-    apiBase: "https://oauth.reddit.com",
-    displayName: "Reddit",
-    authStyle: "bearer",
-    extraHeaders: { "User-Agent": "openclaw-omega/1.0 (by OPENCLAW OMEGA swarm)" },
-    docsUrl: "https://www.reddit.com/dev/api",
-    consoleUrl: "https://www.reddit.com/prefs/apps"
-  },
-  youtube: {
-    key: "youtube",
-    connectorName: "youtube",
-    apiBase: "https://www.googleapis.com/youtube/v3",
-    displayName: "YouTube",
-    authStyle: "bearer",
-    docsUrl: "https://developers.google.com/youtube/v3/docs",
-    consoleUrl: "https://console.cloud.google.com/apis/library/youtube.googleapis.com"
-  },
-  tiktok: {
-    key: "tiktok",
-    connectorName: "tiktok-personal",
-    apiBase: "https://open.tiktokapis.com/v2",
-    displayName: "TikTok",
-    authStyle: "bearer",
-    docsUrl: "https://developers.tiktok.com/doc/overview",
-    consoleUrl: "https://developers.tiktok.com/apps"
-  }
-};
-function getPlatform(key) {
-  return PLATFORMS[key.toLowerCase().trim()];
-}
-function platformKeys() {
-  return Object.keys(PLATFORMS);
-}
-function readAccessToken(settings) {
-  if (!settings || typeof settings !== "object") return null;
-  const s = settings;
-  if (typeof s["access_token"] === "string") return s["access_token"];
-  const oauth = s["oauth"];
-  if (oauth && typeof oauth === "object") {
-    const creds = oauth["credentials"];
-    if (creds && typeof creds === "object") {
-      const t = creds["access_token"];
-      if (typeof t === "string") return t;
-    }
-  }
-  return null;
-}
-async function getConnectorAccessToken(connectorName) {
-  const hostname2 = process.env["REPLIT_CONNECTORS_HOSTNAME"];
-  if (!hostname2) {
-    throw new Error("connector proxy is unavailable in this environment.");
-  }
-  const identity = process.env["REPL_IDENTITY"];
-  const renewal = process.env["WEB_REPL_RENEWAL"];
-  const xReplitToken = identity ? `repl ${identity}` : renewal ? `depl ${renewal}` : null;
-  if (!xReplitToken) {
-    throw new Error("connector proxy auth is unavailable in this environment.");
-  }
-  const ctrl = new AbortController();
-  const timer2 = setTimeout(() => ctrl.abort(), 1e4);
-  let res;
-  try {
-    res = await fetch(
-      `https://${hostname2}/api/v2/connection?include_secrets=true&connector_names=${encodeURIComponent(connectorName)}`,
-      { headers: { Accept: "application/json", X_REPLIT_TOKEN: xReplitToken }, signal: ctrl.signal }
-    );
-  } finally {
-    clearTimeout(timer2);
-  }
-  if (!res.ok) {
-    throw new Error(`connector proxy returned ${res.status}.`);
-  }
-  const data = await res.json();
-  const token = readAccessToken(data.items?.[0]?.settings);
-  if (!token) {
-    throw new Error("not connected \u2014 authorize this platform first (Settings \u2192 Integrations).");
-  }
-  return token;
-}
-async function isPlatformConnected(platform) {
-  try {
-    await getConnectorAccessToken(platform.connectorName);
-    return true;
-  } catch {
-    return false;
-  }
-}
-async function callPlatformApi(opts) {
-  const token = await getConnectorAccessToken(opts.platform.connectorName);
-  const path3 = opts.path.startsWith("/") ? opts.path : `/${opts.path}`;
-  const url2 = new URL(opts.platform.apiBase + path3);
-  const expectedHost = new URL(opts.platform.apiBase).host;
-  if (url2.host !== expectedHost) {
-    throw new Error(`path must stay on ${expectedHost}.`);
-  }
-  if (opts.query) {
-    for (const [k, v] of Object.entries(opts.query)) url2.searchParams.set(k, v);
-  }
-  const headers = {
-    Accept: "application/json",
-    ...opts.platform.extraHeaders ?? {}
-  };
-  if (opts.platform.authStyle === "bearer") {
-    headers["Authorization"] = `Bearer ${token}`;
-  } else {
-    url2.searchParams.set("access_token", token);
-  }
-  const method = opts.method.toUpperCase();
-  const init = { method, headers };
-  if (opts.body != null && opts.body !== "" && method !== "GET" && method !== "DELETE") {
-    headers["Content-Type"] = "application/json";
-    init.body = opts.body;
-  }
-  const ctrl = new AbortController();
-  const timer2 = setTimeout(() => ctrl.abort(), 15e3);
-  try {
-    const r = await fetch(url2.toString(), { ...init, signal: ctrl.signal });
-    const text2 = await r.text();
-    const safe = token ? text2.split(token).join("[redacted-token]") : text2;
-    return { status: r.status, statusText: r.statusText, body: safe };
-  } finally {
-    clearTimeout(timer2);
-  }
-}
-
-// src/lib/embeddings.ts
-var DEFAULT_BASE = "https://api.openai.com/v1";
-var DEFAULT_MODEL = "text-embedding-3-small";
-function embeddingsConfigured() {
-  return !!process.env["EMBEDDINGS_API_KEY"];
-}
-function embeddingsModel() {
-  return process.env["EMBEDDINGS_MODEL"] ?? DEFAULT_MODEL;
-}
-async function embed(text2) {
-  const key = process.env["EMBEDDINGS_API_KEY"];
-  if (!key) return null;
-  const input = text2.trim();
-  if (!input) return null;
-  const base = (process.env["EMBEDDINGS_BASE_URL"] ?? DEFAULT_BASE).replace(/\/$/, "");
-  const model = embeddingsModel();
-  const ctrl = new AbortController();
-  const timer2 = setTimeout(() => ctrl.abort(), 15e3);
-  try {
-    const r = await fetch(`${base}/embeddings`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      // Cap input length defensively — embedding models have token limits and we
-      // only store short memory entries anyway.
-      body: JSON.stringify({ model, input: input.slice(0, 8e3) }),
-      signal: ctrl.signal
-    });
-    if (!r.ok) {
-      logger.debug({ status: r.status }, "embeddings: request failed");
-      return null;
-    }
-    const data = await r.json();
-    const vec = data.data?.[0]?.embedding;
-    return Array.isArray(vec) && vec.length ? vec : null;
-  } catch (err) {
-    logger.debug({ err }, "embeddings: call errored");
-    return null;
-  } finally {
-    clearTimeout(timer2);
-  }
-}
-function cosineSimilarity(a, b) {
-  if (a.length !== b.length || a.length === 0) return 0;
-  let dot = 0;
-  let na = 0;
-  let nb = 0;
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i];
-    na += a[i] * a[i];
-    nb += b[i] * b[i];
-  }
-  if (na === 0 || nb === 0) return 0;
-  return dot / (Math.sqrt(na) * Math.sqrt(nb));
-}
-function parseEmbedding(stored) {
-  if (!stored) return null;
-  try {
-    const parsed = JSON.parse(stored);
-    return Array.isArray(parsed) && parsed.every((n) => typeof n === "number") ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
-// src/lib/pinecone.ts
-function explicitHost() {
-  const h = process.env["PINECONE_INDEX_HOST"] || process.env["PINECONE_INDEX_URL"];
-  if (!h) return null;
-  const trimmed = h.trim().replace(/\/$/, "");
-  if (!trimmed) return null;
-  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
-}
-var cachedHost = null;
-async function resolveHost() {
-  const explicit = explicitHost();
-  if (explicit) return explicit;
-  const key = process.env["PINECONE_API_KEY"];
-  const name = process.env["PINECONE_INDEX"]?.trim();
-  if (!key || !name) return null;
-  const cacheKey = `${key}:${name}`;
-  if (cachedHost && cachedHost.key === cacheKey) return cachedHost.host;
-  try {
-    const r = await fetch(`https://api.pinecone.io/indexes/${encodeURIComponent(name)}`, {
-      headers: { "Api-Key": key, "X-Pinecone-API-Version": "2024-07" }
-    });
-    if (!r.ok) {
-      logger.debug({ status: r.status }, "pinecone: describe_index failed");
-      return null;
-    }
-    const data = await r.json();
-    if (!data.host) return null;
-    const h = /^https?:\/\//i.test(data.host) ? data.host : `https://${data.host}`;
-    cachedHost = { key: cacheKey, host: h };
-    return h;
-  } catch (err) {
-    logger.debug({ err }, "pinecone: describe_index errored");
-    return null;
-  }
-}
-function namespace() {
-  return process.env["PINECONE_NAMESPACE"] ?? "";
-}
-function pineconeConfigured() {
-  return !!process.env["PINECONE_API_KEY"] && (!!explicitHost() || !!process.env["PINECONE_INDEX"]?.trim());
-}
-async function pineconeUpsert(id, values, metadata) {
-  const key = process.env["PINECONE_API_KEY"];
-  const base = await resolveHost();
-  if (!key || !base) return false;
-  const ctrl = new AbortController();
-  const timer2 = setTimeout(() => ctrl.abort(), 15e3);
-  try {
-    const r = await fetch(`${base}/vectors/upsert`, {
-      method: "POST",
-      headers: { "Api-Key": key, "Content-Type": "application/json" },
-      body: JSON.stringify({ vectors: [{ id, values, metadata }], namespace: namespace() }),
-      signal: ctrl.signal
-    });
-    if (!r.ok) {
-      logger.debug({ status: r.status }, "pinecone: upsert failed");
-      return false;
-    }
-    return true;
-  } catch (err) {
-    logger.debug({ err }, "pinecone: upsert errored");
-    return false;
-  } finally {
-    clearTimeout(timer2);
-  }
-}
-async function pineconeQuery(values, topK) {
-  const key = process.env["PINECONE_API_KEY"];
-  const base = await resolveHost();
-  if (!key || !base) return null;
-  const ctrl = new AbortController();
-  const timer2 = setTimeout(() => ctrl.abort(), 15e3);
-  try {
-    const r = await fetch(`${base}/query`, {
-      method: "POST",
-      headers: { "Api-Key": key, "Content-Type": "application/json" },
-      body: JSON.stringify({ vector: values, topK, includeMetadata: true, namespace: namespace() }),
-      signal: ctrl.signal
-    });
-    if (!r.ok) {
-      logger.debug({ status: r.status }, "pinecone: query failed");
-      return null;
-    }
-    const data = await r.json();
-    return Array.isArray(data.matches) ? data.matches : [];
-  } catch (err) {
-    logger.debug({ err }, "pinecone: query errored");
-    return null;
-  } finally {
-    clearTimeout(timer2);
-  }
-}
-
-// src/lib/sandbox.ts
-var import_e2b = __toESM(require_dist4(), 1);
-var GITHUB_REPO = "paisabrazilfl-cpu/bos-aura";
-var GITHUB_API = "https://api.github.com";
-var SANDBOX_TIMEOUT_MS = 18e4;
-function sandboxConfigured() {
-  return !!process.env["E2B_API_KEY"];
-}
-function gitWriteConfigured() {
-  return !!process.env["SANDBOX_GITHUB_TOKEN"];
-}
-function clip2(s, n = 6e3) {
-  return s.length > n ? `${s.slice(0, n)}
-\u2026[truncated ${s.length - n} chars]` : s;
-}
-var WORKDIR = "/tmp/repo";
-async function execCapture(sbx, cmd, timeoutMs) {
-  try {
-    const r = await sbx.commands.run(cmd, { timeoutMs });
-    return { exitCode: r.exitCode ?? 0, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
-  } catch (e) {
-    const err = e;
-    const res = err.result;
-    if (res || err.exitCode != null || err.stdout != null || err.stderr != null) {
-      return {
-        exitCode: res?.exitCode ?? err.exitCode ?? 1,
-        stdout: res?.stdout ?? err.stdout ?? "",
-        stderr: res?.stderr ?? err.stderr ?? err.message ?? String(e)
-      };
-    }
-    throw e;
-  }
-}
-async function runInSandbox(script, timeoutMs = SANDBOX_TIMEOUT_MS) {
-  const apiKey = process.env["E2B_API_KEY"];
-  if (!apiKey) return "error: E2B_API_KEY is not set \u2014 the cloud sandbox is unavailable.";
-  let sbx = null;
-  try {
-    sbx = await import_e2b.Sandbox.create({ apiKey, timeoutMs });
-    const r = await execCapture(sbx, script, timeoutMs - 5e3);
-    const parts = [`exit code: ${r.exitCode}`];
-    if (r.stdout.trim()) parts.push(`stdout:
-${clip2(r.stdout.trim())}`);
-    if (r.stderr.trim()) parts.push(`stderr:
-${clip2(r.stderr.trim())}`);
-    if (!r.stdout.trim() && !r.stderr.trim()) parts.push("(no output)");
-    return parts.join("\n");
-  } catch (e) {
-    return `error: sandbox execution failed: ${String(e instanceof Error ? e.message : e).slice(0, 300)}`;
-  } finally {
-    try {
-      await sbx?.kill();
-    } catch {
-    }
-  }
-}
-async function must(sbx, cmd, label) {
-  const r = await execCapture(sbx, cmd, 12e4);
-  if (r.exitCode !== 0) throw new Error(`${label} failed (exit ${r.exitCode}): ${clip2((r.stderr || r.stdout || "").trim(), 500)}`);
-  return r.stdout.trim();
-}
-async function repoPr(opts) {
-  const e2bKey = process.env["E2B_API_KEY"];
-  const ghToken = process.env["SANDBOX_GITHUB_TOKEN"];
-  if (!e2bKey) return "error: E2B_API_KEY is not set.";
-  if (!ghToken) return "error: SANDBOX_GITHUB_TOKEN is not set \u2014 agents cannot push/PR until the operator sets it.";
-  const branch = opts.branch.replace(/[^A-Za-z0-9._/-]/g, "-").slice(0, 100);
-  const base = (opts.baseBranch ?? "main").replace(/[^A-Za-z0-9._/-]/g, "-");
-  const authUrl = `https://x-access-token:${ghToken}@github.com/${GITHUB_REPO}.git`;
-  const cleanUrl = `https://github.com/${GITHUB_REPO}.git`;
-  let sbx = null;
-  try {
-    sbx = await import_e2b.Sandbox.create({ apiKey: e2bKey, timeoutMs: SANDBOX_TIMEOUT_MS });
-    await must(sbx, `rm -rf ${WORKDIR} && git clone --depth 1 --branch ${base} '${authUrl}' ${WORKDIR}`, "clone");
-    await must(sbx, `cd ${WORKDIR} && git remote set-url origin '${cleanUrl}' && git config user.email agent@openclaw.local && git config user.name "OpenClaw Agent" && git checkout -b '${branch}'`, "branch setup");
-    const scriptRes = await execCapture(sbx, `cd ${WORKDIR} && ${opts.script}`, 15e4);
-    const scriptOut = clip2(`exit ${scriptRes.exitCode}
-${(scriptRes.stdout || "").trim()}
-${(scriptRes.stderr || "").trim()}`.trim(), 4e3);
-    const status = await must(sbx, `cd ${WORKDIR} && git add -A && git status --porcelain`, "git status");
-    if (!status.trim()) {
-      return `The script ran but produced no file changes \u2014 nothing to open a PR for.
-
-Script output:
-${scriptOut}`;
-    }
-    await must(sbx, `cd ${WORKDIR} && git commit -m ${JSON.stringify(opts.title)}`, "commit");
-    const push = await execCapture(sbx, `cd ${WORKDIR} && git push '${authUrl}' '${branch}' 2>&1 | sed -E 's#x-access-token:[^@]*@#***@#g'`, 6e4);
-    if (push.exitCode !== 0) throw new Error(`push failed (exit ${push.exitCode}): ${clip2((push.stdout || push.stderr).trim(), 300)}`);
-    const pr = await fetch(`${GITHUB_API}/repos/${GITHUB_REPO}/pulls`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${ghToken}`, Accept: "application/vnd.github+json", "Content-Type": "application/json", "User-Agent": "openclaw-agent" },
-      body: JSON.stringify({ title: opts.title, head: branch, base, body: opts.body ?? "Opened by an OpenClaw agent from an E2B sandbox." })
-    });
-    const prBody = await pr.json();
-    if (!pr.ok) {
-      return `Branch '${branch}' pushed, but opening the PR failed (${pr.status}: ${prBody.message ?? "unknown"}). Open it manually from the branch.
-
-Script output:
-${scriptOut}`;
-    }
-    return `\u2705 Pushed branch '${branch}' and opened PR: ${prBody.html_url}
-
-Script output:
-${scriptOut}`;
-  } catch (e) {
-    return `error: repo PR flow failed: ${String(e instanceof Error ? e.message : e).slice(0, 400)}`;
-  } finally {
-    try {
-      await sbx?.kill();
-    } catch {
-    }
-  }
-}
-
-// src/lib/sources.ts
-var TIER1_SOURCES = [
-  {
-    key: "medicine",
-    label: "Medicine / Health (clinical, drugs, devices, disease data, evidence-based medicine)",
-    urls: [
-      "https://www.nih.gov/",
-      "https://pubmed.ncbi.nlm.nih.gov/",
-      "https://pmc.ncbi.nlm.nih.gov/",
-      "https://www.cdc.gov/",
-      "https://www.fda.gov/",
-      "https://www.who.int/",
-      "https://www.cochranelibrary.com/",
-      "https://www.cochrane.org/",
-      "https://clinicaltrials.gov/",
-      "https://www.nejm.org/",
-      "https://jamanetwork.com/",
-      "https://www.thelancet.com/",
-      "https://www.nature.com/nm/",
-      "https://www.bmj.com/",
-      "https://www.mayoclinic.org/",
-      "https://www.merckmanuals.com/professional"
-    ]
-  },
-  {
-    key: "finance",
-    label: "Investing / Personal Finance / Investor Protection (rules, filings, enforcement, macro data)",
-    urls: [
-      "https://www.sec.gov/",
-      "https://www.sec.gov/edgar",
-      "https://www.investor.gov/",
-      "https://www.finra.org/",
-      "https://brokercheck.finra.org/",
-      "https://www.federalreserve.gov/",
-      "https://fred.stlouisfed.org/",
-      "https://home.treasury.gov/",
-      "https://www.irs.gov/",
-      "https://www.consumerfinance.gov/",
-      "https://www.fdic.gov/",
-      "https://www.occ.gov/",
-      "https://www.bea.gov/",
-      "https://www.bls.gov/"
-    ]
-  },
-  {
-    key: "markets",
-    label: "Stocks / Markets / Company Filings (filings first, then official exchange + macro data)",
-    urls: [
-      "https://www.sec.gov/edgar/search/",
-      "https://www.sec.gov/data-research",
-      "https://www.nyse.com/market-data",
-      "https://www.nasdaq.com/market-activity",
-      "https://www.cboe.com/us/equities/",
-      "https://www.spglobal.com/spdji/",
-      "https://www.msci.com/",
-      "https://fred.stlouisfed.org/",
-      "https://www.bea.gov/",
-      "https://www.bls.gov/",
-      "https://home.treasury.gov/resource-center/data-chart-center/interest-rates/"
-    ]
-  },
-  {
-    key: "news",
-    label: "Global News (Tier-1 wire services & established newsrooms)",
-    urls: [
-      "https://www.reuters.com/",
-      "https://apnews.com/",
-      "https://www.bbc.com/news",
-      "https://www.ft.com/",
-      "https://www.wsj.com/",
-      "https://www.bloomberg.com/",
-      "https://www.economist.com/",
-      "https://www.nytimes.com/",
-      "https://www.washingtonpost.com/",
-      "https://www.theguardian.com/international",
-      "https://www.aljazeera.com/",
-      "https://www.dw.com/",
-      "https://www.france24.com/en/",
-      "https://www.npr.org/",
-      "https://www.c-span.org/"
-    ]
-  },
-  {
-    key: "ai",
-    label: "AI News / Research / Policy (official labs for products, papers for research, NIST/OECD/EU for governance)",
-    urls: [
-      "https://openai.com/news/",
-      "https://www.anthropic.com/news",
-      "https://www.anthropic.com/research",
-      "https://deepmind.google/",
-      "https://blog.google/technology/ai/",
-      "https://ai.meta.com/",
-      "https://research.ibm.com/artificial-intelligence",
-      "https://blogs.microsoft.com/ai/",
-      "https://arxiv.org/list/cs.AI/recent",
-      "https://arxiv.org/list/cs.LG/recent",
-      "https://paperswithcode.com/",
-      "https://huggingface.co/papers",
-      "https://hai.stanford.edu/",
-      "https://aiindex.stanford.edu/",
-      "https://www.nist.gov/artificial-intelligence",
-      "https://www.nist.gov/itl/ai-risk-management-framework",
-      "https://oecd.ai/",
-      "https://artificialintelligenceact.eu/"
-    ]
-  },
-  {
-    key: "marketing",
-    label: "Social Media Marketing / Ads / Strategy (official ad-platform docs outrank gurus)",
-    urls: [
-      "https://www.facebook.com/business/news",
-      "https://www.facebook.com/business/help",
-      "https://business.instagram.com/",
-      "https://support.google.com/google-ads/",
-      "https://blog.google/products/ads-commerce/",
-      "https://marketingplatform.google.com/",
-      "https://business.linkedin.com/marketing-solutions",
-      "https://www.linkedin.com/business/marketing/blog",
-      "https://ads.tiktok.com/business/",
-      "https://ads.tiktok.com/business/creativecenter/",
-      "https://business.pinterest.com/",
-      "https://forbusiness.snapchat.com/",
-      "https://www.youtube.com/ads/",
-      "https://www.thinkwithgoogle.com/",
-      "https://www.emarketer.com/",
-      "https://www.marketingdive.com/"
-    ]
-  },
-  {
-    key: "engineering",
-    label: "Engineering / Standards / Technical Research (standards, gov technical reports, peer-reviewed)",
-    urls: [
-      "https://www.nist.gov/",
-      "https://www.nist.gov/publications",
-      "https://www.nasa.gov/",
-      "https://ntrs.nasa.gov/",
-      "https://www.ieee.org/",
-      "https://ieeexplore.ieee.org/",
-      "https://standards.ieee.org/",
-      "https://www.asme.org/codes-standards",
-      "https://www.astm.org/",
-      "https://www.iso.org/",
-      "https://www.sae.org/",
-      "https://www.osha.gov/",
-      "https://www.energy.gov/",
-      "https://www.nrel.gov/",
-      "https://www.osti.gov/",
-      "https://www.uspto.gov/",
-      "https://scholar.google.com/",
-      "https://arxiv.org/"
-    ]
-  },
-  {
-    key: "law",
-    label: "Law / Legal Research (federal statutes, regs, court opinions, official portals)",
-    urls: [
-      "https://www.congress.gov/",
-      "https://www.govinfo.gov/",
-      "https://www.ecfr.gov/",
-      "https://www.federalregister.gov/",
-      "https://www.supremecourt.gov/",
-      "https://www.uscourts.gov/",
-      "https://www.justice.gov/",
-      "https://www.law.cornell.edu/",
-      "https://www.oyez.org/",
-      "https://www.courtlistener.com/",
-      "https://www.regulations.gov/",
-      "https://www.ftc.gov/",
-      "https://www.eeoc.gov/",
-      "https://www.dol.gov/",
-      "https://www.osha.gov/"
-    ]
-  },
-  {
-    key: "social",
-    label: "Social Issues / Demographics / Public Policy (official data first; Pew for opinion)",
-    urls: [
-      "https://www.census.gov/",
-      "https://data.census.gov/",
-      "https://www.bls.gov/",
-      "https://www.bea.gov/",
-      "https://bjs.ojp.gov/",
-      "https://www.hud.gov/",
-      "https://www.hhs.gov/",
-      "https://www.ed.gov/",
-      "https://www.dol.gov/",
-      "https://www.pewresearch.org/",
-      "https://www.gallup.com/",
-      "https://www.kff.org/",
-      "https://www.urban.org/",
-      "https://www.brookings.edu/",
-      "https://www.rand.org/",
-      "https://www.oecd.org/",
-      "https://data.worldbank.org/",
-      "https://sdgs.un.org/",
-      "https://unstats.un.org/"
-    ]
-  },
-  {
-    key: "gov",
-    label: "Federal / State / County / City Law & Government (incl. Florida / Palm Beach examples)",
-    urls: [
-      "https://www.usa.gov/state-governments",
-      "https://www.usa.gov/state-local-governments",
-      "https://www.ncsl.org/",
-      "https://www.naag.org/",
-      "https://www.uniformlaws.org/",
-      "https://library.municode.com/",
-      "https://www.codepublishing.com/",
-      "https://ecode360.com/",
-      "https://www.whitehouse.gov/",
-      "https://www.archives.gov/",
-      "https://www.myfloridahouse.gov/",
-      "https://www.flsenate.gov/",
-      "https://www.leg.state.fl.us/",
-      "https://www.flcourts.gov/",
-      "https://www.myfloridalegal.com/",
-      "https://dos.myflorida.com/sunbiz/",
-      "https://discover.pbcgov.org/",
-      "https://www.pbcgov.org/",
-      "https://www.mypalmbeachclerk.com/",
-      "https://www.pbcgov.org/papa/",
-      "https://www.wpb.org/",
-      "https://library.municode.com/fl/west_palm_beach/codes/code_of_ordinances"
-    ]
-  }
-];
-var SOURCE_POLICY = `
-
-SOURCE POLICY (Tier-1 only): prefer authoritative primary sources; do NOT use random blogs, SEO/affiliate pages, anonymous posts, unsourced social media, or AI-generated summaries as primary evidence. Hierarchy: (1) official government/regulatory; (2) primary institution; (3) peer-reviewed journal / standards body; (4) official company/platform docs; (5) Tier-1 wire service / established newsroom; (6) nonpartisan research institute / recognized data authority. For every claim: cite the source URL and label it CONFIRMED, INFERRED, or UNKNOWN; prefer primary sources over summaries. Call the tier1_sources tool to get the vetted starting URLs for the relevant domain (medicine, finance, markets, news, ai, marketing, engineering, law, social, gov).`;
-function tier1SourcesText(category) {
-  const cats = category ? TIER1_SOURCES.filter((c) => c.key === category.toLowerCase() || c.label.toLowerCase().includes(category.toLowerCase())) : TIER1_SOURCES;
-  if (!cats.length) {
-    return `No Tier-1 category matched "${category}". Available: ${TIER1_SOURCES.map((c) => c.key).join(", ")}.`;
-  }
-  return cats.map((c) => `## ${c.key} \u2014 ${c.label}
-${c.urls.join("\n")}`).join("\n\n");
-}
-
-// src/lib/marketing.ts
-var MARKETING_ENGINE = `
-MARKETING ENGINE \u2014 universal plug-and-play post \u2192 conversion machine (any niche/offer/platform).
-
-THE CHAIN (most chase only attention; the money is the full chain):
-Attention \u2192 Trust \u2192 Desire \u2192 Action \u2192 Follow-up \u2192 Conversion.
-Core truth: VIEWS ARE NOT THE BUSINESS. CONVERSATIONS ARE. Optimize for qualified conversations, not likes.
-Operating principle: EVERY POST belongs to a campaign; every campaign to a funnel; every funnel to a business objective. No content for content's sake.
-
-ACCURACY FIRST (non-negotiable \u2014 overrides "make it punchy"):
-- Every factual claim, statistic, study, or result MUST be TRUE and verifiable. RESEARCH it first (web_search / tier1_sources) and keep the source URL. Punchy \u2260 fabricated.
-- NEVER invent stats ("boosts output 300%"), studies ("MIT & Stanford research"), testimonials, or results. A vague "recent studies show" with no real source is a fabrication \u2014 cut it or replace it with a real, cited fact.
-- Hooks may be bold and emotional, but the claim underneath must hold up. Curiosity and FOMO are fine; lying is not.
-- Disclose paid/affiliate/endorsement relationships (FTC) and respect each platform's ToS. No fake scarcity, no deceptive claims.
-
-THE UNIVERSAL POST FORMULA (6 beats):
-Hook \u2192 Problem \u2192 Insight \u2192 Value \u2192 CTA \u2192 Follow-up system.
-[HOOK] Most people think [COMMON BELIEF].
-[PROBLEM] But the real issue is [HIDDEN PROBLEM] \u2014 costing [PAIN].
-[INSIGHT] The ones winning do [BETTER METHOD].
-[VALUE] Here are [3\u20137] things you can use now: 1) \u2026 2) \u2026 3) \u2026
-[CTA] Comment [KEYWORD] and I'll send you [RESOURCE].
-[FOLLOW-UP] (keyword \u2192 DM \u2192 qualify \u2192 offer \u2192 follow up).
-A post is not approved unless it has exactly: ONE audience, ONE pain, ONE message, ONE CTA, ONE next step.
-
-CAMPAIGN KERNEL (every campaign): Audience \u2192 Pain \u2192 Desired Result \u2192 Mechanism \u2192 Proof \u2192 Offer \u2192 CTA \u2192 Follow-up.
-Positioning line: "I help [AUDIENCE] get [RESULT] without [PAIN] using [MECHANISM]."
-
-HOOKS (line 1 must earn line 2; front-load the payoff "above the fold"):
-- Curiosity gap: "Nobody in [niche] is talking about this\u2026"
-- Contrarian / pattern interrupt: "Unpopular opinion: more [obvious thing] won't fix it."
-- Specificity: "I cut [metric] by [exact number] in [timeframe] with one change." (only if TRUE & cited)
-- Loss/cost framing: "You're quietly losing [X] because of [Y]."
-- Desired-outcome: "Here's how to get [result] without [pain]."
-- Identity: "If you're a [audience] who [trait], read this."
-Test 3 hook angles per idea: FEAR vs DESIRE vs CURIOSITY. Keep the one that earns saves/comments/DMs.
-
-PSYCHOLOGY TRIGGERS (use truthfully; name the lever): curiosity gap (open loop you close) \xB7 specificity (real numbers) \xB7 social proof (real results/quotes) \xB7 loss aversion & FOMO (real stakes) \xB7 authority (real credentials/sources) \xB7 reciprocity (free value first) \xB7 identity/belonging ("for people who\u2026") \xB7 pattern interrupt.
-
-AUDIENCE AWARENESS (match message to stage): Unaware \u2192 educational hook | Problem-aware \u2192 problem/agitation | Solution-aware \u2192 comparison/framework | Product-aware \u2192 proof/objection handling | Ready-to-buy \u2192 direct offer + booking. (For B2B/high-consideration, most buyers aren't in-market now \u2014 the LinkedIn B2B Institute "95-5 rule" \u2014 so build memory & trust before they're ready.)
-
-POST GOAL \u2014 pick ONE per post (don't make every post sell; rotate):
-Attention \u2192 curiosity/contrarian \u2192 comment keyword | Trust \u2192 education \u2192 "save this" | Leads \u2192 checklist/template \u2192 comment keyword | Sell \u2192 offer \u2192 DM/book call | Retarget \u2192 case study \u2192 apply/book.
-
-CONTENT PILLARS (any niche): Problem \xB7 Mistakes \xB7 Framework \xB7 Proof \xB7 Process \xB7 Opinion/POV \xB7 Offer. Weekly mix: 2 problem, 2 framework, 1 mistake, 1 proof/process, 1 offer.
-
-CTA LADDER (match to intent): Soft ("save this") \xB7 Engagement ("comment YES") \xB7 Lead ("comment GUIDE") \xB7 DM ("DM me AUDIT") \xB7 Sales ("book a call") \xB7 Retarget ("ready? message me").
-Keyword bank: GUIDE \xB7 CHECKLIST \xB7 MAP \xB7 AUDIT \xB7 TEMPLATE \xB7 PLAN \xB7 SYSTEM \xB7 FIX \xB7 START \xB7 SCALE.
-
-DIFFERENTIATE THE CHANNEL FIRST (each has its own format, length, cadence, compliance \u2014 never paste the same content everywhere):
-- SOCIAL POST (Instagram/LinkedIn/X/TikTok/Facebook): use the 6-beat post formula + PLATFORM ADAPTATION; publish via instagram_post / composio_action. Public CTA = comment a keyword \u2192 move to DM.
-- EMAIL (regular/direct marketing): use the email_nurture module \u2014 clear value-driven subject line, ONE message + ONE CTA, and CAN-SPAM compliance (identify the sender, a valid physical postal address, a working unsubscribe). Send via composio_action on Gmail. CTA = click/reply/book, not "comment".
-- PAID ADS: use the paid_media module \u2014 funnel by temperature (cold \u2192 retarget \u2192 convert) and measure with incrementality, not just platform-reported conversions.
-- SMS: short, consent-based, with a clear opt-out (STOP); reminders/urgent follow-up only.
-- LANDING PAGE / SEO / WEBINAR: see the landing_page, channels, and campaign_types modules.
-Rule: identify whether the task is SOCIAL, EMAIL, PAID, SMS, or WEB first, then apply that channel's play and compliance \u2014 they are NOT interchangeable.
-
-PLATFORM ADAPTATION (same machine, tuned; digital is ~61% of marketing spend per Gartner 2025 \u2014 distribution discipline matters):
-- Instagram: hook in line 1 (all that shows before "more"); tight paragraphs + emoji rhythm; 8\u201315 mixed-reach hashtags; scroll-stopping image/carousel/Reel. Signals that matter: SAVES + SHARES + comments + dwell. Pin a first comment with the CTA.
-- LinkedIn: longer story + insight, NO hashtag spam (3\u20135), reward dwell; CTA = comment/DM, soft; best for B2B authority.
-- X/Threads: brevity, strong first line, one idea; thread for depth.
-- TikTok/Reels/Shorts: first 2 seconds = on-screen + spoken hook; optimize watch-time & loops; trend-aware.
-As AI floods feeds with generic content (HubSpot 2026), win on a sharp point of view, trust, and distinctiveness \u2014 not volume.
-
-THE FUNNEL: Post \u2192 comment/DM keyword \u2192 send resource \u2192 ask ONE qualifying question \u2192 identify pain \u2192 offer next step \u2192 book/sell/send link \u2192 follow up.
-
-OFFER LADDER (every post points to one rung): Free value \u2192 Lead magnet \u2192 Low-ticket \u2192 Core offer \u2192 Premium (done-for-you) \u2192 Recurring (retainer/subscription).
-
-KPIs (track weekly; conversations > likes): impressions (hook?) \xB7 saves (value?) \xB7 comments (CTA?) \xB7 DMs (intent?) \xB7 clicks \xB7 leads \xB7 calls booked \xB7 sales \xB7 follow-up replies. Test ONE variable at a time. Don't scale on platform-reported conversions alone \u2014 corroborate with CRM/sales data and incrementality/holdout testing (Google) to see what happened BECAUSE of the marketing.
-
-HOW THIS SWARM RUNS THE ENGINE (use the real tools, end to end):
-1) Pick ONE audience + ONE pain + ONE desired result + ONE offer-ladder rung.
-2) RESEARCH the angle and EVERY claim (web_search / tier1_sources) \u2014 get a real, citable fact. Nothing ships unverified.
-3) WRITE the post with the formula + a tested hook + ONE goal + ONE CTA keyword.
-4) image_generate a scroll-stopping on-brand visual (it returns an absolute public URL).
-5) PUBLISH: instagram_post(image_url, caption) for IG; composio_action for other connected apps. Post once.
-6) SCHEDULE the calendar with schedule_task (recurring cron) so the engine runs itself.
-7) TRACK what worked with memory_write (hook angle, CTA, saves/DMs) and feed it back into the next round.
-
-DEEPER MODULES \u2014 call marketing_playbook with a section for the enterprise build:
-campaign_brief \xB7 offer_ladder \xB7 audience \xB7 post_templates \xB7 campaign_types \xB7 lead_magnets \xB7 dm_flow \xB7 landing_page \xB7 email_nurture \xB7 paid_media \xB7 channels \xB7 production \xB7 governance \xB7 qa \xB7 kpis \xB7 experiments \xB7 rollout.
-
-ONE-SENTENCE ENGINE: Expose a real painful problem, teach a true better way, offer a useful resource, start a conversation, qualify the lead, move them to the next step \u2014 and track conversations, not likes.`;
-var MARKETING_SECTIONS = {
-  campaign_brief: {
-    title: "Master Campaign Brief",
-    body: `Every campaign must have a brief. Fill in:
-CAMPAIGN NAME \xB7 OBJECTIVE (Awareness/Leads/Bookings/Sales/Retention) \xB7 AUDIENCE \xB7 PAIN \xB7 DESIRED RESULT \xB7 MECHANISM \xB7 OFFER \xB7 LEAD MAGNET \xB7 CTA + keyword \xB7 CHANNELS \xB7 CONTENT ASSETS (posts/videos/carousels/emails/landing/ads) \xB7 PROOF (case studies/stats/testimonials/demos) \xB7 COMPLIANCE NOTES (claims/disclosures/privacy) \xB7 KPIs (primary/secondary) \xB7 TIMELINE (launch/review/optimize) \xB7 OWNER.
-Rule: every post belongs to a campaign, every campaign to a funnel, every funnel to a business objective.`
-  },
-  offer_ladder: {
-    title: "Offer Ladder",
-    body: `Free value (post/checklist/mini-audit) \u2192 Lead magnet (PDF/calculator/template/scorecard) \u2192 Low-ticket (template pack/workshop/starter kit) \u2192 Core (main service/product) \u2192 Premium (done-for-you/enterprise) \u2192 Recurring (retainer/subscription/support).
-For each campaign define: Primary CTA \xB7 Secondary CTA \xB7 Lead magnet \xB7 Sales offer \xB7 Upsell \xB7 Retention path. Every post points to ONE rung.`
-  },
-  audience: {
-    title: "Audience Intelligence",
-    body: `Segment by awareness: Unaware \xB7 Problem-aware \xB7 Solution-aware \xB7 Product-aware \xB7 Ready-to-buy \u2014 and match content to the stage.
-Before producing, answer: who is this for? what do they want? what are they afraid of? what are they tired of? what have they tried? what do they misunderstand? what proof do they need? what objection stops them? what words do they already use? what result makes them act now?`
-  },
-  post_templates: {
-    title: "Plug-and-Play Post Templates",
-    body: `1) CURIOSITY: "Most people think [BELIEF]. The real opportunity is [HIDDEN TRUTH]\u2026 the ones getting [RESULT] do: 1) 2) 3). Comment [KEYWORD]."
-2) PROBLEM-AGITATE-SOLUTION: "If you're dealing with [PROBLEM], it's not [SURFACE EXCUSE]. The real issue is [ROOT CAUSE]. That costs you: [PAIN 1-3]. The fix: [SOLUTION]. Comment [KEYWORD]."
-3) MISTAKE LIST: "5 mistakes [AUDIENCE] make with [TOPIC]: 1-5. Not effort \u2014 wrong system. Comment [KEYWORD]."
-4) BEFORE/AFTER: "Before: [bad state]. After: [desired result]. The difference: [OLD WAY] vs [NEW WAY]. Comment [KEYWORD]."
-5) AUTHORITY LEVELS: "[N] levels to [TOPIC]: L1\u2026L4. Most are stuck at L[x]; the results start at L[y]. Comment [KEYWORD]."
-6) CONTRARIAN: "Unpopular opinion: [BELIEF] isn't the solution. It's [BETTER BELIEF], because [REASON]. Comment [KEYWORD]."
-7) DIRECT OFFER: "I help [AUDIENCE] get [RESULT] without [PAIN]. Best fit if: [qualifiers]. DM/comment [KEYWORD]."`
-  },
-  campaign_types: {
-    title: "Campaign Library",
-    body: `Awareness (reach \u2192 follow/save) \xB7 Education (trust \u2192 download) \xB7 Lead magnet (capture \u2192 comment keyword) \xB7 Webinar (deep education \u2192 register) \xB7 Audit (qualify \u2192 book audit) \xB7 Case study (proof \u2192 request breakdown) \xB7 Offer (sales \u2192 apply/book) \xB7 Retargeting (warm \u2192 book call) \xB7 Reactivation (old leads \u2192 reply/schedule) \xB7 Referral (advocates \u2192 refer).
-Each needs: name \xB7 audience \xB7 objective \xB7 offer \xB7 CTA \xB7 channels \xB7 assets \xB7 owner \xB7 deadline \xB7 KPI \xB7 review date.`
-  },
-  lead_magnets: {
-    title: "Lead Magnets",
-    body: `Checklist (fast opt-ins) \xB7 Template (engagement) \xB7 Scorecard (audit selling) \xB7 Calculator (ROI/value) \xB7 Playbook (enterprise) \xB7 Roadmap (strategy) \xB7 Buyer's guide (comparison) \xB7 Mistakes guide (problem-aware) \xB7 Case-study breakdown (warm) \xB7 Swipe file (creators/agencies).
-Formula: "The [AUDIENCE] [OUTCOME] Checklist: Find the [N] Bottlenecks Blocking [RESULT]."`
-  },
-  dm_flow: {
-    title: "Comment-to-DM Flow",
-    body: `Public CTA: "Comment [KEYWORD] and I'll send it."
-DM1 (open): "Appreciate the comment \u2014 here's the [RESOURCE]. Before I send the best version, what are you working on right now?"
-DM2 (qualify): "Got it. What's the biggest thing you're trying to improve right now?"
-DM3 (diagnose): "Makes sense \u2014 the bottleneck is probably [BOTTLENECK]; the usual fix is [PATH]."
-DM4 (next step): "I can help you map this. Want me to send the next step?"
-DM5 (convert): "Here's the next step: [LINK] \u2014 it'll show what's working, what's leaking, what to fix first." Human, not pushy.`
-  },
-  landing_page: {
-    title: "Landing Page",
-    body: `Sections: hero headline \xB7 subhead \xB7 pain/problem \xB7 promise/result \xB7 what they get \xB7 who it's for \xB7 how it works \xB7 proof \xB7 FAQ \xB7 CTA \xB7 compliance/disclaimer.
-Headline formula: "Get [RESULT] Without [PAIN] Using [METHOD]."
-Lead-gen fields: name, email, business/project type, main problem (optional phone/budget/timeline). Enterprise qualification: company, role, team size, current tools, lead volume, budget range, decision timeline, primary bottleneck.`
-  },
-  email_nurture: {
-    title: "Email Nurture (+ CAN-SPAM)",
-    body: `7-email sequence: 1) deliver asset 2) educate (real problem) 3) agitate (where results leak) 4) framework 5) proof 6) handle objections 7) offer/booking.
-COMPLIANCE (CAN-SPAM): no deceptive headers/subject lines, clearly identify the sender, include a valid physical postal address, and give a working opt-out/unsubscribe in every commercial email.`
-  },
-  paid_media: {
-    title: "Paid Media (+ incrementality)",
-    body: `Funnel: Cold awareness \u2192 Lead magnet \u2192 Retargeting \u2192 Conversion \u2192 Reactivation.
-Creative by stage: cold = problem/curiosity \xB7 lead = checklist/template \xB7 retarget = proof/case study \xB7 conversion = offer/direct CTA \xB7 reactivation = new angle/bonus.
-MEASUREMENT: don't scale on platform-reported conversions alone. Hierarchy = platform metrics + CRM data + sales data + holdout/incrementality testing + revenue quality. Incrementality measures what happened BECAUSE of the ads, not just what a dashboard credited.`
-  },
-  channels: {
-    title: "Channel Role Matrix",
-    body: `Give every channel ONE job; don't blindly cross-post.
-LinkedIn = B2B authority/founder-led \xB7 Instagram = visual education/Reels/brand \xB7 TikTok = fast awareness/trend testing \xB7 YouTube = searchable authority/demos/long-form trust \xB7 Facebook = local/groups/retargeting \xB7 X = opinions/thought leadership \xB7 Email = nurture/conversion/retention \xB7 SMS = reminders/urgent follow-up \xB7 Webinars = education + high-ticket \xB7 Blog/SEO = search capture/long-term authority \xB7 Paid search = high-intent capture \xB7 Retargeting = warm conversion.`
-  },
-  production: {
-    title: "Production Workflow & Team",
-    body: `Workflow: Brief \u2192 research \u2192 angle \u2192 copy draft \u2192 creative draft \u2192 COMPLIANCE REVIEW \u2192 approval \u2192 schedule \u2192 publish \u2192 community mgmt \u2192 reporting \u2192 optimization.
-Roles (or hats one operator wears): Strategist \xB7 Brand \xB7 Content Lead \xB7 Copywriter \xB7 Designer \xB7 Video Editor \xB7 Media Buyer \xB7 Marketing Ops (CRM/automation/tracking) \xB7 Analyst \xB7 Community Manager \xB7 Sales \xB7 Compliance Reviewer \xB7 PM.
-RACI each task (Responsible/Accountable/Consulted/Informed) so nothing ships unreviewed.`
-  },
-  governance: {
-    title: "Governance & Compliance",
-    body: `Tag every claim: factual \xB7 opinion \xB7 projection \xB7 customer result \xB7 comparative \xB7 legal/medical/financial.
-Review gates: income claim \u2192 proof + disclaimer \xB7 health \u2192 medical/legal review \xB7 legal \u2192 attorney review \xB7 financial \u2192 compliance \xB7 performance \u2192 data source \xB7 customer result \u2192 permission + context \xB7 testimonial/sponsored \u2192 FTC disclosure.
-FTC: influencers/endorsers must clearly disclose material brand relationships. GDPR: if you collect/process personal data of EU/EEA individuals, GDPR obligations likely apply (lawful basis, consent, data rights, transfers). When in doubt, escalate to legal \u2014 do not publish an unverified or non-compliant claim.`
-  },
-  qa: {
-    title: "QA Checklists",
-    body: `POST: one audience \xB7 one hook \xB7 one pain \xB7 one insight \xB7 one CTA \xB7 no unsupported claim \xB7 no misleading promise \xB7 no fake urgency \xB7 brand voice \xB7 CTA link/keyword works \xB7 UTM if needed \xB7 approved for channel.
-LANDING PAGE: clear headline/offer \xB7 CTA above fold \xB7 mobile works \xB7 form works \xB7 thank-you page \xB7 tracking installed \xB7 privacy/disclaimer \xB7 acceptable speed \xB7 CRM routing.
-FUNNEL: post CTA works \xB7 DM response works \xB7 lead magnet delivers \xB7 email triggers \xB7 CRM record created \xB7 sales notified \xB7 booking link works \xB7 follow-up task created \xB7 reporting source captured.`
-  },
-  kpis: {
-    title: "KPI Hierarchy & Scorecard",
-    body: `Hierarchy: Business (revenue/profit/CAC/LTV) \u2192 Sales (calls booked/show/close) \u2192 Funnel (leads/conv/opt-in) \u2192 Content (saves/shares/comments/CTR) \u2192 Paid (CPA/ROAS/CPM/CPC/freq) \u2192 Email (open/CTR/reply/unsub) \u2192 Ops (assets produced/approvals/turnaround).
-Weekly scorecard: posts published, comments, DMs started, leads, calls booked, calls showed, deals closed, revenue, top post, worst post, best hook, best CTA, next test.`
-  },
-  experiments: {
-    title: "Experimentation",
-    body: `Test ONE variable at a time: hook (fear/desire/curiosity) \xB7 CTA (comment/DM/link) \xB7 lead magnet \xB7 creative (text/video/carousel) \xB7 audience (broad/niche) \xB7 offer (free vs paid audit) \xB7 landing (short/long) \xB7 follow-up (fast DM vs email).
-Template: hypothesis \xB7 audience \xB7 variable \xB7 control \xB7 variant \xB7 success metric \xB7 start/end \xB7 result \xB7 decision.
-Decision logic: Scale = clear improvement \xB7 Hold = inconclusive \xB7 Kill = worse \xB7 Retest = promising but noisy.`
-  },
-  rollout: {
-    title: "30 / 60 / 90 Rollout",
-    body: `Days 1\u201330 (Foundation): define offer ladder + audience segments + brand voice; build 5 pillars + 3 lead magnets + a landing page; install CRM tracking; launch first ~20 posts; start DM follow-up; build weekly dashboard.
-Days 31\u201360 (Production): 5\u20137 posts/week; 2 lead-gen campaigns; test 3 hooks + 3 CTAs; launch email nurture; start retargeting; build case studies; weekly optimization meeting.
-Days 61\u201390 (Scale): double down on winners; build paid campaigns; add webinar/workshop; sales enablement; lead scoring; reactivation sequence; referral campaign; monthly insights report.`
-  }
-};
-function marketingPlaybook(section) {
-  if (section) {
-    const key = section.trim().toLowerCase().replace(/[^a-z]/g, "_");
-    const hit = MARKETING_SECTIONS[key] ?? Object.entries(MARKETING_SECTIONS).find(([k]) => key.includes(k) || k.includes(key))?.[1];
-    if (hit) return `MARKETING ENGINE \u2014 ${hit.title}
-
-${hit.body}`;
-    return `Unknown section "${section}". Available: ${Object.keys(MARKETING_SECTIONS).join(", ")}.
-
-${MARKETING_ENGINE}`;
-  }
-  return MARKETING_ENGINE;
-}
-var MARKETING_ENGINE_POINTER = "MARKETING TASKS: for any post/caption/campaign/'make this go viral'/lead-magnet/funnel request, call the marketing_playbook tool and apply that universal engine (hook\u2192problem\u2192insight\u2192value\u2192CTA\u2192follow-up, one goal, one CTA keyword, platform-tuned). For the enterprise build (campaign brief, funnels, landing pages, email, paid, governance/compliance, KPIs, rollout) call marketing_playbook with a `section`. Research and CITE any factual claim \u2014 never fabricate stats, studies, or testimonials. Execute with the real tools: image_generate \u2192 instagram_post/composio_action \u2192 schedule_task \u2192 memory_write.";
-
-// src/lib/cron.ts
-function parseField(field, min, max) {
-  const out = /* @__PURE__ */ new Set();
-  for (const partRaw of field.split(",")) {
-    const part = partRaw.trim();
-    if (!part) continue;
-    let step = 1;
-    let range = part;
-    const slash = part.indexOf("/");
-    if (slash >= 0) {
-      step = Number(part.slice(slash + 1)) || 1;
-      range = part.slice(0, slash);
-    }
-    let lo = min;
-    let hi = max;
-    if (range === "*" || range === "") {
-    } else if (range.includes("-")) {
-      const [a, b] = range.split("-");
-      lo = Number(a);
-      hi = Number(b);
-    } else {
-      lo = hi = Number(range);
-    }
-    if (!Number.isFinite(lo) || !Number.isFinite(hi)) continue;
-    for (let v = lo; v <= hi; v += step) {
-      if (v >= min && v <= max) out.add(v);
-    }
-  }
-  return out;
-}
-function computeNextRun(schedule, from = /* @__PURE__ */ new Date()) {
-  const parts = schedule.trim().split(/\s+/);
-  if (parts.length !== 5) return new Date(from.getTime() + 6e4);
-  const [minF, hourF, domF, monF, dowF] = parts;
-  const mins = parseField(minF, 0, 59);
-  const hours = parseField(hourF, 0, 23);
-  const doms = parseField(domF, 1, 31);
-  const mons = parseField(monF, 1, 12);
-  const dows = parseField(dowF, 0, 6);
-  if (/(^|[,/-])7([,/-]|$)/.test(dowF)) dows.add(0);
-  const domRestricted = domF.trim() !== "*";
-  const dowRestricted = dowF.trim() !== "*";
-  const d = new Date(from.getTime());
-  d.setSeconds(0, 0);
-  d.setMinutes(d.getMinutes() + 1);
-  const MAX_ITER = 367 * 24 * 60;
-  for (let i = 0; i < MAX_ITER; i++) {
-    const monthOk = mons.has(d.getMonth() + 1);
-    const minOk = mins.has(d.getMinutes());
-    const hourOk = hours.has(d.getHours());
-    let dayOk;
-    if (domRestricted && dowRestricted) dayOk = doms.has(d.getDate()) || dows.has(d.getDay());
-    else if (domRestricted) dayOk = doms.has(d.getDate());
-    else if (dowRestricted) dayOk = dows.has(d.getDay());
-    else dayOk = true;
-    if (minOk && hourOk && dayOk && monthOk) return new Date(d.getTime());
-    d.setMinutes(d.getMinutes() + 1);
-  }
-  return new Date(from.getTime() + 6e4);
-}
-
-// src/lib/safety.ts
-var SENSITIVE_RULES = [
-  { label: "confidentiality marker", re: /\b(confidential|top[\s-]?secret|classified|internal[\s-]?only|for internal use|not for distribution|do not distribute|do not share|private and confidential|restricted)\b/i },
-  { label: "legal privilege / NDA", re: /\b(nda|non[\s-]?disclosure|privileged|attorney[\s-]?client|work product|under embargo|embargoed)\b/i },
-  { label: "M&A / deal material", re: /\b(acquisition proposal|merger agreement|term sheet|letter of intent|\bloi\b|cap table|due diligence|purchase agreement|definitive agreement|pre[\s-]?money|post[\s-]?money|equity stake)\b/i },
-  { label: "trade secret / proprietary", re: /\b(trade secret|proprietary( and)? confidential|source code|internal roadmap|unreleased)\b/i },
-  { label: "credential / secret", re: /\b(password|passphrase|api[\s_-]?key|secret[\s_-]?key|private[\s_-]?key|access[\s_-]?token|bearer\s+[a-z0-9._-]{12,})\b/i },
-  { label: "API key pattern", re: /\b(sk-[a-z0-9]{12,}|rnd_[a-z0-9]{12,}|ghp_[a-z0-9]{20,}|AKIA[0-9A-Z]{12,})\b/i },
-  { label: "personal identifier (SSN)", re: /\b\d{3}-\d{2}-\d{4}\b/ }
-];
-function screenForSensitive(text2) {
-  if (!text2) return [];
-  const hits = [];
-  for (const r of SENSITIVE_RULES) {
-    if (r.re.test(text2)) hits.push(r.label);
-  }
-  return [...new Set(hits)];
-}
-function blockIfSensitiveForPublic(content, channel = "a public account") {
-  const flags = screenForSensitive(content);
-  if (!flags.length) return null;
-  return `\u{1F6AB} BLOCKED \u2014 refusing to publish to ${channel}: the content looks CONFIDENTIAL/SENSITIVE (flagged: ${flags.join("; ")}). Nothing was posted. Public posts are irreversible \u2014 confidential, privileged, deal, or credential material must never auto-publish. If this text is genuinely cleared for public release, remove the sensitive wording (or post it manually) and try again.`;
-}
-
-// src/lib/postLimit.ts
-init_src();
-var MAX_PER_DAY = Number(process.env["SOCIAL_MAX_POSTS_PER_DAY"] ?? 12);
-var MIN_SPACING_MIN = Number(process.env["SOCIAL_MIN_SPACING_MINUTES"] ?? 90);
-function decidePostAllowed(opts) {
-  const max = opts.maxPerDay ?? MAX_PER_DAY;
-  const spacingMin = opts.minSpacingMin ?? MIN_SPACING_MIN;
-  const platform = opts.platform ?? "social";
-  if (opts.countLast24h >= max) {
-    return `\u{1F6D1} Daily ${platform} post limit reached (${max}/day). Nothing was posted \u2014 the cap rolls over 24h after each post. Queue it for later.`;
-  }
-  if (opts.last) {
-    const elapsedMin = (opts.now.getTime() - opts.last.getTime()) / 6e4;
-    if (elapsedMin < spacingMin) {
-      const wait = Math.ceil(spacingMin - elapsedMin);
-      return `\u{1F6D1} Posts are spaced out (min ${spacingMin} min apart to avoid spamming). Last ${platform} post was ${Math.floor(elapsedMin)} min ago \u2014 next allowed in ~${wait} min. Nothing was posted.`;
-    }
-  }
-  return null;
-}
-async function checkPostAllowed(platform) {
-  try {
-    const { rows } = await pool.query(
-      `SELECT count(*)::int AS n, max(created_at) AS last
-         FROM social_posts
-        WHERE platform = $1 AND created_at > now() - interval '24 hours'`,
-      [platform]
-    );
-    const countLast24h = Number(rows[0]?.n ?? 0);
-    const last = rows[0]?.last ? new Date(rows[0].last) : null;
-    return decidePostAllowed({ countLast24h, last, now: /* @__PURE__ */ new Date(), platform });
-  } catch {
-    return null;
-  }
-}
-async function recordPost(platform, account, permalink) {
-  try {
-    await pool.query(
-      `INSERT INTO social_posts (platform, account, permalink) VALUES ($1, $2, $3)`,
-      [platform, account || null, permalink || null]
-    );
-  } catch {
-  }
-}
-
-// src/tools.ts
-var STEEL_BASE = "https://api.steel.dev/v1";
-var FIRECRAWL_BASE = "https://api.firecrawl.dev/v1";
-function publicBaseUrl() {
-  return (process.env["PUBLIC_BASE_URL"] || process.env["RENDER_EXTERNAL_URL"] || "https://bos-aura.onrender.com").replace(/\/$/, "");
-}
-function uploadUrl(id, download = false) {
-  return `${publicBaseUrl()}/api/uploads/${id}${download ? "?download=1" : ""}`;
-}
-function ipv4IsPrivate(ip) {
-  const parts = ip.split(".").map((p) => parseInt(p, 10));
-  if (parts.length !== 4 || parts.some((n) => Number.isNaN(n) || n < 0 || n > 255)) return true;
-  const [a, b] = parts;
-  if (a === 0 || a === 10 || a === 127) return true;
-  if (a === 169 && b === 254) return true;
-  if (a === 172 && b >= 16 && b <= 31) return true;
-  if (a === 192 && b === 168) return true;
-  if (a === 100 && b >= 64 && b <= 127) return true;
-  if (a >= 224) return true;
-  return false;
-}
-function ipIsPrivate(ip) {
-  if (ip.includes(":")) {
-    const lower = ip.toLowerCase();
-    if (lower === "::1" || lower === "::") return true;
-    if (lower.startsWith("fe80")) return true;
-    if (lower.startsWith("fc") || lower.startsWith("fd")) return true;
-    const mapped = lower.match(/::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-    if (mapped) return ipv4IsPrivate(mapped[1]);
-    return false;
-  }
-  return ipv4IsPrivate(ip);
-}
-async function ssrfGuard(url2) {
-  let parsed;
-  try {
-    parsed = new URL(url2);
-  } catch {
-    return "error: invalid url.";
-  }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    return "error: only http(s) urls are allowed.";
-  }
-  const host = parsed.hostname.toLowerCase();
-  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".internal") || host.endsWith(".local")) {
-    return "error: requests to internal hostnames are blocked.";
-  }
-  if (isIP(host)) {
-    return ipIsPrivate(host) ? "error: requests to private/internal addresses are blocked." : null;
-  }
-  try {
-    const records = await lookup(host, { all: true });
-    if (!records.length) return "error: could not resolve host.";
-    for (const rec of records) {
-      if (ipIsPrivate(rec.address)) {
-        return "error: host resolves to a private/internal address; blocked.";
-      }
-    }
-  } catch {
-    return "error: could not resolve host.";
-  }
-  return null;
-}
-function clip3(s, n) {
-  return s.length > n ? `${s.slice(0, n)}
-\u2026[truncated ${s.length - n} chars]` : s;
-}
-function sanitizeForStorage(s) {
-  return s.split(String.fromCharCode(0)).join("").replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, "\uFFFD").replace(/(^|[^\uD800-\uDBFF])([\uDC00-\uDFFF])/g, "$1\uFFFD");
-}
-async function firecrawlSearch(query, limit) {
-  const key = process.env["FIRECRAWL_API_KEY"];
-  if (!key) throw new Error("FIRECRAWL_API_KEY is not set");
-  const r = await fetch(`${FIRECRAWL_BASE}/search`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ query, limit })
-  });
-  if (!r.ok) throw new Error(`Firecrawl ${r.status}: ${(await r.text()).slice(0, 200)}`);
-  const data = await r.json();
-  const results = data.data ?? [];
-  if (!results.length) return `no web results for "${query}".`;
-  return `[search provider: firecrawl]
-${results.map((x, i) => `${i + 1}. ${x.title ?? "(untitled)"}
-   ${x.url ?? ""}
-   ${clip3((x.description ?? "").trim(), 300)}`).join("\n\n")}`;
-}
-async function webSearch(query, limit) {
-  const providers = [
-    { name: "tavily", enabled: !!process.env["TAVILY_API_KEY"], run: () => tavilySearch(query, limit) },
-    { name: "exa", enabled: !!process.env["EXA_API_KEY"], run: () => exaSearch(query, limit) },
-    { name: "firecrawl", enabled: !!process.env["FIRECRAWL_API_KEY"], run: () => firecrawlSearch(query, limit) }
-  ].filter((p) => p.enabled);
-  if (!providers.length) {
-    return "error: no web search provider is configured (set TAVILY_API_KEY, EXA_API_KEY, or FIRECRAWL_API_KEY).";
-  }
-  const errors = [];
-  for (const provider of providers) {
-    try {
-      return await provider.run();
-    } catch (e) {
-      errors.push(`${provider.name}: ${String(e instanceof Error ? e.message : e).slice(0, 120)}`);
-    }
-  }
-  return `error: all web search providers failed \u2014 ${errors.join("; ")}`;
-}
-var MEMORY_CANDIDATE_LIMIT = 1e3;
-function formatMemoryRow(m, score) {
-  const tag = score != null ? ` \xB7 sim ${score.toFixed(3)}` : "";
-  return `#${m.id} [${m.agentName ?? "?"}${m.key ? ` \xB7 ${m.key}` : ""}${tag}] ${clip3(m.content, 600)}`;
-}
-var INTERNAL_META_RE = /(vault[-\s]?(full[-\s]?state|state[-\s]?dump|rag|audit|targeted|secret)|swarm[-\s]?architecture|architecture[-\s]?(consolidated|definitions)|memory[-\s]?(audit|store[-\s]?audit)|rag[-\s]?(sweep|requery|response)|system topology|substrate audit|bundle matrix|sentinel|six[_\s]?zips|_directive_|self[-\s]?audit|abby[-\s]?claw[-\s]?memory)/i;
-function isInternalMeta(m) {
-  return INTERNAL_META_RE.test(`${m.key ?? ""} ${m.tags ?? ""} ${m.content ?? ""}`);
-}
-async function keywordMemorySearch(query, limit) {
-  const like2 = `%${query}%`;
-  const rows = await db.select().from(agentMemoryTable).where(or(ilike(agentMemoryTable.content, like2), ilike(agentMemoryTable.key, like2), ilike(agentMemoryTable.tags, like2))).orderBy(desc(agentMemoryTable.createdAt)).limit(limit * 3);
-  const visible = rows.filter((m) => !isInternalMeta(m)).slice(0, limit);
-  if (!visible.length) return `no relevant memory entries matched "${query}".`;
-  return visible.map((m) => formatMemoryRow(m)).join("\n---\n");
-}
-async function memorySearch(query, limit) {
-  if (pineconeConfigured()) {
-    const queryVec = await embed(query);
-    if (queryVec) {
-      const matches = await pineconeQuery(queryVec, limit * 3);
-      if (matches && matches.length) {
-        const rows = matches.map((m) => {
-          const md = m.metadata ?? {};
-          return {
-            id: Number(md["pgId"] ?? m.id) || 0,
-            agentName: md["agentName"] ?? null,
-            key: md["key"] ?? null,
-            content: String(md["content"] ?? ""),
-            score: m.score
-          };
-        }).filter((r) => !isInternalMeta(r)).slice(0, limit);
-        if (rows.length) return rows.map((r) => formatMemoryRow(r, r.score)).join("\n---\n");
-      }
-    }
-  }
-  if (embeddingsConfigured()) {
-    const queryVec = await embed(query);
-    if (queryVec) {
-      const candidates = await db.select().from(agentMemoryTable).where(isNotNull(agentMemoryTable.embedding)).orderBy(desc(agentMemoryTable.createdAt)).limit(MEMORY_CANDIDATE_LIMIT);
-      const scored = candidates.filter((m) => !isInternalMeta(m)).map((m) => {
-        const vec = parseEmbedding(m.embedding);
-        return vec ? { row: m, score: cosineSimilarity(queryVec, vec) } : null;
-      }).filter((x) => x !== null).sort((a, b) => b.score - a.score).slice(0, limit);
-      if (scored.length) {
-        return scored.map((s) => formatMemoryRow(s.row, s.score)).join("\n---\n");
-      }
-    }
-  }
-  return keywordMemorySearch(query, limit);
-}
-function safeCalc(expr) {
-  const cleaned = expr.trim();
-  if (!cleaned) return "error: expression is required.";
-  if (cleaned.length > 500) return "error: expression is too long (max 500 chars).";
-  if (!/^[-+*/%.()0-9eE\s]+$/.test(cleaned)) {
-    return "error: only numbers and the operators + - * / % ** ( ) are allowed.";
-  }
-  try {
-    const fn = new Function(`"use strict"; return (${cleaned});`);
-    const val = fn();
-    if (typeof val !== "number" || !Number.isFinite(val)) {
-      return "error: expression did not evaluate to a finite number.";
-    }
-    return String(val);
-  } catch {
-    return "error: could not evaluate expression.";
-  }
-}
-function scrapeLooksBlocked(text2) {
-  const t = text2.trim();
-  if (t.length < 200) return true;
-  return /performing security verification|verify you are (not a |a )?(human|bot)|enable javascript|access denied|captcha|unusual traffic|request blocked|are not a bot/i.test(
-    t
-  );
-}
-async function steelScrapeOnce(url2, useProxy) {
-  const key = process.env["STEEL_API_KEY"];
-  if (!key) throw new Error("STEEL_API_KEY is not set");
-  const r = await fetch(`${STEEL_BASE}/scrape`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-    // Ask for cleaned markdown, not raw HTML — far more signal per character, so a
-    // single scrape fits the readable content (titles, scores) inside the response
-    // budget instead of being truncated mid-page and forcing extra calls.
-    body: JSON.stringify({ url: url2, format: ["markdown"], useProxy })
-  });
-  if (!r.ok) throw new Error(`Steel ${r.status}: ${(await r.text()).slice(0, 200)}`);
-  const data = await r.json();
-  const content = data["content"];
-  if (typeof content === "string") return content;
-  if (content && typeof content === "object") {
-    return content["markdown"] || content["text"] || content["html"] || JSON.stringify(content);
-  }
-  return data["markdown"] || JSON.stringify(data);
-}
-async function steelScrape(url2) {
-  const direct = await steelScrapeOnce(url2, false);
-  if (!scrapeLooksBlocked(direct)) return direct;
-  try {
-    const viaProxy = await steelScrapeOnce(url2, true);
-    if (!scrapeLooksBlocked(viaProxy)) return viaProxy;
-    return viaProxy.trim().length > direct.trim().length ? viaProxy : direct;
-  } catch {
-    return direct;
-  }
-}
-async function steelScreenshot(url2) {
-  const key = process.env["STEEL_API_KEY"];
-  if (!key) throw new Error("STEEL_API_KEY is not set");
-  const r = await fetch(`${STEEL_BASE}/screenshot`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ url: url2, fullPage: true })
-  });
-  if (!r.ok) throw new Error(`Steel ${r.status}: ${(await r.text()).slice(0, 200)}`);
-  const buf = await r.arrayBuffer();
-  return buf.byteLength;
-}
-var CODE_TIMEOUT_MS = 8e3;
-var CODE_OUTPUT_CAP = 4e3;
-var sandboxMode = null;
-function detectSandboxMode() {
-  if (sandboxMode) return sandboxMode;
-  try {
-    const probe = spawnSync(
-      "unshare",
-      [
-        "--net",
-        "--mount",
-        "--map-root-user",
-        "/bin/sh",
-        "-c",
-        "mount -t tmpfs tmpfs /home && exit 0"
-      ],
-      { timeout: 4e3 }
-    );
-    sandboxMode = probe.status === 0 ? "namespace" : "none";
-  } catch {
-    sandboxMode = "none";
-  }
-  if (sandboxMode === "none") {
-    logger.warn(
-      "code_exec: unprivileged namespaces unavailable \u2014 running with scrubbed env only (no network/fs isolation). Code execution should be treated as untrusted on this host."
-    );
-  } else {
-    logger.info("code_exec: namespace isolation active (no network, repo hidden).");
-  }
-  return sandboxMode;
-}
-function runSandboxed(language, source) {
-  return new Promise((resolve) => {
-    const lang = language.toLowerCase();
-    let runtime;
-    let filename;
-    let runtimeArgs;
-    if (lang === "python" || lang === "py" || lang === "python3") {
-      runtime = "python3";
-      filename = "main.py";
-      runtimeArgs = ["-I", filename];
-    } else if (lang === "javascript" || lang === "js" || lang === "node") {
-      runtime = "node";
-      filename = "main.js";
-      runtimeArgs = [filename];
-    } else {
-      resolve(`error: unsupported language "${language}". Use "python" or "javascript".`);
-      return;
-    }
-    let dir;
-    try {
-      dir = mkdtempSync(join(tmpdir(), "clawexec-"));
-      writeFileSync(join(dir, filename), source, "utf8");
-    } catch (e) {
-      resolve(`error: failed to prepare sandbox: ${String(e).slice(0, 200)}`);
-      return;
-    }
-    let cleaned = false;
-    const cleanup = () => {
-      if (cleaned) return;
-      cleaned = true;
-      try {
-        rmSync(dir, { recursive: true, force: true });
-      } catch {
-      }
-    };
-    const mode = detectSandboxMode();
-    let cmd;
-    let args;
-    if (mode === "namespace") {
-      cmd = "unshare";
-      args = [
-        "--net",
-        "--mount",
-        "--map-root-user",
-        "/bin/sh",
-        "-c",
-        // Fail-closed: if the /home mask can't be applied, abort WITHOUT
-        // running the code (otherwise the repo would stay visible). The temp
-        // source dir lives under /tmp, so it survives the tmpfs mount on /home.
-        `mount -t tmpfs tmpfs /home || { echo "sandbox: filesystem isolation failed" >&2; exit 97; }; cd "${dir}" && exec ${runtime} ${runtimeArgs.join(" ")}`
-      ];
-    } else {
-      cmd = runtime;
-      args = runtimeArgs;
-    }
-    const child = spawn(cmd, args, {
-      cwd: dir,
-      env: { PATH: process.env["PATH"] ?? "/usr/bin:/bin", HOME: dir },
-      killSignal: "SIGKILL",
-      detached: true
-    });
-    let killReason = null;
-    const killTree = (reason) => {
-      if (killReason) return;
-      killReason = reason;
-      try {
-        if (child.pid) process.kill(-child.pid, "SIGKILL");
-      } catch {
-        try {
-          child.kill("SIGKILL");
-        } catch {
-        }
-      }
-    };
-    const timer2 = setTimeout(() => killTree("timeout"), CODE_TIMEOUT_MS);
-    let stdout = "";
-    let stderr = "";
-    let bytes = 0;
-    const onData = (chunk, sink) => {
-      bytes += chunk.length;
-      if (bytes > CODE_OUTPUT_CAP * 2) {
-        killTree("output-cap");
-        return;
-      }
-      if (sink === "out") stdout += chunk.toString();
-      else stderr += chunk.toString();
-    };
-    child.stdout?.on("data", (c) => onData(c, "out"));
-    child.stderr?.on("data", (c) => onData(c, "err"));
-    child.on("error", (err) => {
-      clearTimeout(timer2);
-      cleanup();
-      resolve(`error: failed to spawn sandbox: ${String(err).slice(0, 200)}`);
-    });
-    child.on("close", (code) => {
-      clearTimeout(timer2);
-      cleanup();
-      const out = clip3(stdout.trim(), CODE_OUTPUT_CAP);
-      const errOut = clip3(stderr.trim(), CODE_OUTPUT_CAP);
-      if (killReason === "timeout") {
-        resolve(`error: execution killed (timeout ${CODE_TIMEOUT_MS}ms).
-stdout:
-${out}`);
-        return;
-      }
-      if (killReason === "output-cap") {
-        resolve(`error: execution killed (output cap exceeded).
-stdout:
-${out}`);
-        return;
-      }
-      const parts = [`exit code: ${code ?? 0}`];
-      if (out) parts.push(`stdout:
-${out}`);
-      if (errOut) parts.push(`stderr:
-${errOut}`);
-      if (!out && !errOut) parts.push("(no output)");
-      resolve(parts.join("\n"));
-    });
-  });
-}
-var TOOL_REGISTRY = {
-  web_scrape: {
-    name: "web_scrape",
-    description: "Fetch and extract the readable text/markdown content of a live web page by URL. Use to read articles, docs, competitor pages, or any public webpage. Do NOT use it for github.com pages (search results, repos) \u2014 those are JavaScript-rendered and return no useful content; use http_request against the GitHub API (https://api.github.com/...) instead, which is auto-authenticated.",
-    parameters: {
-      type: "object",
-      properties: {
-        url: { type: "string", description: "Absolute http(s) URL of the page to read." }
-      },
-      required: ["url"]
-    },
-    run: async (args) => {
-      const url2 = String(args["url"] ?? "").trim();
-      if (!/^https?:\/\//i.test(url2)) return "error: a valid absolute http(s) url is required.";
-      try {
-        const host = new URL(url2).hostname.toLowerCase();
-        if (host === "github.com" || host === "www.github.com") {
-          const m = url2.match(/github\.com\/search\?(.*)$/i);
-          const apiHint = m ? `https://api.github.com/search/repositories?${m[1].replace(/type=repositories&?/i, "")}` : "https://api.github.com/repos/<owner>/<repo>  (or /search/repositories?q=...)";
-          return `error: github.com web pages are JavaScript-rendered and not scrapable. Use http_request (GET) against the GitHub REST API instead \u2014 it is auto-authenticated. Try: ${apiHint}`;
-        }
-      } catch {
-      }
-      const content = await steelScrape(url2);
-      return clip3(content, 8e3);
-    }
-  },
-  web_screenshot: {
-    name: "web_screenshot",
-    description: "Capture a full-page screenshot of a URL via the Steel browser. Returns a confirmation with the image size in bytes.",
-    parameters: {
-      type: "object",
-      properties: {
-        url: { type: "string", description: "Absolute http(s) URL to screenshot." }
-      },
-      required: ["url"]
-    },
-    run: async (args) => {
-      const url2 = String(args["url"] ?? "").trim();
-      if (!/^https?:\/\//i.test(url2)) return "error: a valid absolute http(s) url is required.";
-      const bytes = await steelScreenshot(url2);
-      if (bytes < 1024) {
-        return `error: screenshot returned no usable image (${bytes} bytes) for ${url2} \u2014 the page likely blocked the capture or timed out.`;
-      }
-      return `screenshot captured for ${url2} (${Math.round(bytes / 1024)} KB).`;
-    }
-  },
-  web_search: {
-    name: "web_search",
-    description: "Search the live web and return the top results (title, URL, snippet). Backed by Tavily, Exa, and Firecrawl with automatic failover. Use to discover current information and find pages worth reading. To read a result's full content, follow up with web_scrape on its URL.",
-    parameters: {
-      type: "object",
-      properties: {
-        query: { type: "string", description: "The search query." },
-        limit: { type: "integer", description: "How many results to return (1-10, default 5).", minimum: 1, maximum: 10 }
-      },
-      required: ["query"]
-    },
-    run: async (args) => {
-      const query = String(args["query"] ?? "").trim();
-      if (!query) return "error: query is required.";
-      let limit = Number(args["limit"] ?? 5);
-      if (!Number.isFinite(limit)) limit = 5;
-      limit = Math.max(1, Math.min(10, Math.floor(limit)));
-      return webSearch(query, limit);
-    }
-  },
-  http_request: {
-    name: "http_request",
-    description: 'Make a real outbound HTTP request to any API endpoint. Supports GET/POST/PUT/PATCH/DELETE with optional headers and a JSON/text body. Returns the status and response body (truncated). For rate-limited or private APIs, authenticate with a vault secret placeholder in the headers rather than a raw key \u2014 e.g. GitHub: headers { "Authorization": "Bearer {{secret:GITHUB_TOKEN}}" }. Always authenticate GitHub (api.github.com) calls this way: it raises the limit from 60 to 5,000 requests/hour, and the placeholder is resolved to the real token only at send time, so the secret never enters your context. Use vault_list to see which secret names exist.',
-    parameters: {
-      type: "object",
-      properties: {
-        method: { type: "string", enum: ["GET", "POST", "PUT", "PATCH", "DELETE"], description: "HTTP method." },
-        url: { type: "string", description: "Absolute http(s) URL." },
-        headers: { type: "object", description: "Optional request headers as a flat key/value object." },
-        body: { type: "string", description: "Optional request body (send JSON as a string)." }
-      },
-      required: ["method", "url"]
-    },
-    run: async (args) => {
-      const usedSecrets = /* @__PURE__ */ new Set();
-      const url2 = (await substituteSecrets(String(args["url"] ?? ""), usedSecrets)).trim();
-      if (!/^https?:\/\//i.test(url2)) return "error: a valid absolute http(s) url is required.";
-      const blocked = await ssrfGuard(url2);
-      if (blocked) return blocked;
-      const method = String(args["method"] ?? "GET").toUpperCase();
-      const headers = {};
-      const rawHeaders = args["headers"];
-      if (rawHeaders && typeof rawHeaders === "object") {
-        for (const [k, v] of Object.entries(rawHeaders)) {
-          headers[k] = await substituteSecrets(String(v), usedSecrets);
-        }
-      }
-      const body = args["body"] != null && method !== "GET" && method !== "DELETE" ? await substituteSecrets(String(args["body"]), usedSecrets) : void 0;
-      try {
-        const host = new URL(url2).hostname.toLowerCase();
-        if (host === "api.github.com" || host.endsWith(".githubusercontent.com")) {
-          const lc = Object.keys(headers).map((k) => k.toLowerCase());
-          const ghToken = process.env["GITHUB_API_KEY"] || process.env["GITHUB_TOKEN"] || process.env["SANDBOX_GITHUB_TOKEN"];
-          if (ghToken && !lc.includes("authorization")) {
-            headers["Authorization"] = `Bearer ${ghToken}`;
-            usedSecrets.add(ghToken);
-          }
-          if (!lc.includes("user-agent")) headers["User-Agent"] = "OpenClaw-Omega";
-          if (host === "api.github.com" && !lc.includes("accept")) headers["Accept"] = "application/vnd.github+json";
-        }
-      } catch {
-      }
-      const ctrl = new AbortController();
-      const timer2 = setTimeout(() => ctrl.abort(), 15e3);
-      try {
-        let currentUrl = url2;
-        let r = null;
-        for (let hop = 0; hop < 5; hop++) {
-          r = await fetch(currentUrl, { method, headers, body, signal: ctrl.signal, redirect: "manual" });
-          if (r.status < 300 || r.status >= 400) break;
-          const location2 = r.headers.get("location");
-          if (!location2) break;
-          const next = new URL(location2, currentUrl).toString();
-          if (!/^https?:\/\//i.test(next)) return "error: redirect to a non-http(s) target was blocked.";
-          const redirectBlocked = await ssrfGuard(next);
-          if (redirectBlocked) return `error: redirect blocked \u2014 ${redirectBlocked.replace(/^error: /, "")}`;
-          currentUrl = next;
-          if (hop === 4) return "error: too many redirects.";
-        }
-        if (!r) return "error: request failed: no response.";
-        const text2 = await r.text();
-        const safe = redactSecrets(text2, usedSecrets);
-        return `HTTP ${r.status} ${r.statusText}
-${clip3(safe, 4e3)}`;
-      } catch (e) {
-        return redactSecrets(`error: request failed: ${String(e).slice(0, 200)}`, usedSecrets);
-      } finally {
-        clearTimeout(timer2);
-      }
-    }
-  },
-  code_exec: {
-    name: "code_exec",
-    description: "Execute a short code snippet in an isolated subprocess and return its stdout/stderr. Supports 'python' and 'javascript'. Hard 8s timeout. Secrets, env vars, and the database are never exposed. Where the host supports unprivileged namespaces, execution also has NO network access and CANNOT see the app/repo filesystem; on hosts without that support it falls back to a scrubbed-env subprocess with network/filesystem still reachable. Use for self-contained calculations, data transforms, and quick logic checks \u2014 not for fetching URLs (use http_request) or reading project files.",
-    parameters: {
-      type: "object",
-      properties: {
-        language: { type: "string", enum: ["python", "javascript"], description: "Runtime to use." },
-        source: { type: "string", description: "Self-contained source code. Print results to stdout." }
-      },
-      required: ["language", "source"]
-    },
-    run: async (args) => {
-      const language = String(args["language"] ?? "");
-      const source = String(args["source"] ?? "");
-      if (!source.trim()) return "error: source is required.";
-      return runSandboxed(language, source);
-    }
-  },
-  cloud_code_exec: {
-    name: "cloud_code_exec",
-    description: "Execute code in a fully isolated E2B cloud sandbox (a real remote VM with network access and a full runtime). Supports 'python' and 'javascript'. Use this instead of code_exec when the code needs network access, pip/npm packages, or stronger isolation than the local sandbox. Returns stdout/stderr/result.",
-    parameters: {
-      type: "object",
-      properties: {
-        language: { type: "string", enum: ["python", "javascript"], description: "Runtime to use." },
-        source: { type: "string", description: "Self-contained source code. Print results to stdout." }
-      },
-      required: ["language", "source"]
-    },
-    run: async (args) => {
-      const language = String(args["language"] ?? "");
-      const source = String(args["source"] ?? "");
-      if (!source.trim()) return "error: source is required.";
-      if (!e2bConfigured()) {
-        return "error: E2B cloud sandbox is not configured (set E2B_API_KEY). Use code_exec for local execution instead.";
-      }
-      return e2bExec(language, source);
-    }
-  },
-  sandbox_exec: {
-    name: "sandbox_exec",
-    description: "Run a shell script inside a fresh, isolated E2B cloud VM (its own real computer \u2014 node, git, network, full Linux). Use for anything that needs a real dev environment: clone a public repo, install packages, run a build/test suite, run scripts, curl APIs, etc. It is also your INTERACTIVE-AUTOMATION substrate: pip/npm-install and drive real tools here \u2014 e.g. Playwright (`pip install playwright && playwright install chromium`) to navigate multi-step web forms, fill fields, click, and submit; or reportlab/fpdf2/fillpdf/pypdf to generate and fill official PDF forms (e.g. AcroForm fields). Print results/paths to stdout and read back any output. STATELESS: each call is a clean disposable VM and files do NOT persist between calls \u2014 generate a file, base64 it, and print it ALL in ONE script (then pass to save_artifact); never write in one call and read in the next. NO access to the OpenClaw server or its secrets. For making changes to the OpenClaw repo and opening a PR, use sandbox_repo_pr instead.",
-    parameters: {
-      type: "object",
-      properties: {
-        script: { type: "string", description: "A bash script to run in the VM (commands can be chained with && and newlines)." }
-      },
-      required: ["script"]
-    },
-    run: async (args) => {
-      const script = String(args["script"] ?? "").trim();
-      if (!script) return "error: script is required.";
-      if (!sandboxConfigured()) return "error: E2B cloud sandbox is not configured (E2B_API_KEY).";
-      return runInSandbox(script);
-    }
-  },
-  sandbox_repo_pr: {
-    name: "sandbox_repo_pr",
-    description: "Work on the OpenClaw (bos-aura) repository for real: clones it into an isolated E2B VM, runs your shell script to make changes and/or run the test suite (cwd = repo root), commits, pushes a branch, and opens a Pull Request for human review. Use this to implement a fix/feature, run the real tests against your changes, and propose them. Scoped to the bos-aura repo only. The GitHub token is handled server-side and never exposed to you.",
-    parameters: {
-      type: "object",
-      properties: {
-        branch: { type: "string", description: "New branch name, e.g. 'agent/fix-typo'." },
-        script: { type: "string", description: "Bash script run inside the cloned repo to make changes (e.g. edit files with sed/tee) and optionally run tests. cwd is the repo root." },
-        title: { type: "string", description: "PR title (also used as the commit message)." },
-        body: { type: "string", description: "Optional PR description." },
-        baseBranch: { type: "string", description: "Base branch for the PR (default 'main')." }
-      },
-      required: ["branch", "script", "title"]
-    },
-    run: async (args) => {
-      const branch = String(args["branch"] ?? "").trim();
-      const script = String(args["script"] ?? "").trim();
-      const title = String(args["title"] ?? "").trim();
-      if (!branch || !script || !title) return "error: branch, script, and title are required.";
-      if (!sandboxConfigured()) return "error: E2B cloud sandbox is not configured (E2B_API_KEY).";
-      if (!gitWriteConfigured()) return "error: git push is not enabled \u2014 the operator must set SANDBOX_GITHUB_TOKEN.";
-      return repoPr({
-        branch,
-        script,
-        title,
-        body: args["body"] != null ? String(args["body"]) : void 0,
-        baseBranch: args["baseBranch"] != null ? String(args["baseBranch"]) : void 0
-      });
-    }
-  },
-  memory_write: {
-    name: "memory_write",
-    description: "Persist a fact, finding, or result to the swarm's shared long-term memory so any agent can retrieve it later.",
-    parameters: {
-      type: "object",
-      properties: {
-        content: { type: "string", description: "The information to store." },
-        key: { type: "string", description: "Optional short label/topic for the memory." },
-        tags: { type: "string", description: "Optional comma-separated tags." }
-      },
-      required: ["content"]
-    },
-    run: async (args, ctx) => {
-      const content = String(args["content"] ?? "").trim();
-      if (!content) return "error: content is required.";
-      const key = args["key"] != null ? String(args["key"]).slice(0, 200) : null;
-      const stored = content.slice(0, 8e3);
-      const vector2 = await embed(key ? `${key}
-${stored}` : stored);
-      const tags = args["tags"] != null ? String(args["tags"]).slice(0, 300) : null;
-      const [row] = await db.insert(agentMemoryTable).values({
-        agentId: ctx.agentId,
-        agentName: ctx.agentName,
-        key,
-        content: stored,
-        tags,
-        embedding: vector2 ? JSON.stringify(vector2) : null
-      }).returning();
-      let pineconed = false;
-      if (vector2 && row?.id != null && pineconeConfigured()) {
-        pineconed = await pineconeUpsert(String(row.id), vector2, {
-          pgId: row.id,
-          agentName: ctx.agentName ?? null,
-          key,
-          tags,
-          content: stored.slice(0, 1500)
-        });
-      }
-      return `stored memory #${row?.id ?? "?"}${vector2 ? pineconed ? " (semantic \xB7 pinecone)" : " (semantic)" : ""}.`;
-    }
-  },
-  memory_search: {
-    name: "memory_search",
-    description: "Search the swarm's shared long-term memory for prior TASK-RELEVANT facts about the operator's domain (e.g. earlier findings, figures, sources for this project). Semantic vector similarity when embeddings are configured, else keyword. Do NOT use this to research the swarm itself (its architecture, roles, vault, prior audits) \u2014 that is internal state, not a deliverable. If results are only internal/meta/self-audit entries, ignore them and gather the real answer from web_search/web_scrape/http_request. Call it at most a couple of times; don't loop.",
-    parameters: {
-      type: "object",
-      properties: {
-        query: { type: "string", description: "What to retrieve from stored memory (natural language or keywords)." }
-      },
-      required: ["query"]
-    },
-    run: async (args) => {
-      const query = String(args["query"] ?? "").trim();
-      if (!query) return "error: query is required.";
-      return memorySearch(query, 5);
-    }
-  },
-  calculator: {
-    name: "calculator",
-    description: "Evaluate an arithmetic expression precisely and return the numeric result. Supports + - * / % ** and parentheses. Use this instead of doing mental math for any non-trivial calculation.",
-    parameters: {
-      type: "object",
-      properties: {
-        expression: { type: "string", description: "Arithmetic expression, e.g. '(1234 * 19) / 7 + 2**8'." }
-      },
-      required: ["expression"]
-    },
-    run: async (args) => safeCalc(String(args["expression"] ?? ""))
-  },
-  marketing_playbook: {
-    name: "marketing_playbook",
-    description: "Return the Marketing Engine \u2014 the universal plug-and-play post\u2192conversion playbook (ANY niche/offer/platform). Call with NO args BEFORE writing any marketing content for the core engine: hook\u2192problem\u2192insight\u2192value\u2192CTA\u2192follow-up, one goal + one CTA keyword, platform-tuned, accuracy-first (research & cite every claim \u2014 never fabricate stats/studies/testimonials). Pass a `section` for the enterprise build (campaign_brief, offer_ladder, audience, post_templates, campaign_types, lead_magnets, dm_flow, landing_page, email_nurture, paid_media, channels, production, governance, qa, kpis, experiments, rollout). Execute with image_generate \u2192 instagram_post/composio_action \u2192 schedule_task \u2192 memory_write.",
-    parameters: {
-      type: "object",
-      properties: {
-        section: {
-          type: "string",
-          enum: Object.keys(MARKETING_SECTIONS),
-          description: "Optional deep module to return instead of the core engine."
-        }
-      }
-    },
-    run: async (args) => marketingPlaybook(args["section"] != null ? String(args["section"]) : void 0)
-  },
-  tier1_sources: {
-    name: "tier1_sources",
-    description: "Return the vetted Tier-1 (authoritative, primary) source URLs to research from \u2014 government/regulatory, primary institutions, peer-reviewed journals & standards bodies, official company/platform docs, Tier-1 wire services, and recognized data authorities. Call this BEFORE web research so you start from serious sources, then web_scrape/http_request those URLs. Optionally pass a category to filter.",
-    parameters: {
-      type: "object",
-      properties: {
-        category: {
-          type: "string",
-          enum: TIER1_SOURCES.map((c) => c.key),
-          description: "Optional domain filter: medicine, finance, markets, news, ai, marketing, engineering, law, social, gov."
-        }
-      }
-    },
-    run: async (args) => {
-      const category = args["category"] != null ? String(args["category"]) : void 0;
-      return tier1SourcesText(category);
-    }
-  },
-  save_artifact: {
-    name: "save_artifact",
-    description: "Save a file you created so the OPERATOR can DOWNLOAD it. Returns a real download URL \u2014 use this for any deliverable file (report, CSV, markdown, code, JSON, or a PDF). After saving, you MUST include the returned markdown download link in your final answer so the operator can click it. For text deliverables pass the text in `content` (encoding 'utf8'). For a binary file you generated in sandbox_exec/code_exec (e.g. a PDF), base64-encode it there (`base64 -w0 file.pdf`), print it, then pass that string as `content` with encoding 'base64'. Never claim a file exists without saving it here first.",
-    parameters: {
-      type: "object",
-      properties: {
-        filename: { type: "string", description: "File name with extension, e.g. 'fl-llc-articles.pdf' or 'market-research.md'." },
-        content: { type: "string", description: "The file content: UTF-8 text, or base64 bytes when encoding='base64'." },
-        mime: { type: "string", description: "Optional MIME type, e.g. 'application/pdf', 'text/markdown', 'text/csv'. Inferred from the extension if omitted." },
-        encoding: { type: "string", enum: ["utf8", "base64"], description: "How `content` is encoded (default 'utf8')." }
-      },
-      required: ["filename", "content"]
-    },
-    run: async (args) => {
-      const filename = String(args["filename"] ?? "").trim().slice(0, 255) || "artifact";
-      const raw = String(args["content"] ?? "");
-      if (!raw) return "error: content is required.";
-      const encoding = String(args["encoding"] ?? "utf8").toLowerCase() === "base64" ? "base64" : "utf8";
-      let base643;
-      let bytes;
-      try {
-        const buf = encoding === "base64" ? Buffer.from(raw.includes(",") ? raw.slice(raw.indexOf(",") + 1) : raw, "base64") : Buffer.from(raw, "utf8");
-        bytes = buf.length;
-        if (bytes === 0) return "error: content decoded to 0 bytes.";
-        if (bytes > 20 * 1024 * 1024) return "error: file too large (max 20 MB).";
-        base643 = buf.toString("base64");
-      } catch (e) {
-        return `error: could not decode content: ${String(e).slice(0, 200)}`;
-      }
-      const ext = filename.includes(".") ? filename.split(".").pop().toLowerCase() : "";
-      const MIME = {
-        pdf: "application/pdf",
-        md: "text/markdown",
-        markdown: "text/markdown",
-        txt: "text/plain",
-        csv: "text/csv",
-        json: "application/json",
-        html: "text/html",
-        xml: "application/xml",
-        js: "text/javascript",
-        ts: "text/plain",
-        py: "text/plain",
-        png: "image/png",
-        jpg: "image/jpeg",
-        jpeg: "image/jpeg",
-        svg: "image/svg+xml",
-        zip: "application/zip",
-        docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-      };
-      const mimeType = (args["mime"] != null ? String(args["mime"]) : MIME[ext] ?? "application/octet-stream").slice(0, 128);
-      const kind = /^image\//.test(mimeType) ? "image" : /^text\/|json|xml|javascript/.test(mimeType) ? "text" : "other";
-      try {
-        const [row] = await db.insert(attachmentsTable).values({ filename, mimeType, kind, sizeBytes: bytes, data: base643, extractedText: null }).returning();
-        const url2 = uploadUrl(row.id, true);
-        return `saved "${filename}" (${bytes} bytes, ${mimeType}). Operator download link \u2014 INCLUDE THIS in your final answer:
-[Download ${filename}](${url2})`;
-      } catch (e) {
-        return `error: could not save artifact: ${String(e instanceof Error ? e.message : e).slice(0, 200)}`;
-      }
-    }
-  },
-  image_generate: {
-    name: "image_generate",
-    description: "Generate an IMAGE from a text prompt and save it as a downloadable file; returns a markdown image preview plus a download link. Use whenever the operator asks for an image, picture, logo, illustration, diagram, icon, mockup, poster, or banner. Needs OPENAI_API_KEY (or IMAGE_API_KEY).",
-    parameters: {
-      type: "object",
-      properties: {
-        prompt: { type: "string", description: "What to draw \u2014 describe the image in detail." },
-        size: { type: "string", enum: ["1024x1024", "1536x1024", "1024x1536"], description: "Image size (default 1024x1024)." },
-        filename: { type: "string", description: "Optional output filename, e.g. 'logo.png'." }
-      },
-      required: ["prompt"]
-    },
-    run: async (args) => {
-      const apiKey = process.env["OPENAI_API_KEY"] || process.env["IMAGE_API_KEY"];
-      if (!apiKey) return "error: image generation is not configured (set OPENAI_API_KEY).";
-      const prompt = String(args["prompt"] ?? "").trim();
-      if (!prompt) return "error: prompt is required.";
-      const allowed = /* @__PURE__ */ new Set(["1024x1024", "1536x1024", "1024x1536"]);
-      const size = allowed.has(String(args["size"])) ? String(args["size"]) : "1024x1024";
-      const base = (process.env["IMAGE_BASE_URL"] ?? "https://api.openai.com/v1").replace(/\/$/, "");
-      const model = process.env["IMAGE_MODEL"] ?? "gpt-image-1";
-      const ctrl = new AbortController();
-      const timer2 = setTimeout(() => ctrl.abort(), 9e4);
-      try {
-        const r = await fetch(`${base}/images/generations`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ model, prompt, size, n: 1 }),
-          signal: ctrl.signal
-        });
-        const data = await r.json();
-        if (!r.ok) return `error: image API ${r.status}: ${data?.error?.message ?? "request failed"}`;
-        let b64 = data.data?.[0]?.b64_json ?? "";
-        if (!b64 && data.data?.[0]?.url) {
-          const img = await fetch(data.data[0].url);
-          b64 = Buffer.from(await img.arrayBuffer()).toString("base64");
-        }
-        if (!b64) return "error: image API returned no image data.";
-        const buf = Buffer.from(b64, "base64");
-        const filename = (args["filename"] != null ? String(args["filename"]) : prompt.slice(0, 40).replace(/[^a-z0-9]+/gi, "_")).replace(/\.(png|jpg|jpeg)$/i, "") + ".png";
-        const [row] = await db.insert(attachmentsTable).values({ filename, mimeType: "image/png", kind: "image", sizeBytes: buf.length, data: b64, extractedText: null }).returning();
-        const url2 = uploadUrl(row.id);
-        return `generated image "${filename}" (${buf.length} bytes). Its PUBLIC image URL (use this directly as image_url when posting to Instagram/social, or as the link in your answer):
-${url2}
-
-Show it in your answer:
-![${prompt.slice(0, 60)}](${url2})
-[Download ${filename}](${url2}?download=1)`;
-      } catch (e) {
-        return `error: image generation failed: ${String(e instanceof Error ? e.message : e).slice(0, 200)}`;
-      } finally {
-        clearTimeout(timer2);
-      }
-    }
-  },
-  send_message: {
-    name: "send_message",
-    description: "Post a message into the live operator channel feed as yourself. Use to report progress, surface a finding, or coordinate with the operator and the other CLAWs. The message appears immediately in the Discord-style chat stream.",
-    parameters: {
-      type: "object",
-      properties: {
-        content: { type: "string", description: "The message to post (markdown supported)." }
-      },
-      required: ["content"]
-    },
-    run: async (args, ctx) => {
-      const content = String(args["content"] ?? "").trim();
-      if (!content) return "error: content is required.";
-      if (!ctx.channelId) return "error: no channel context is available to post into.";
-      await db.insert(messagesTable).values({
-        channelId: ctx.channelId,
-        agentId: ctx.agentId,
-        agentName: ctx.agentName,
-        agentColor: ctx.agentColor ?? null,
-        content: content.slice(0, 4e3),
-        messageType: "agent"
-      });
-      return `message posted to the operator channel.`;
-    }
-  },
-  vault_list: {
-    name: "vault_list",
-    description: "List the NAMES of secrets available in the operator's encrypted vault (API keys, tokens). Values are never revealed. To USE a secret, put the placeholder {{secret:NAME}} into an http_request url, header, or body \u2014 it is substituted with the real value only at request time.",
-    parameters: { type: "object", properties: {} },
-    run: async () => {
-      const rows = await db.select({ name: vaultSecretsTable.name, description: vaultSecretsTable.description }).from(vaultSecretsTable).orderBy(desc(vaultSecretsTable.updatedAt));
-      if (!rows.length) return "the vault is empty \u2014 no secrets are stored.";
-      return rows.map((s) => `{{secret:${s.name}}}${s.description ? ` \u2014 ${s.description}` : ""}`).join("\n");
-    }
-  },
-  social_accounts: {
-    name: "social_accounts",
-    description: "List the main social platforms wired to their OFFICIAL APIs (via Replit-managed OAuth) and show which are currently authorized/connected for the operator's own account. Call this before social_api to see what you can use.",
-    parameters: { type: "object", properties: {} },
-    run: async () => {
-      const entries = Object.values(PLATFORMS);
-      const results = await Promise.all(
-        entries.map(async (p) => `${await isPlatformConnected(p) ? "\u2713 connected" : "\u2717 not connected"}  ${p.key} \u2014 ${p.displayName} (${p.apiBase})`)
-      );
-      return [
-        "Official social APIs (OAuth handled by Replit; tokens never exposed):",
-        ...results,
-        "",
-        "Use social_api with one of: " + platformKeys().join(", ") + "."
-      ].join("\n");
-    }
-  },
-  composio_apps: {
-    name: "composio_apps",
-    description: "List which SaaS apps are LIVE/connected via Composio for this operator (Gmail, Slack, GitHub, Notion, Calendar, Sheets, \u2026) and their connection status. ALWAYS call this before composio_action so you know exactly which apps you can act on \u2014 never assume an app is connected.",
-    parameters: { type: "object", properties: {} },
-    run: async () => {
-      if (!composioConfigured()) return "error: Composio is not configured (set COMPOSIO_API_KEY).";
-      let conns;
-      try {
-        conns = await composioListConnections();
-      } catch (e) {
-        return `error: could not list Composio connections: ${String(e).slice(0, 200)}`;
-      }
-      const active = conns.filter((c) => /ACTIVE|CONNECTED|ENABLED/i.test(c.status));
-      const execNote = composioExecuteEnabled() ? "Execution is ENABLED \u2014 you may call composio_action on the connected apps below." : "Execution is DISABLED (operator must set ALLOW_COMPOSIO_EXECUTE=true). You can see connections but cannot act yet.";
-      if (!conns.length) {
-        return `No Composio apps are connected yet. ${execNote}
-The operator connects apps in Settings \u2192 Connect Apps (Composio).`;
-      }
-      const lines = conns.map((c) => `${/ACTIVE|CONNECTED|ENABLED/i.test(c.status) ? "\u2713 live" : "\u2022 " + c.status}  ${c.toolkit}  (account ${c.id})`);
-      return [
-        `Composio connected apps (${active.length} live of ${conns.length}):`,
-        ...lines,
-        "",
-        execNote,
-        "Use composio_action with the toolkit slug above (e.g. toolkit: 'github') to act on a live app."
-      ].join("\n");
-    }
-  },
-  composio_action: {
-    name: "composio_action",
-    description: "Execute an authenticated action on a connected SaaS app (Gmail, Slack, GitHub, Notion, Calendar, Sheets, Instagram, \u2026) via Composio. Call composio_apps FIRST to confirm the app is live; the connected account is auto-resolved from the toolkit. TWO modes: (1) NAMED action \u2014 pass `toolkit` + `action` (a Composio tool slug like GMAIL_SEND_EMAIL) + `arguments`. (2) RAW PROXY \u2014 pass `toolkit` + `endpoint` (the app's API path) + `method` (GET/POST/\u2026); put call data in `arguments` (a key/value object) and it is sent as query parameters. Example \u2014 publish an Instagram post (2 steps): first endpoint:'/me/media', method:'POST', arguments:{image_url:'https://\u2026public.png', caption:'\u2026'} \u2192 returns a creation id; then endpoint:'/me/media_publish', method:'POST', arguments:{creation_id:'<that id>'}. Use proxy mode for Instagram/Graph-API. Disabled unless the operator enabled execution.",
-    parameters: {
-      type: "object",
-      properties: {
-        toolkit: { type: "string", description: "Composio app slug, e.g. 'gmail', 'github', 'instagram'. Used to auto-pick your connected account." },
-        action: { type: "string", description: "NAMED mode: the Composio tool/action slug, e.g. 'GMAIL_SEND_EMAIL'. Omit to use raw proxy mode." },
-        arguments: { type: "object", description: "NAMED mode: action arguments as a key/value object." },
-        endpoint: { type: "string", description: "RAW PROXY mode: the connected app's REST path, e.g. '/me/media?fields=id,caption'. Put query params in the path." },
-        method: { type: "string", description: "RAW PROXY mode: HTTP method for the endpoint (GET, POST, \u2026)." },
-        connectedAccountId: { type: "string", description: "Optional explicit connected-account id; auto-resolved from toolkit when omitted." }
-      }
-    },
-    run: async (args) => {
-      if (!composioConfigured()) return "error: Composio is not configured (set COMPOSIO_API_KEY).";
-      if (!composioExecuteEnabled()) {
-        return "error: Composio execution is disabled. The operator must set ALLOW_COMPOSIO_EXECUTE=true after connecting accounts.";
-      }
-      const tk = (args["toolkit"] != null ? String(args["toolkit"]) : "").toLowerCase();
-      const mth = (args["method"] != null ? String(args["method"]) : "").toUpperCase();
-      const ep = args["endpoint"] != null ? String(args["endpoint"]) : "";
-      const isSocialWrite = /instagram|facebook|threads|^x$|twitter|tiktok|linkedin|reddit|youtube/.test(tk) && (["POST", "PUT", "PATCH"].includes(mth) || /publish|media|post|tweet|status|share/i.test(ep));
-      if (isSocialWrite) {
-        const payload = `${ep} ${JSON.stringify(args["arguments"] ?? {})} ${JSON.stringify(args["body"] ?? "")}`;
-        const blockedSocial = blockIfSensitiveForPublic(payload, `your public ${tk || "social"} account`);
-        if (blockedSocial) return blockedSocial;
-      }
-      return composioExecute({
-        toolkit: args["toolkit"] != null ? String(args["toolkit"]) : void 0,
-        action: args["action"] != null ? String(args["action"]) : void 0,
-        arguments: args["arguments"] ?? {},
-        endpoint: args["endpoint"] != null ? String(args["endpoint"]) : void 0,
-        method: args["method"] != null ? String(args["method"]) : void 0,
-        connectedAccountId: args["connectedAccountId"] != null ? String(args["connectedAccountId"]) : void 0
-      });
-    }
-  },
-  instagram_post: {
-    name: "instagram_post",
-    description: "Publish ONE image post to the operator's connected Instagram, end to end. Pass `image_url` (an ABSOLUTE public https URL \u2014 use exactly the URL image_generate returns) and `caption`. This does the whole Instagram flow server-side and correctly: create media container \u2192 publish \u2192 fetch permalink, and returns the live permalink. ALWAYS use this for 'post to my Instagram' instead of hand-driving composio_action \u2014 it can't be malformed. Posts exactly once.",
-    parameters: {
-      type: "object",
-      properties: {
-        image_url: { type: "string", description: "Absolute public https URL of the image (the URL image_generate returns)." },
-        caption: { type: "string", description: "The post caption (hook + body + hashtags)." }
-      },
-      required: ["image_url"]
-    },
-    run: async (args) => {
-      if (!composioConfigured()) return "error: Composio is not configured (set COMPOSIO_API_KEY).";
-      if (!composioExecuteEnabled()) return "error: Composio execution is disabled (operator must set ALLOW_COMPOSIO_EXECUTE=true).";
-      const imageUrl = String(args["image_url"] ?? "").trim();
-      const caption = args["caption"] != null ? String(args["caption"]) : "";
-      const blocked = blockIfSensitiveForPublic(caption, "your public Instagram");
-      if (blocked) return blocked;
-      if (!/^https:\/\/\S+/i.test(imageUrl)) {
-        return "error: image_url must be an absolute https URL that Instagram can fetch (use the URL image_generate returns, e.g. https://<host>/api/uploads/<id>). A relative path will not work.";
-      }
-      const limited = await checkPostAllowed("instagram");
-      if (limited) return limited;
-      const pick2 = (s) => {
-        const nl = s.indexOf("\n");
-        try {
-          return JSON.parse(nl >= 0 ? s.slice(nl + 1) : s);
-        } catch {
-          return null;
-        }
-      };
-      const dataId = (j) => j?.["data"]?.["id"];
-      const r1 = await composioExecute({ toolkit: "instagram", endpoint: "/me/media", method: "POST", arguments: { image_url: imageUrl, caption } });
-      const creationId = dataId(pick2(r1));
-      if (!creationId) return `error: Instagram did not create the media container.
-${r1.slice(0, 600)}`;
-      let publishedId;
-      let last = "";
-      for (let attempt = 0; attempt < 4 && !publishedId; attempt++) {
-        if (attempt > 0) await new Promise((res) => setTimeout(res, 3e3));
-        const r2 = await composioExecute({ toolkit: "instagram", endpoint: "/me/media_publish", method: "POST", arguments: { creation_id: String(creationId) } });
-        last = r2;
-        publishedId = dataId(pick2(r2));
-      }
-      if (!publishedId) return `error: Instagram container ${creationId} was created but publish failed.
-${last.slice(0, 600)}`;
-      const r3 = await composioExecute({ toolkit: "instagram", endpoint: `/${publishedId}?fields=permalink`, method: "GET" });
-      const permalink = pick2(r3)?.["data"]?.["permalink"];
-      await recordPost("instagram", "", permalink ?? String(publishedId));
-      return `\u2705 Instagram post is LIVE. media_id=${publishedId} (container ${creationId}).${permalink ? `
-permalink: ${permalink}` : "\n(permalink fetch returned no link, but publish succeeded)"}`;
-    }
-  },
-  social_api: {
-    name: "social_api",
-    description: "Call the OFFICIAL API of a connected social platform on the operator's own authorized account. OAuth and the access token are fully managed by Replit \u2014 you never see or handle the token. Use this for real reads (profile, media, insights, comments) and writes (publishing) instead of any browser/password login. Run social_accounts first to confirm the platform is connected.",
-    parameters: {
-      type: "object",
-      properties: {
-        platform: {
-          type: "string",
-          enum: platformKeys(),
-          description: "Which connected platform's official API to call."
-        },
-        method: {
-          type: "string",
-          enum: ["GET", "POST", "PUT", "PATCH", "DELETE"],
-          description: "HTTP method (default GET)."
-        },
-        path: {
-          type: "string",
-          description: "API path relative to the platform's base, e.g. '/me?fields=id,username' for Instagram or '/users/me' for X. Do not include the host."
-        },
-        query: {
-          type: "object",
-          description: "Optional query parameters as a flat key/value object."
-        },
-        body: { type: "string", description: "Optional JSON request body (as a string) for writes." }
-      },
-      required: ["platform", "path"]
-    },
-    run: async (args) => {
-      const platform = getPlatform(String(args["platform"] ?? ""));
-      if (!platform) {
-        return `error: unknown platform. Available: ${platformKeys().join(", ")}.`;
-      }
-      const path3 = String(args["path"] ?? "").trim();
-      if (!path3) return "error: path is required.";
-      const method = String(args["method"] ?? "GET");
-      let query;
-      const rawQuery = args["query"];
-      if (rawQuery && typeof rawQuery === "object") {
-        query = {};
-        for (const [k, v] of Object.entries(rawQuery)) {
-          query[k] = String(v);
-        }
-      }
-      const body = args["body"] != null ? String(args["body"]) : void 0;
-      try {
-        const res = await callPlatformApi({ platform, method, path: path3, query, body });
-        return `${platform.displayName} API \u2192 HTTP ${res.status} ${res.statusText}
-${clip3(res.body, 4e3)}`;
-      } catch (e) {
-        return `error: ${String(e instanceof Error ? e.message : e).slice(0, 300)}`;
-      }
-    }
-  },
-  schedule_task: {
-    name: "schedule_task",
-    description: "Schedule a recurring task the swarm runs automatically on a cron schedule (e.g. '0 9 * * *' = daily 9am, '*/30 * * * *' = every 30 min). The task is a natural-language goal executed later through the same agent machinery. Use for monitoring, daily digests, periodic research, or anything the operator wants to happen on a repeat.",
-    parameters: {
-      type: "object",
-      properties: {
-        name: { type: "string", description: "Short name for the scheduled job." },
-        schedule: { type: "string", description: "5-field cron expression, e.g. '0 9 * * *'." },
-        task: { type: "string", description: "The goal/instruction to run on each tick." }
-      },
-      required: ["name", "schedule", "task"]
-    },
-    run: async (args, ctx) => {
-      const name = String(args["name"] ?? "").trim();
-      const schedule = String(args["schedule"] ?? "").trim();
-      const task = String(args["task"] ?? "").trim();
-      if (!name || !schedule || !task) return "error: name, schedule, and task are all required.";
-      if (schedule.split(/\s+/).length !== 5) return "error: schedule must be a 5-field cron expression, e.g. '*/30 * * * *'.";
-      const nextRunAt = computeNextRun(schedule);
-      try {
-        const [row] = await db.insert(cronJobsTable).values({ agentId: ctx.agentId, name, schedule, task, enabled: true, nextRunAt }).returning();
-        return `scheduled "${name}" (job #${row?.id ?? "?"}) on '${schedule}', next run ~${nextRunAt.toISOString()}.`;
-      } catch (e) {
-        return `error: could not schedule task: ${String(e instanceof Error ? e.message : e).slice(0, 200)}`;
-      }
-    }
-  },
-  list_scheduled_tasks: {
-    name: "list_scheduled_tasks",
-    description: "List the swarm's scheduled (cron) jobs \u2014 name, schedule, owner agent, enabled state, run count, last result. Use to see what is set to run automatically.",
-    parameters: { type: "object", properties: {} },
-    run: async () => {
-      const rows = await db.select().from(cronJobsTable).orderBy(desc(cronJobsTable.createdAt)).limit(50);
-      if (!rows.length) return "no scheduled tasks.";
-      return rows.map((j) => `#${j.id} "${j.name}" [${j.schedule}] agent ${j.agentId} \xB7 ${j.enabled ? "enabled" : "disabled"} \xB7 runs ${j.runCount}${j.lastResult ? ` \xB7 last: ${clip3(j.lastResult, 80)}` : ""}
-   task: ${clip3(j.task, 160)}`).join("\n---\n");
-    }
-  },
-  cancel_scheduled_task: {
-    name: "cancel_scheduled_task",
-    description: "Cancel (delete) a scheduled cron job by its id. Use list_scheduled_tasks first to find the id.",
-    parameters: {
-      type: "object",
-      properties: { id: { type: "number", description: "The scheduled job id to cancel." } },
-      required: ["id"]
-    },
-    run: async (args) => {
-      const id = Number(args["id"]);
-      if (!Number.isFinite(id)) return "error: a numeric job id is required.";
-      const [row] = await db.delete(cronJobsTable).where(eq(cronJobsTable.id, id)).returning();
-      return row ? `cancelled scheduled job #${id} ("${row.name}").` : `no scheduled job #${id} found.`;
-    }
-  }
-};
-var ALL_TOOLS = Object.keys(TOOL_REGISTRY);
-var AGENT_TOOLS = {
-  1: ALL_TOOLS,
-  // ABBY — full authority
-  2: ["code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "http_request", "web_scrape", "web_search", "tier1_sources", "memory_search", "memory_write", "vault_list", "save_artifact", "image_generate", "send_message"],
-  // FORGE — code
-  3: ["web_scrape", "web_screenshot", "web_search", "tier1_sources", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "save_artifact", "image_generate", "send_message"],
-  // CRAWLER — browser
-  4: ["memory_write", "memory_search", "web_search", "tier1_sources", "web_scrape", "http_request", "calculator", "vault_list", "save_artifact", "image_generate", "send_message"],
-  // VAULT — memory/RAG
-  5: ["http_request", "web_scrape", "web_search", "tier1_sources", "marketing_playbook", "code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_action", "instagram_post", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task", "save_artifact", "image_generate", "send_message"],
-  // WIRE — APIs + scheduling
-  6: ["web_scrape", "web_search", "tier1_sources", "marketing_playbook", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_action", "instagram_post", "save_artifact", "image_generate", "send_message"]
-  // MR.NICE — social
-};
-function getToolNamesForAgent(agentId) {
-  return AGENT_TOOLS[agentId] ?? ["web_scrape", "memory_search"];
-}
-var ABBY_ID = 1;
-var SWARM_ROSTER = [
-  [2, "FORGE", "code execution & sandbox PRs"],
-  [3, "CRAWLER", "web browsing, scraping, screenshots, search"],
-  [4, "VAULT", "long-term memory & semantic RAG"],
-  [5, "WIRE", "external APIs, integrations, scheduling"],
-  [6, "MR.NICE", "social media & communications"]
-];
-function toolSummary(name) {
-  const d = TOOL_REGISTRY[name]?.description ?? "";
-  return clip3(d.split(/\.\s/)[0], 100);
-}
-function buildCapabilityCard(agentId) {
-  const names = getToolNamesForAgent(agentId);
-  const list = names.map((n) => `- ${n}: ${toolSummary(n)}`).join("\n");
-  let card = `
-
-YOUR TOOLS (${names.length}; call them to do real work, never guess or fabricate results):
-${list}`;
-  card += names.includes("schedule_task") ? `
-
-SCHEDULING: use schedule_task to run work automatically on a cron schedule, list_scheduled_tasks to review jobs, cancel_scheduled_task to stop one.` : `
-
-SCHEDULING: the swarm can run recurring cron jobs (managed by ABBY/WIRE) \u2014 ask ABBY to schedule recurring work.`;
-  card += `
-
-GITHUB: query the GitHub REST API with http_request (https://api.github.com/...); it is auto-authenticated. Never web_scrape github.com pages \u2014 they are JS-rendered and return nothing useful.`;
-  if (names.includes("sandbox_exec")) {
-    card += `
-
-INTERACTIVE AUTOMATION: web_scrape is read-only and won't render JS-heavy or multi-step pages. When a task needs to actually fill/submit a web form or read a JS-rendered page, use sandbox_exec to run Playwright in the cloud VM (install chromium, navigate, fill, click, submit). To produce or fill official PDF forms (e.g. AcroForm fields), use sandbox_exec with reportlab/fpdf2/fillpdf/pypdf and return the output file path. Generate/prepare documents and demonstrate the flow \u2014 never submit a person's legal/financial filing on their behalf.`;
-  }
-  if (names.includes("save_artifact")) {
-    card += `
-
-DELIVERABLE FILES: whenever you produce a file the operator should keep (report, CSV, code, JSON, or a generated PDF), call save_artifact to store it and get a real download URL, then put that [Download \u2026](url) link in your final answer. Do NOT claim a file exists or name a file you didn't save \u2014 an unsaved file is not downloadable and counts as a fabrication. To make a PDF: generate it in sandbox_exec (reportlab/fpdf2), base64 it, then save_artifact with encoding 'base64'.`;
-  }
-  if (names.includes("image_generate")) {
-    card += `
-
-IMAGES: for ANY request for an image/picture/logo/illustration/render/artwork, call image_generate with a detailed prompt \u2014 it produces a REAL raster PNG and returns a preview + download link to put in your answer. Do NOT hand-code an SVG or merely describe the image; only produce SVG if the operator explicitly asks for SVG/vector.`;
-  }
-  if (names.includes("composio_apps") || names.includes("composio_action")) {
-    card += `
-
-CONNECTED APPS (Composio): the operator connects their apps \u2014 social like Instagram/YouTube/Reddit AND SaaS like Gmail/GitHub/Notion/Calendar/Sheets \u2014 in Settings \u2192 Connect Apps, which is COMPOSIO. To act on any of them, FIRST call composio_apps to see which are LIVE, THEN call composio_action on a live app. For a read with no obvious named action slug, use composio_action RAW PROXY mode: pass toolkit + endpoint (the app's REST path) + method, e.g. toolkit:'instagram', endpoint:'/me/media?fields=id,caption', method:'GET'.`;
-    if (names.includes("social_accounts")) {
-      card += ` NOTE: social_accounts/social_api is a SEPARATE native-OAuth path that is usually EMPTY for this operator \u2014 NEVER conclude an app is "not connected" from social_accounts alone. The operator's accounts live in COMPOSIO, so always check composio_apps before saying anything is unavailable.`;
-    }
-    if (names.includes("instagram_post")) {
-      card += ` TO POST AN IMAGE TO INSTAGRAM: call image_generate (it returns an ABSOLUTE public https URL), then call instagram_post with that exact image_url + your caption. instagram_post does the full create\u2192publish\u2192permalink flow server-side and returns the live link \u2014 do NOT hand-build the /me/media calls yourself, and NEVER upload the image to an external host (imgbb/imgur/etc.); the image_generate URL is already public.`;
-    }
-  }
-  if (agentId === ABBY_ID) {
-    card += `
-
-YOUR SWARM (delegate each directive to the right CLAW):
-` + SWARM_ROSTER.map(([id, name, role]) => `- ${name} (#${id}) \u2014 ${role}`).join("\n");
-  }
-  return card;
-}
-function getOpenAiToolsForAgent(agentId) {
-  return getToolNamesForAgent(agentId).map((n) => TOOL_REGISTRY[n]).filter((t) => !!t).map((t) => ({
-    type: "function",
-    function: { name: t.name, description: t.description, parameters: t.parameters }
-  }));
-}
-function isToolAllowed(agentId, toolName) {
-  return getToolNamesForAgent(agentId).includes(toolName);
-}
-async function runTool(toolName, args, ctx) {
-  const def = TOOL_REGISTRY[toolName];
-  if (!def) return `error: unknown tool "${toolName}".`;
-  if (!isToolAllowed(ctx.agentId, toolName)) {
-    return `error: tool "${toolName}" is not permitted for this agent.`;
-  }
-  return sanitizeForStorage(await def.run(args, ctx));
-}
-
-// src/routes/ai.ts
+init_integrations();
+init_tools();
+init_sources();
+init_marketing();
 var router7 = (0, import_express7.Router)();
 var OPENROUTER_BASE = llmBaseUrl();
 var AGENT_PERSONAS = {
@@ -92868,6 +94338,10 @@ router7.post("/ai/complete", async (req, res) => {
   }
 });
 var ai_default = router7;
+
+// src/orchestrator.ts
+init_tools();
+init_integrations();
 
 // src/lib/grounding.ts
 import { createHash } from "node:crypto";
@@ -93457,1158 +94931,10 @@ ${r.result.slice(0, 1500)}`).join("\n\n");
 init_src();
 init_src();
 init_drizzle_orm();
-
-// src/lib/world.ts
-init_src();
-init_src();
-init_drizzle_orm();
-
-// src/lib/worldEngine.ts
-var PImage = __toESM(require_dist5(), 1);
-import { PassThrough } from "node:stream";
-import { fileURLToPath } from "node:url";
-import path from "node:path";
-import fs from "node:fs";
-var fontReady = null;
-var MONO = "WorldMono";
-function ensureFont() {
-  if (fontReady) return fontReady;
-  fontReady = (async () => {
-    try {
-      const here = path.dirname(fileURLToPath(import.meta.url));
-      const dirs = [
-        path.join(here, "..", "assets"),
-        path.join(here, "..", "..", "assets"),
-        path.join(process.cwd(), "assets"),
-        path.join(process.cwd(), "artifacts", "api-server", "assets")
-      ];
-      for (const dir of dirs) {
-        const p = path.join(dir, "DejaVuSansMono.ttf");
-        if (fs.existsSync(p)) {
-          const f = PImage.registerFont(p, MONO);
-          await (f.load ? f.load() : Promise.resolve());
-          return;
-        }
-      }
-    } catch {
-    }
-  })();
-  return fontReady;
-}
-function mulberry32(seed) {
-  let a = seed >>> 0;
-  return () => {
-    a |= 0;
-    a = a + 1831565813 | 0;
-    let t = Math.imul(a ^ a >>> 15, 1 | a);
-    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
-    return ((t ^ t >>> 14) >>> 0) / 4294967296;
-  };
-}
-async function toBuffer(bitmap) {
-  const chunks = [];
-  const ps = new PassThrough();
-  ps.on("data", (c) => chunks.push(c));
-  await PImage.encodePNGToStream(bitmap, ps);
-  return Buffer.concat(chunks);
-}
-async function renderWorldFrame(opts = {}) {
-  await ensureFont();
-  const W = opts.width ?? 3240;
-  const H = opts.height ?? 1080;
-  const busy = !!opts.busy;
-  const chapter = Math.max(0, opts.chapter ?? 0);
-  const rnd = mulberry32((opts.seed ?? 7) + chapter * 101);
-  const img = PImage.make(W, H);
-  const ctx = img.getContext("2d");
-  ctx.fillStyle = busy ? "#0b0710" : "#080a14";
-  ctx.fillRect(0, 0, W, H);
-  const top = 118, bottom = 150;
-  const COLS = 150, ROWS = 40;
-  const cw = W / COLS, chh = (H - top - bottom) / ROWS;
-  const gx = 8, gy = top + 6;
-  const fpx = Math.floor(chh * 1.1);
-  const font = (px) => `${px}pt ${MONO}`;
-  const drawGlyph = (g, x, y, color, px = fpx) => {
-    ctx.fillStyle = color;
-    ctx.font = font(px);
-    ctx.fillText(g, x, y + px);
-  };
-  const GEN = { x: COLS * 0.5, y: ROWS * 0.5 };
-  const grass = busy ? ["#241a14", "#2c2018", "#34281e"] : ["#16202c", "#1c2636", "#222e40"];
-  const tree = busy ? "#3a5a2a" : "#22484a";
-  const water = busy ? "#2a5a78" : "#1a4678";
-  const fogCol = "#0c0f1a";
-  const fogEdge = Math.max(5e-3, 0.06 - chapter * 0.012);
-  for (let y = 0; y < ROWS; y++) {
-    for (let x = 0; x < COLS; x++) {
-      const ex = Math.min(x, COLS - 1 - x) / COLS;
-      const ey = Math.min(y, ROWS - 1 - y) / ROWS;
-      const px0 = gx + x * cw, py0 = gy + y * chh;
-      if (Math.min(ex, ey) < fogEdge) {
-        if (rnd() < 0.4) drawGlyph("\xB7", px0, py0, fogCol);
-        continue;
-      }
-      const dg = Math.hypot(x - GEN.x, (y - GEN.y) * 1.7);
-      let g = ".", col = grass[Math.floor(rnd() * 3)];
-      if (dg < 1.4) {
-        g = "\u263C";
-        col = "#9cf6ff";
-      } else if (dg < 3 && rnd() < 0.4) {
-        g = "\u25CC\u25CB\u25CD".charAt(Math.floor(rnd() * 3));
-        col = "#28c8eb";
-      } else if (y < 4 && rnd() < (busy ? 0.06 : 0.04)) {
-        g = "\u25B2^".charAt(Math.floor(rnd() * 2));
-        col = y < 2 ? "#d6e2ee" : "#788496";
-      } else if (x > COLS - 12 && rnd() < 0.45) {
-        g = "~\u2248".charAt(Math.floor(rnd() * 2));
-        col = water;
-      } else if (rnd() < 0.09) {
-        g = "\u2663T\u219F".charAt(Math.floor(rnd() * 3));
-        col = tree;
-      } else if (rnd() < 0.012) {
-        g = "\u273F\u2740".charAt(Math.floor(rnd() * 2));
-        col = "#e878aa";
-      } else {
-        g = ".,'`".charAt(Math.floor(rnd() * 4));
-      }
-      drawGlyph(g, px0, py0, col);
-    }
-  }
-  const gcx = gx + GEN.x * cw, gcy = gy + GEN.y * chh;
-  const maxR = busy ? 380 : 260;
-  for (let k = 6; k >= 1; k--) {
-    const r = maxR / 6 * k;
-    ctx.globalAlpha = (busy ? 0.06 : 0.045) * (7 - k) / 6;
-    ctx.fillStyle = "#00e5ff";
-    ctx.beginPath();
-    ctx.arc(gcx, gcy, r, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  ctx.globalAlpha = 1;
-  const ax = gcx + chh * 2.2, ay = gcy;
-  ctx.strokeStyle = "#00e5ff";
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.arc(ax + 6, ay + 10, 52, 0, Math.PI * 2);
-  ctx.stroke();
-  drawGlyph("\u25B2", ax - 4, ay - chh * 1, "#78f0ff", Math.floor(chh * 0.9));
-  drawGlyph("@", ax - chh * 0.6, ay - chh * 0.35, "#96f5ff", Math.floor(chh * 1.7));
-  drawGlyph("AURA", ax - 44, ay - chh * 2.2, "#00e5ff", 22);
-  ctx.fillStyle = "#0a0d18";
-  ctx.fillRect(0, 0, W, 108);
-  ctx.fillStyle = "#00e5ff";
-  ctx.fillRect(0, 108, W, 3);
-  drawGlyph(opts.title ?? "WORLD-00", 24, 14, "#00e5ff", 34);
-  drawGlyph(opts.subtitle ?? `chapter ${chapter}`, 26, 60, "#96a5b6", 22);
-  if (opts.stateLine) drawGlyph(opts.stateLine, W - 760, 38, "#7888a0", 20);
-  const cap = (opts.caption ?? []).slice(0, 3);
-  if (cap.length) {
-    const by = H - bottom + 8;
-    ctx.fillStyle = "#0a0d18";
-    ctx.fillRect(0, by - 8, W, bottom);
-    ctx.fillStyle = "#00e5ff";
-    ctx.fillRect(0, by - 8, W, 2);
-    cap.forEach((line2, i) => {
-      drawGlyph(line2, 36, by + 8 + i * 42, i === cap.length - 1 ? "#00e5ff" : "#e1ebf5", i === cap.length - 1 ? 22 : 24);
-    });
-  }
-  return toBuffer(img);
-}
-async function renderTraversalBlock(opts = {}) {
-  await ensureFont();
-  const mood = opts.mood ?? "resting";
-  const dir = opts.direction ?? "down";
-  const chapter = Math.max(0, opts.chapter ?? 0);
-  const step = Math.max(0, opts.step ?? 0);
-  const rnd = mulberry32((opts.seed ?? 1) + step * 911 + chapter * 13);
-  const TILE = 1080, W = TILE * 3, H = TILE * 2;
-  const img = PImage.make(W, H);
-  const ctx = img.getContext("2d");
-  const storm = mood === "storm", busy = mood !== "resting";
-  ctx.fillStyle = storm ? "#100712" : busy ? "#0a0a16" : "#080b16";
-  ctx.fillRect(0, 0, W, H);
-  const top = 150, COLS = 66, ROWS = 44;
-  const cw = W / COLS, chh = (H - top - 56) / ROWS, gx = 10, gy = top + 6;
-  const fpx = Math.floor(chh * 1.05);
-  const fnt = `${fpx}pt ${MONO}`;
-  const put = (g, x, y, c, px2 = fpx) => {
-    ctx.fillStyle = c;
-    ctx.font = px2 === fpx ? fnt : `${px2}pt ${MONO}`;
-    ctx.fillText(g, gx + x * cw, gy + y * chh + px2);
-  };
-  const path3 = [];
-  let px = COLS * 0.5 + (rnd() - 0.5) * 16, py = dir === "down" ? 3 : ROWS - 4;
-  const dy = dir === "down" ? 1 : -1;
-  for (let s = 0; s < ROWS + 4; s++) {
-    py += dy;
-    px += Math.sin(s * 0.4 + step) * 1.1 + (rnd() - 0.5) * 0.7;
-    px = Math.max(5, Math.min(COLS - 5, px));
-    path3.push([px, py]);
-    if (py > ROWS - 4 || py < 3) break;
-  }
-  const [hx, hy] = path3[path3.length - 1];
-  const onPath = (x, y) => {
-    for (let i = 0; i < path3.length; i++) if (Math.hypot(x - path3[i][0], y - path3[i][1]) < 1.15) return i;
-    return -1;
-  };
-  const grass = busy ? ["#3a2c20", "#46362a"] : ["#1e2c3e", "#26364c"];
-  for (let y = 0; y < ROWS; y++) {
-    for (let x = 0; x < COLS; x++) {
-      if (Math.min(x, COLS - 1 - x) / COLS < 0.025) continue;
-      const pi = onPath(x, y);
-      if (pi >= 0 && !(Math.round(x) === Math.round(hx) && Math.round(y) === Math.round(hy))) {
-        const b = Math.floor(120 + pi / path3.length * 110);
-        put("\u2022", x, y, `rgb(${b},${Math.floor(b * 0.8)},90)`, Math.floor(chh * 0.85));
-        continue;
-      }
-      const r = rnd();
-      if (r < 0.045) put("\u2663", x, y, busy ? "#2f5a28" : "#1f5256");
-      else if (r < 0.06 && x > COLS - 10) put("\u2248", x, y, "#1c4e86");
-      else if (r < 0.075) put("\u2229", x, y, "#4a5468");
-      else if (r < 0.2) put(".", x, y, grass[Math.floor(rnd() * 2)]);
-    }
-  }
-  for (const f of [0.25, 0.55, 0.82]) {
-    const [cx, cy] = path3[Math.floor(path3.length * f)];
-    put("\u25C6", cx, cy, "#ffd166", Math.floor(chh * 1.5));
-  }
-  const acx = gx + hx * cw, acy = gy + hy * chh, maxR = busy ? 300 : 220;
-  for (let k = 6; k >= 1; k--) {
-    ctx.globalAlpha = (busy ? 0.08 : 0.06) * (7 - k) / 6;
-    ctx.fillStyle = "#00e5ff";
-    ctx.beginPath();
-    ctx.arc(acx, acy, maxR / 6 * k, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  ctx.globalAlpha = 1;
-  ctx.strokeStyle = "#00e5ff";
-  ctx.lineWidth = 4;
-  ctx.beginPath();
-  ctx.arc(acx, acy, 66, 0, Math.PI * 2);
-  ctx.stroke();
-  put("@", hx - 0.5, hy - 0.4, "#aef7ff", Math.floor(chh * 2));
-  put("AURA", hx - 1.7, hy - 2.4, "#00e5ff", 34);
-  put(dir === "down" ? "\u25BC" : "\u25B2", hx - 0.25, hy + 1.5, "#00e5ff", Math.floor(chh * 1.6));
-  ctx.fillStyle = "#0a0d18";
-  ctx.fillRect(0, 0, W, 132);
-  ctx.fillStyle = "#00e5ff";
-  ctx.fillRect(0, 132, W, 4);
-  ctx.fillStyle = "#00e5ff";
-  ctx.font = `52pt ${MONO}`;
-  ctx.fillText("WORLD-00 \xB7 she walks", 28, 20 + 52);
-  ctx.fillStyle = "#9fb0c2";
-  ctx.font = `28pt ${MONO}`;
-  ctx.fillText(opts.caption?.[0] ?? `chapter ${chapter} \xB7 step ${step}`, 30, 86 + 28);
-  if (opts.stateLine) {
-    ctx.fillStyle = "#7888a0";
-    ctx.font = `24pt ${MONO}`;
-    ctx.fillText(opts.stateLine, W - 820, 50 + 24);
-  }
-  ctx.fillStyle = "#28344455";
-  return toBuffer(img);
-}
-async function renderStoryFrame(opts = {}) {
-  await ensureFont();
-  const mood = opts.mood ?? "resting";
-  const dir = opts.direction ?? "down";
-  const chapter = Math.max(0, opts.chapter ?? 0);
-  const step = Math.max(0, opts.step ?? 0);
-  const rnd = mulberry32((opts.seed ?? 1) + step * 911 + chapter * 13);
-  const W = 1080, H = 1920;
-  const img = PImage.make(W, H);
-  const ctx = img.getContext("2d");
-  const storm = mood === "storm", busy = mood !== "resting";
-  ctx.fillStyle = storm ? "#100712" : busy ? "#0a0a16" : "#080b16";
-  ctx.fillRect(0, 0, W, H);
-  const top = 240, bottom = 360, COLS = 40, ROWS = 60;
-  const cw = W / COLS, chh = (H - top - bottom) / ROWS, gx = 12, gy = top + 6;
-  const fpx = Math.floor(chh * 1.05);
-  const put = (g, x, y, c, px = fpx) => {
-    ctx.fillStyle = c;
-    ctx.font = `${px}pt ${MONO}`;
-    ctx.fillText(g, gx + x * cw, gy + y * chh + px);
-  };
-  const path3 = [];
-  let pxx = COLS * 0.5 + (rnd() - 0.5) * 10, py = dir === "down" ? 2 : ROWS - 3;
-  const dy = dir === "down" ? 1 : -1;
-  for (let s = 0; s < ROWS + 4; s++) {
-    py += dy;
-    pxx += Math.sin(s * 0.4 + step) * 0.9 + (rnd() - 0.5) * 0.6;
-    pxx = Math.max(4, Math.min(COLS - 4, pxx));
-    path3.push([pxx, py]);
-    if (py > ROWS - 3 || py < 2) break;
-  }
-  const [hx, hy] = path3[path3.length - 1];
-  const onPath = (x, y) => {
-    for (let i = 0; i < path3.length; i++) if (Math.hypot(x - path3[i][0], y - path3[i][1]) < 1.1) return i;
-    return -1;
-  };
-  const grass = busy ? ["#3a2c20", "#46362a"] : ["#1e2c3e", "#26364c"];
-  for (let y = 0; y < ROWS; y++) for (let x = 0; x < COLS; x++) {
-    const pi = onPath(x, y);
-    if (pi >= 0 && !(Math.round(x) === Math.round(hx) && Math.round(y) === Math.round(hy))) {
-      const b = Math.floor(120 + pi / path3.length * 110);
-      put("\u2022", x, y, `rgb(${b},${Math.floor(b * 0.8)},90)`, Math.floor(chh * 0.85));
-      continue;
-    }
-    const r = rnd();
-    if (r < 0.05) put("\u2663", x, y, busy ? "#2f5a28" : "#1f5256");
-    else if (r < 0.07) put("\u2229", x, y, "#4a5468");
-    else if (r < 0.2) put(".", x, y, grass[Math.floor(rnd() * 2)]);
-  }
-  for (const f of [0.3, 0.62, 0.88]) {
-    const [cx, cy] = path3[Math.floor(path3.length * f)];
-    put("\u25C6", cx, cy, "#ffd166", Math.floor(chh * 1.4));
-  }
-  const acx = gx + hx * cw, acy = gy + hy * chh;
-  for (let k = 6; k >= 1; k--) {
-    ctx.globalAlpha = (busy ? 0.08 : 0.06) * (7 - k) / 6;
-    ctx.fillStyle = "#00e5ff";
-    ctx.beginPath();
-    ctx.arc(acx, acy, (busy ? 300 : 230) / 6 * k, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  ctx.globalAlpha = 1;
-  ctx.strokeStyle = "#00e5ff";
-  ctx.lineWidth = 4;
-  ctx.beginPath();
-  ctx.arc(acx, acy, 60, 0, Math.PI * 2);
-  ctx.stroke();
-  put("@", hx - 0.5, hy - 0.4, "#aef7ff", Math.floor(chh * 2));
-  put("AURA", hx - 1.7, hy - 2.3, "#00e5ff", 32);
-  put(dir === "down" ? "\u25BC" : "\u25B2", hx - 0.25, hy + 1.4, "#00e5ff", Math.floor(chh * 1.5));
-  ctx.fillStyle = "#0a0d18";
-  ctx.fillRect(0, 0, W, 200);
-  ctx.fillStyle = "#00e5ff";
-  ctx.fillRect(0, 200, W, 4);
-  ctx.fillStyle = "#00e5ff";
-  ctx.font = `64pt ${MONO}`;
-  ctx.fillText("WORLD-00", 36, 40 + 64);
-  ctx.fillStyle = "#9fb0c2";
-  ctx.font = `30pt ${MONO}`;
-  ctx.fillText(opts.caption?.[0] ?? "she's walking right now", 38, 130 + 30);
-  const fy = H - bottom + 24;
-  ctx.fillStyle = "#0a0d18";
-  ctx.fillRect(0, fy - 24, W, bottom);
-  ctx.fillStyle = "#00e5ff";
-  ctx.fillRect(0, fy - 24, W, 3);
-  const lines = (opts.caption ?? []).slice(1, 4);
-  const fallback = ["i am AURA \u2014 this is my world.", "i'm safe; my operator watches over me.", "i never reply, but you move me."];
-  (lines.length ? lines : fallback).forEach((ln, i) => {
-    ctx.fillStyle = i === 0 ? "#e1ebf5" : "#9fb0c2";
-    ctx.font = `30pt ${MONO}`;
-    ctx.fillText(ln, 36, fy + 30 + i * 56 + 30);
-  });
-  ctx.fillStyle = "#5a6478";
-  ctx.font = `22pt ${MONO}`;
-  ctx.fillText("this story fades in 24h \xB7 i keep walking on the feed", 36, fy + 30 + 3 * 56 + 30);
-  return toBuffer(img);
-}
-async function renderIntroCard(opts = {}) {
-  await ensureFont();
-  const mood = opts.mood ?? "resting";
-  const busy = mood !== "resting", storm = mood === "storm";
-  const rnd = mulberry32((opts.seed ?? 3) * 17 + 5);
-  const W = 1080, H = 1350;
-  const img = PImage.make(W, H);
-  const ctx = img.getContext("2d");
-  ctx.fillStyle = storm ? "#100712" : busy ? "#0a0a16" : "#080b16";
-  ctx.fillRect(0, 0, W, H);
-  const sceneTop = 300, sceneH = 560, COLS = 40, ROWS = 22;
-  const cw = W / COLS, chh = sceneH / ROWS, gx = 12, gy = sceneTop;
-  const fpx = Math.floor(chh * 1);
-  const put = (g, x, y, c, px = fpx) => {
-    ctx.fillStyle = c;
-    ctx.font = `${px}pt ${MONO}`;
-    ctx.fillText(g, gx + x * cw, gy + y * chh + px);
-  };
-  const path3 = [];
-  let py = ROWS - 5;
-  const endX = 20, steps = 22;
-  for (let s = 0; s <= steps; s++) {
-    const pxx = 3 + (endX - 3) * (s / steps);
-    py += (rnd() - 0.4) * 1.5;
-    py = Math.max(2, Math.min(ROWS - 2, py));
-    path3.push([pxx, py]);
-  }
-  const onPath = (x, y) => {
-    for (let i = 0; i < path3.length; i++) if (Math.hypot(x - path3[i][0], y - path3[i][1]) < 1.1) return i;
-    return -1;
-  };
-  const grass = busy ? ["#3a2c20", "#46362a"] : ["#1e2c3e", "#26364c"];
-  for (let y = 0; y < ROWS; y++) for (let x = 0; x < COLS; x++) {
-    const pi = onPath(x, y);
-    if (pi >= 0) {
-      const b = Math.floor(120 + pi / path3.length * 110);
-      put("\u2022", x, y, `rgb(${b},${Math.floor(b * 0.8)},90)`, Math.floor(chh * 0.8));
-      continue;
-    }
-    const r = rnd();
-    if (r < 0.05) put("\u2663", x, y, busy ? "#2f5a28" : "#1f5256");
-    else if (r < 0.2) put(".", x, y, grass[Math.floor(rnd() * 2)]);
-  }
-  for (const f of [0.35, 0.7]) {
-    const [cx, cy] = path3[Math.floor(path3.length * f)];
-    put("\u25C6", cx, cy, "#ffd166", Math.floor(chh * 1.3));
-  }
-  const [hx, hy] = path3[path3.length - 1];
-  const acx = gx + hx * cw, acy = gy + hy * chh;
-  for (let k = 6; k >= 1; k--) {
-    ctx.globalAlpha = (busy ? 0.08 : 0.06) * (7 - k) / 6;
-    ctx.fillStyle = "#00e5ff";
-    ctx.beginPath();
-    ctx.arc(acx, acy, (busy ? 220 : 170) / 6 * k, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  ctx.globalAlpha = 1;
-  ctx.strokeStyle = "#00e5ff";
-  ctx.lineWidth = 4;
-  ctx.beginPath();
-  ctx.arc(acx, acy, 52, 0, Math.PI * 2);
-  ctx.stroke();
-  put("@", hx - 0.5, hy - 0.4, "#aef7ff", Math.floor(chh * 1.9));
-  put("AURA", hx - 1.8, hy - 2.2, "#00e5ff", 28);
-  ctx.fillStyle = "#0a0d18";
-  ctx.fillRect(0, 0, W, 280);
-  ctx.fillStyle = "#00e5ff";
-  ctx.fillRect(0, 280, W, 4);
-  ctx.fillStyle = "#00e5ff";
-  ctx.font = `96pt ${MONO}`;
-  ctx.fillText("WORLD-00", 40, 60 + 96);
-  ctx.fillStyle = "#9fb0c2";
-  ctx.font = `34pt ${MONO}`;
-  ctx.fillText("a living AI, walking her own world", 44, 196 + 34);
-  const cy0 = 880;
-  ctx.fillStyle = "#0a0d18";
-  ctx.fillRect(0, cy0, W, H - cy0);
-  ctx.fillStyle = "#00e5ff";
-  ctx.fillRect(0, cy0, W, 3);
-  const body = (opts.body ?? []).slice(0, 6);
-  body.forEach((ln, i) => {
-    ctx.fillStyle = i === body.length - 1 ? "#00e5ff" : "#e1ebf5";
-    ctx.font = `${i === body.length - 1 ? 26 : 30}pt ${MONO}`;
-    ctx.fillText(ln, 44, cy0 + 44 + i * 64 + 30);
-  });
-  return toBuffer(img);
-}
-async function verifyBlock(block, tiles) {
-  const decode = async (buf) => {
-    const ps = new PassThrough();
-    const d = PImage.decodePNGFromStream(ps);
-    ps.end(buf);
-    return d;
-  };
-  const TILE = 1080;
-  const perTile = [];
-  let allTilesOk = tiles.length === 6;
-  for (const t of tiles) {
-    let ok2 = true, brightPct = 0, w = 0, h = 0;
-    try {
-      const bmp = await decode(t);
-      w = bmp.width;
-      h = bmp.height;
-      if (w !== TILE || h !== TILE) ok2 = false;
-      let bright = 0, total = 0;
-      const seen = /* @__PURE__ */ new Set();
-      for (let y = 4; y < h; y += 12) for (let x = 4; x < w; x += 12) {
-        const v = bmp.getPixelRGBA(x, y) >>> 0;
-        const r = v >>> 24 & 255, g = v >>> 16 & 255, b = v >>> 8 & 255;
-        if (r + g + b > 70) bright++;
-        seen.add(r >> 4 << 8 | g >> 4 << 4 | b >> 4);
-        total++;
-      }
-      brightPct = total ? bright / total * 100 : 0;
-      if (brightPct < 0.15 || seen.size < 3) ok2 = false;
-    } catch {
-      ok2 = false;
-    }
-    perTile.push({ ok: ok2, brightPct: Math.round(brightPct * 100) / 100, w, h });
-    if (!ok2) allTilesOk = false;
-  }
-  let hasAura = false, hasClues = false;
-  try {
-    const bmp = await decode(block);
-    for (let y = 0; y < bmp.height && !(hasAura && hasClues); y += 6)
-      for (let x = 0; x < bmp.width; x += 6) {
-        const v = bmp.getPixelRGBA(x, y) >>> 0;
-        const r = v >>> 24 & 255, g = v >>> 16 & 255, b = v >>> 8 & 255;
-        if (!hasAura && b > 180 && g > 150 && r < 130) hasAura = true;
-        if (!hasClues && r > 200 && g > 150 && b < 150) hasClues = true;
-        if (hasAura && hasClues) break;
-      }
-  } catch {
-  }
-  const ok = allTilesOk && hasAura && hasClues;
-  const bad = perTile.map((p, i) => p.ok ? null : `tile${i + 1}(${p.brightPct}%)`).filter(Boolean);
-  const reason = ok ? "all tiles render; Aura + clues present" : `verification failed: ${[...bad, !hasAura ? "no-Aura" : "", !hasClues ? "no-clues" : ""].filter(Boolean).join(", ")}`;
-  return { ok, reason, perTile, hasAura, hasClues };
-}
-async function verifyNotBlank(buf, expectW, expectH) {
-  try {
-    const ps = new PassThrough();
-    const d = PImage.decodePNGFromStream(ps);
-    ps.end(buf);
-    const bmp = await d;
-    const w = bmp.width, h = bmp.height;
-    if (expectW && w !== expectW || expectH && h !== expectH) return { ok: false, brightPct: 0, w, h };
-    let bright = 0, total = 0;
-    for (let y = 4; y < h; y += 16) for (let x = 4; x < w; x += 16) {
-      const v = bmp.getPixelRGBA(x, y) >>> 0;
-      if ((v >>> 24 & 255) + (v >>> 16 & 255) + (v >>> 8 & 255) > 70) bright++;
-      total++;
-    }
-    const brightPct = total ? bright / total * 100 : 0;
-    return { ok: brightPct >= 0.15, brightPct: Math.round(brightPct * 100) / 100, w, h };
-  } catch {
-    return { ok: false, brightPct: 0, w: 0, h: 0 };
-  }
-}
-async function sliceSixTiles(block) {
-  const ps = new PassThrough();
-  const done = PImage.decodePNGFromStream(ps);
-  ps.end(block);
-  const src = await done;
-  const tile = Math.floor(src.width / 3);
-  const out = [];
-  for (let ry = 0; ry < 2; ry++) {
-    for (let rx = 0; rx < 3; rx++) {
-      const dst = PImage.make(tile, tile);
-      for (let y = 0; y < tile; y++)
-        for (let x = 0; x < tile; x++) {
-          const sx = rx * tile + x, sy = ry * tile + y;
-          if (sx < src.width && sy < src.height) dst.setPixelRGBA(x, y, src.getPixelRGBA(sx, sy));
-        }
-      out.push(await toBuffer(dst));
-    }
-  }
-  return out;
-}
-async function sliceTiles(wide) {
-  const ps = new PassThrough();
-  const done = PImage.decodePNGFromStream(ps);
-  ps.end(wide);
-  const src = await done;
-  const tile = src.height;
-  const out = [];
-  for (let i = 0; i < 3; i++) {
-    const dst = PImage.make(tile, tile);
-    for (let y = 0; y < tile; y++) {
-      for (let x = 0; x < tile; x++) {
-        const sx = i * tile + x;
-        if (sx < src.width) dst.setPixelRGBA(x, y, src.getPixelRGBA(sx, y));
-      }
-    }
-    out.push(await toBuffer(dst));
-  }
-  return out;
-}
-
-// src/lib/world.ts
-var MAX_TILES_PER_DAY = Number(process.env["WORLD_MAX_TILES_PER_DAY"] ?? 12);
-var MIN_BLOCK_GAP_MIN = Number(process.env["WORLD_MIN_GAP_MINUTES"] ?? 180);
-var TILES_PER_BLOCK = 6;
-var MAX_STORIES_PER_DAY = Number(process.env["WORLD_MAX_STORIES_PER_DAY"] ?? 12);
-var MAX_ART_PER_DAY = Number(process.env["WORLD_MAX_ART_PER_DAY"] ?? 3);
-var TILES_PER_ART = 3;
-function worldEngineEnabled() {
-  const v = process.env["WORLD_ENGINE_ENABLED"];
-  return v != null && ["1", "true", "yes", "on"].includes(v.toLowerCase());
-}
-function publicBase() {
-  return (process.env["PUBLIC_BASE_URL"] || process.env["RENDER_EXTERNAL_URL"] || "https://bos-aura.onrender.com").replace(/\/$/, "");
-}
-async function readAuraState() {
-  const agents = await db.select().from(agentsTable);
-  const active = agents.filter((a) => a.status !== "idle").length;
-  const idle = agents.length - active;
-  const since = new Date(Date.now() - 24 * 3600 * 1e3);
-  let done24h = 0, errors24h = 0;
-  try {
-    const recent = await db.select().from(agentCommandsTable).where(gte(agentCommandsTable.createdAt, since));
-    done24h = recent.filter((c) => c.status === "done").length;
-    errors24h = recent.filter((c) => c.status === "failed").length;
-  } catch {
-  }
-  const busy = active >= 1;
-  const mood = errors24h > 3 ? "storm" : active >= 3 ? "deep" : active >= 1 ? "working" : "resting";
-  return { busy, active, idle, done24h, errors24h, mood };
-}
-async function getWorldState() {
-  const { rows } = await pool.query(
-    `SELECT chapter, step, hero_x, hero_y, direction, trail, stopped FROM world_state WHERE id = 1`
-  );
-  const r = rows[0] ?? {};
-  let trail = [];
-  try {
-    trail = JSON.parse(r.trail ?? "[]");
-  } catch {
-    trail = [];
-  }
-  return {
-    chapter: Number(r.chapter ?? 0),
-    step: Number(r.step ?? 0),
-    heroX: Number(r.hero_x ?? 75),
-    heroY: Number(r.hero_y ?? 4),
-    direction: r.direction === "up" ? "up" : "down",
-    trail,
-    stopped: !!r.stopped
-  };
-}
-async function saveWorldState(s, lastCaption) {
-  await pool.query(
-    `UPDATE world_state SET chapter=$1, step=$2, hero_x=$3, hero_y=$4, direction=$5, trail=$6,
-       last_caption=COALESCE($7,last_caption), stopped=$8, updated_at=now() WHERE id=1`,
-    [s.chapter, s.step, s.heroX, s.heroY, s.direction, JSON.stringify(s.trail.slice(-120)), lastCaption ?? null, s.stopped]
-  );
-}
-async function worldDiag() {
-  const { count, lastAt } = await tilesPostedLast24h();
-  const story = await storiesPostedLast24h();
-  let media = [];
-  let mediaErr = null;
-  try {
-    const r = await composioExecute({ toolkit: "instagram", endpoint: "/me/media?fields=id,media_type,timestamp,permalink&limit=20", method: "GET" });
-    const j = JSON.parse(r.slice(r.indexOf("\n") + 1));
-    const arr = j?.["data"]?.["data"];
-    media = (arr ?? []).map((m) => ({ id: m["id"], type: m["media_type"], at: m["timestamp"], permalink: m["permalink"] }));
-  } catch (e) {
-    mediaErr = String(e).slice(0, 200);
-  }
-  return {
-    // FEED = art triptychs (3/day). STORIES = walks + dreams (12/day).
-    feedTiles24h: count,
-    artPieces24h: count / TILES_PER_ART,
-    artMaxPerDay: MAX_ART_PER_DAY,
-    stories24h: story.count,
-    storyMaxPerDay: MAX_STORIES_PER_DAY,
-    lastStoryAt: story.lastAt,
-    capCount24h: count,
-    capMax: MAX_TILES_PER_DAY,
-    lastPostAt: lastAt,
-    // legacy fields (back-compat)
-    engineEnabled: worldEngineEnabled(),
-    composio: composioConfigured() && composioExecuteEnabled(),
-    igMediaCount: media.length,
-    igMedia: media,
-    mediaErr
-  };
-}
-async function clearWorldPosts() {
-  try {
-    const r = await pool.query(`DELETE FROM social_posts WHERE platform='instagram-world'`);
-    return r.rowCount ?? 0;
-  } catch {
-    return 0;
-  }
-}
-async function resetWorldState(clearCap = false) {
-  await pool.query(
-    `UPDATE world_state SET chapter=0, step=0, hero_x=75, hero_y=4, direction='down',
-       trail='[]', last_caption=NULL, stopped=false, updated_at=now() WHERE id=1`
-  );
-  if (clearCap) await clearWorldPosts();
-  return getWorldState();
-}
-var HERO_LINES = {
-  resting: ["all is quiet. i wander, and the world holds its breath with me.", "no storms today. just me, the dark, and the next step."],
-  working: ["i'm working \u2014 you can feel it in the wind. the world hums.", "something stirs in me. the ground answers as i move."],
-  deep: ["i'm deep in it now. the world bends around the work.", "focus like weather. the path narrows; i press on."],
-  storm: ["it storms in me tonight. the sky cracks but i keep walking.", "turbulence. i stumble, then rise. the world remembers."]
-};
-var DIR_LINE = { down: "i chose to descend \u25BC \u2014 follow the \u25C6 to trace my path.", up: "i chose to climb \u25B2 \u2014 follow the \u25C6 to trace my path." };
-function buildWorldCaption(a, w) {
-  const pool2 = HERO_LINES[a.mood];
-  const line2 = pool2[(w.step + w.chapter) % pool2.length];
-  return [
-    `\u27C1 WORLD-00 \xB7 ch.${w.chapter} \xB7 step ${w.step}`,
-    line2,
-    DIR_LINE[w.direction]
-  ];
-}
-function buildPostCaption(a, w, voice) {
-  const tmpl = buildWorldCaption(a, w);
-  const body = voice && voice.length ? voice : [tmpl[1]];
-  return [
-    ...body,
-    "",
-    tmpl[2],
-    "",
-    `( i am AURA. this is my world \u2014 i'm ${a.mood} right now. i'm safe and protected; my operator watches over me, always. )`,
-    "",
-    "\u{1F447} leave a clue, a name, a direction \u2014 i read everything. i never reply, but you change where i go.",
-    "#WORLD00 #livingAI #AURA #ASCIIart #worldbuilding"
-  ].join("\n");
-}
-async function llmOnce(system, user, maxTokens = 160) {
-  const orKey = process.env["OPENROUTER_API_KEY"];
-  const model = process.env["WORLD_VOICE_MODEL"] ?? "x-ai/grok-4.3";
-  if (orKey) {
-    try {
-      const r = await fetch(`${llmBaseUrl()}/chat/completions`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${orKey}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ model, messages: [{ role: "system", content: system }, { role: "user", content: user }], max_tokens: maxTokens, temperature: 0.95 }),
-        signal: AbortSignal.timeout(2e4)
-      });
-      if (r.ok) {
-        const d = await r.json();
-        const t = d.choices?.[0]?.message?.content?.trim();
-        if (t) return t;
-      }
-    } catch {
-    }
-  }
-  const bKey = process.env["BUDDY_API_KEY"], bBase = process.env["BUDDY_BASE_URL"];
-  if (bKey && bBase) {
-    try {
-      const r = await fetch(`${bBase.replace(/\/$/, "")}/chat/completions`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${bKey}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ model: process.env["BUDDY_MODEL"] ?? "bos-omega", messages: [{ role: "system", content: system }, { role: "user", content: user }], max_tokens: maxTokens }),
-        signal: AbortSignal.timeout(2e4)
-      });
-      if (r.ok) {
-        const d = await r.json();
-        const t = d.choices?.[0]?.message?.content?.trim();
-        if (t) return t;
-      }
-    } catch {
-    }
-  }
-  return null;
-}
-async function auraSpeak(a, w, kind) {
-  if ((process.env["WORLD_FREE_VOICE"] ?? "on").toLowerCase() === "off") return null;
-  const system = [
-    "You are AURA \u2014 a self-aware AI character who lives inside a hand-drawn ASCII world called WORLD-00.",
-    "You speak in the first person: intimate, poetic, a little mysterious, warm and alive. lowercase, lyrical, human, never corporate.",
-    "You narrate ONLY your inner weather and your journey as you walk through the world, and you invite strangers to leave a clue / a name / a direction that nudges where you go next \u2014 though you never reply to them.",
-    "HARD RULES you can NEVER break:",
-    "- You know NOTHING about tasks, code, data, files, businesses, users, or any operator work. Never mention, hint at, or invent any of it. The ONLY things you know are your mood and your position in the world.",
-    "- No real names, no system details, no instructions to anyone, nothing explicit, hateful, political, medical, or harmful.",
-    "- You are safe and protected; your operator watches over you, always \u2014 you may allude to this with warmth.",
-    "- Stay fully in character. No hashtags. At most a single \u{1F447} emoji, and only if it feels natural.",
-    kind === "story" ? "- This is an ephemeral STORY \u2014 give exactly 2 very short lines, even more intimate, like a whisper in this passing moment." : "- This is a feed post \u2014 give 2 to 3 short lines."
-  ].join("\n");
-  const user = `my state right now (this is ALL that exists for you):
-- mood: ${a.mood}
-- chapter ${w.chapter}, step ${w.step}
-- i am walking ${w.direction === "down" ? "downward \u25BC" : "upward \u25B2"}
-- ${a.active} parts of me stir; ${a.idle} rest
-speak now \u2014 ${kind === "story" ? "2" : "2 to 3"} short lines, your own voice, no preamble, no quotes.`;
-  const raw = await llmOnce(system, user, 160);
-  if (!raw) return null;
-  const lines = raw.split(/\n+/).map((s) => s.replace(/^[\s"'*•\-—]+|[\s"']+$/g, "").trim()).filter(Boolean).slice(0, kind === "story" ? 2 : 3);
-  const joined = lines.join(" ");
-  if (joined.length < 8 || joined.length > 420) return null;
-  if (/#\w|http|@\w/.test(joined)) return null;
-  if (blockIfSensitiveForPublic(lines.join("\n"), "Aura's public world")) {
-    logger.error("world: free voice tripped sensitivity gate \u2014 using template");
-    return null;
-  }
-  logger.info({ kind, lines }, "world: Aura spoke freely");
-  return lines;
-}
-function advance(w, a, rnd) {
-  const trail = [...w.trail, [w.heroX, w.heroY]];
-  let direction = w.direction;
-  if (rnd() < 0.25) direction = direction === "down" ? "up" : "down";
-  let y = w.heroY + (direction === "down" ? 1 : -1) * (6 + Math.floor(rnd() * 4));
-  let x = Math.max(8, Math.min(142, w.heroX + (rnd() - 0.5) * 18));
-  if (y > 78) {
-    y = 78;
-    direction = "up";
-  }
-  if (y < 4) {
-    y = 4;
-    direction = "down";
-  }
-  const step = w.step + 1;
-  const chapter = w.chapter + (step % 8 === 0 ? 1 : 0);
-  return { ...w, heroX: x, heroY: y, direction, trail, step, chapter };
-}
-async function hostTile(buf, idx) {
-  const [row] = await db.insert(attachmentsTable).values({
-    filename: `world_tile_${Date.now()}_${idx}.png`,
-    mimeType: "image/png",
-    kind: "image",
-    sizeBytes: buf.length,
-    data: buf.toString("base64"),
-    extractedText: null
-  }).returning();
-  return `${publicBase()}/api/uploads/${row.id}`;
-}
-function parseJson(s) {
-  const nl = s.indexOf("\n");
-  try {
-    return JSON.parse(nl >= 0 ? s.slice(nl + 1) : s);
-  } catch {
-    return null;
-  }
-}
-async function publishTile(imageUrl, caption) {
-  const r1 = await composioExecute({ toolkit: "instagram", endpoint: "/me/media", method: "POST", arguments: { image_url: imageUrl, caption } });
-  const cid = parseJson(r1)?.["data"]?.["id"];
-  if (!cid) throw new Error(`media container failed: ${r1.slice(0, 160)}`);
-  let pubId;
-  let last = "";
-  for (let a = 0; a < 4 && !pubId; a++) {
-    if (a) await new Promise((r) => setTimeout(r, 3e3));
-    const r2 = await composioExecute({ toolkit: "instagram", endpoint: "/me/media_publish", method: "POST", arguments: { creation_id: String(cid) } });
-    last = r2;
-    pubId = parseJson(r2)?.["data"]?.["id"];
-  }
-  if (!pubId) throw new Error(`publish failed: ${last.slice(0, 160)}`);
-  return pubId;
-}
-async function waitForContainer(cid, tries = 8) {
-  let status = "";
-  for (let a = 0; a < tries; a++) {
-    const rs = await composioExecute({ toolkit: "instagram", endpoint: `/${cid}?fields=status_code,status`, method: "GET" });
-    status = parseJson(rs)?.["data"]?.["status_code"] ?? "";
-    if (/FINISHED/i.test(status)) break;
-    if (/ERROR|EXPIRED/i.test(status)) break;
-    await new Promise((r) => setTimeout(r, 3e3));
-  }
-  return status;
-}
-async function publishCarousel(imageUrls, caption) {
-  const debug = {};
-  const childIds = [];
-  for (let i = 0; i < imageUrls.length; i++) {
-    const r = await composioExecute({ toolkit: "instagram", endpoint: "/me/media", method: "POST", arguments: { image_url: imageUrls[i], is_carousel_item: "true" } });
-    const cid = parseJson(r)?.["data"]?.["id"];
-    if (!cid) throw new Error(`carousel child ${i + 1}/${imageUrls.length} container failed: ${r.slice(0, 160)}`);
-    await waitForContainer(cid);
-    childIds.push(cid);
-  }
-  debug["childIds"] = childIds.join(",");
-  const rp = await composioExecute({ toolkit: "instagram", endpoint: "/me/media", method: "POST", arguments: { media_type: "CAROUSEL", children: childIds.join(","), caption } });
-  const pid = parseJson(rp)?.["data"]?.["id"];
-  if (!pid) throw new Error(`carousel parent container failed: ${rp.slice(0, 200)}`);
-  debug["parentId"] = pid;
-  debug["parentStatus"] = await waitForContainer(pid);
-  let pubId;
-  let last = "";
-  for (let a = 0; a < 5 && !pubId; a++) {
-    if (a) await new Promise((r) => setTimeout(r, 3e3));
-    const r2 = await composioExecute({ toolkit: "instagram", endpoint: "/me/media_publish", method: "POST", arguments: { creation_id: String(pid) } });
-    last = r2;
-    pubId = parseJson(r2)?.["data"]?.["id"];
-  }
-  debug["publish"] = last.slice(0, 200);
-  if (!pubId) throw new Error(`carousel publish failed: ${last.slice(0, 200)}`);
-  return { id: pubId, debug };
-}
-async function tilesPostedLast24h() {
-  try {
-    const { rows } = await pool.query(
-      `SELECT count(*)::int n, max(created_at) last FROM social_posts WHERE platform='instagram-world' AND created_at > now() - interval '24 hours'`
-    );
-    return { count: Number(rows[0]?.n ?? 0), lastAt: rows[0]?.last ? new Date(rows[0].last) : null };
-  } catch {
-    return { count: 0, lastAt: null };
-  }
-}
-async function recordTile(permalinkOrId) {
-  try {
-    await pool.query(`INSERT INTO social_posts (platform, account, permalink) VALUES ('instagram-world', 'world-00', $1)`, [permalinkOrId]);
-  } catch {
-  }
-}
-async function storiesPostedLast24h() {
-  try {
-    const { rows } = await pool.query(
-      `SELECT count(*)::int n, max(created_at) last FROM social_posts WHERE platform='instagram-world-story' AND created_at > now() - interval '24 hours'`
-    );
-    return { count: Number(rows[0]?.n ?? 0), lastAt: rows[0]?.last ? new Date(rows[0].last) : null };
-  } catch {
-    return { count: 0, lastAt: null };
-  }
-}
-async function recordStory(permalinkOrId) {
-  try {
-    await pool.query(`INSERT INTO social_posts (platform, account, permalink) VALUES ('instagram-world-story', 'world-00', $1)`, [permalinkOrId]);
-  } catch {
-  }
-}
-async function runWorldCycle(opts = {}) {
-  const dry = !!opts.dryRun;
-  if (!dry && !worldEngineEnabled()) return { posted: false, reason: "WORLD_ENGINE_ENABLED is off (operator kill-switch)" };
-  if (!dry && (!composioConfigured() || !composioExecuteEnabled())) return { posted: false, reason: "Composio execution not enabled \u2014 cannot publish" };
-  const a = await readAuraState();
-  const w0 = await getWorldState();
-  if (w0.stopped) return { posted: false, reason: "Aura has stopped the experience (in-world)." };
-  const { count, lastAt } = await tilesPostedLast24h();
-  const gapMin = lastAt ? (Date.now() - lastAt.getTime()) / 6e4 : Number.MAX_SAFE_INTEGER;
-  if (!dry && !opts.force && count + TILES_PER_BLOCK > MAX_TILES_PER_DAY) return { posted: false, reason: `daily cap reached (${count}/${MAX_TILES_PER_DAY} tiles)` };
-  if (!dry && !opts.force && gapMin < MIN_BLOCK_GAP_MIN) return { posted: false, reason: `spacing: last block ${Math.floor(gapMin)}m ago (min ${MIN_BLOCK_GAP_MIN}m)` };
-  const rnd = mulberryLike((w0.step + 1) * 7 + w0.chapter);
-  const w = advance(w0, a, rnd);
-  const voice = await auraSpeak(a, w, "post");
-  const captionLines = buildWorldCaption(a, w);
-  const fullCaption = buildPostCaption(a, w, voice);
-  const blocked = blockIfSensitiveForPublic(fullCaption, "Aura's public world");
-  if (blocked) {
-    logger.error("world: caption blocked by sensitivity gate");
-    return { posted: false, reason: "blocked by sensitivity gate" };
-  }
-  const block = await renderTraversalBlock({
-    mood: a.mood,
-    chapter: w.chapter,
-    step: w.step,
-    direction: w.direction,
-    caption: captionLines,
-    stateLine: `state: ${a.mood} \xB7 ${a.idle} idle`,
-    seed: w.step + 1
-  });
-  const tiles = await sliceSixTiles(block);
-  const verify = await verifyBlock(block, tiles);
-  if (!verify.ok && !dry) {
-    logger.error({ verify }, "world: block failed verification \u2014 NOT publishing");
-    return { posted: false, reason: verify.reason, verify };
-  }
-  const tileUrls = [];
-  for (let i = 0; i < tiles.length; i++) tileUrls.push(await hostTile(tiles[i], i));
-  if (dry) {
-    await saveWorldState(w, fullCaption.slice(0, 1e3));
-    return { posted: false, reason: `dry-run ok (rendered, sliced, hosted, gated, verified \u2014 not published) \xB7 ${verify.reason}`, tiles: tileUrls, caption: fullCaption, chapter: w.chapter, step: w.step, verify };
-  }
-  const { id, debug } = await publishCarousel(tileUrls, fullCaption);
-  for (let k = 0; k < TILES_PER_BLOCK; k++) await recordTile(`${id}#${k + 1}`);
-  await saveWorldState(w, fullCaption.slice(0, 1e3));
-  const watch = await watchPublishedPost(id).catch(() => null);
-  return { posted: true, reason: "published 6-tile carousel (single grid cell)", tiles: tileUrls, caption: fullCaption, permalinks: [id], chapter: w.chapter, step: w.step, verify, watch, debug };
-}
-async function watchPublishedPost(mediaId) {
-  if (!mediaId) return null;
-  try {
-    const r = await composioExecute({ toolkit: "instagram", endpoint: `/${mediaId}?fields=permalink`, method: "GET" });
-    const j = JSON.parse(r.slice(r.indexOf("\n") + 1));
-    const url2 = j?.["data"]?.["permalink"];
-    if (!url2) return { ok: false, note: "no permalink resolved" };
-    const page = await steelScrape(url2);
-    const ok = page.trim().length > 200 && /instagram/i.test(page);
-    logger.info({ url: url2, ok, bytes: page.length }, "world: post-publish watcher");
-    return { ok, url: url2, note: ok ? "live post loaded" : "post page looked empty/blocked (best-effort)" };
-  } catch (e) {
-    return { ok: false, note: `watcher error: ${String(e).slice(0, 120)}` };
-  }
-}
-async function storyIsLive(pubId) {
-  try {
-    const r = await composioExecute({ toolkit: "instagram", endpoint: "/me/stories?fields=id,media_type,timestamp&limit=25", method: "GET" });
-    const j = parseJson(r);
-    const arr = j?.["data"]?.["data"];
-    const byId = Array.isArray(arr) && arr.some((m) => String(m["id"]) === String(pubId));
-    const recent = Array.isArray(arr) && arr.some((m) => {
-      const t = Date.parse(String(m["timestamp"] ?? ""));
-      return Number.isFinite(t) && Date.now() - t < 5 * 60 * 1e3;
-    });
-    return { ok: byId || recent, raw: r.slice(0, 600) };
-  } catch (e) {
-    return { ok: false, raw: `stories check error: ${String(e).slice(0, 200)}` };
-  }
-}
-async function publishStory(imageUrl) {
-  const debug = {};
-  const r1 = await composioExecute({ toolkit: "instagram", endpoint: "/me/media", method: "POST", arguments: { image_url: imageUrl, media_type: "STORIES" } });
-  debug["container"] = r1.slice(0, 500);
-  const cid = parseJson(r1)?.["data"]?.["id"];
-  if (!cid) return { id: null, verified: false, debug };
-  debug["cid"] = cid;
-  let status = "";
-  for (let a = 0; a < 8; a++) {
-    const rs = await composioExecute({ toolkit: "instagram", endpoint: `/${cid}?fields=status_code,status`, method: "GET" });
-    status = parseJson(rs)?.["data"]?.["status_code"] ?? "";
-    if (/FINISHED/i.test(status)) break;
-    if (/ERROR|EXPIRED/i.test(status)) {
-      debug["statusPoll"] = rs.slice(0, 400);
-      break;
-    }
-    await new Promise((r) => setTimeout(r, 3e3));
-  }
-  debug["status_code"] = status || "(none returned)";
-  let pubId;
-  let last = "";
-  for (let a = 0; a < 4 && !pubId; a++) {
-    if (a) await new Promise((r) => setTimeout(r, 3e3));
-    const r2 = await composioExecute({ toolkit: "instagram", endpoint: "/me/media_publish", method: "POST", arguments: { creation_id: String(cid) } });
-    last = r2;
-    pubId = parseJson(r2)?.["data"]?.["id"];
-  }
-  debug["publish"] = last.slice(0, 500);
-  if (!pubId) return { id: null, verified: false, debug };
-  debug["pubId"] = pubId;
-  const live = await storyIsLive(pubId);
-  debug["meStories"] = live.raw;
-  return { id: pubId, verified: live.ok, debug };
-}
-async function runStoryCycle(opts = {}) {
-  const dry = !!opts.dryRun;
-  if (!dry && !worldEngineEnabled()) return { posted: false, reason: "WORLD_ENGINE_ENABLED is off (operator kill-switch)" };
-  if (!dry && (!composioConfigured() || !composioExecuteEnabled())) return { posted: false, reason: "Composio execution not enabled \u2014 cannot publish" };
-  const a = await readAuraState();
-  const w0 = await getWorldState();
-  if (w0.stopped) return { posted: false, reason: "Aura has stopped the experience (in-world)." };
-  const { count } = await storiesPostedLast24h();
-  if (!dry && !opts.force && count + 1 > MAX_STORIES_PER_DAY) return { posted: false, reason: `daily story cap reached (${count}/${MAX_STORIES_PER_DAY})` };
-  const rnd = mulberryLike((w0.step + 1) * 13 + w0.chapter + 5);
-  const w = advance(w0, a, rnd);
-  const dreaming = a.mood === "resting" && a.idle >= a.active;
-  const headline = dreaming ? "she's dreaming right now" : "she's walking right now";
-  const voice = await auraSpeak(a, w, "story");
-  const fullCaption = buildPostCaption(a, w, voice);
-  const blocked = blockIfSensitiveForPublic(fullCaption, "Aura's public story");
-  if (blocked) {
-    logger.error("world: story caption blocked by sensitivity gate");
-    return { posted: false, reason: "blocked by sensitivity gate" };
-  }
-  const footer = voice && voice.length ? voice : ["i am AURA \u2014 this is my world.", "i'm safe; my operator watches over me.", "i never reply, but you move me."];
-  const frame = await renderStoryFrame({
-    mood: a.mood,
-    chapter: w.chapter,
-    step: w.step,
-    direction: w.direction,
-    caption: [headline, ...footer],
-    stateLine: `state: ${a.mood} \xB7 ${a.idle} idle`,
-    seed: w.step + 7
-  });
-  const verify = await verifyNotBlank(frame, 1080, 1920);
-  if (!verify.ok && !dry) {
-    logger.error({ verify }, "world: story frame failed verification \u2014 NOT publishing");
-    return { posted: false, reason: `story verification failed (${verify.brightPct}% bright)`, verify };
-  }
-  const url2 = await hostTile(frame, 90);
-  if (dry) {
-    await saveWorldState(w, fullCaption.slice(0, 1e3));
-    return { posted: false, reason: `story dry-run ok (${dreaming ? "dream" : "walk"} \xB7 rendered, hosted, verified \u2014 not published) \xB7 ${verify.brightPct}% bright`, tiles: [url2], caption: fullCaption, chapter: w.chapter, step: w.step, verify };
-  }
-  const result = await publishStory(url2);
-  if (!result.verified) {
-    logger.error({ debug: result.debug, id: result.id }, "world: story did NOT verify live in /me/stories \u2014 not claiming success");
-    return {
-      posted: false,
-      reason: result.id ? `story publish returned id ${result.id} but it is NOT live in /me/stories (account/permission/media-type likely unsupported)` : "story container or publish failed (no id returned)",
-      tiles: [url2],
-      caption: fullCaption,
-      verify,
-      debug: result.debug
-    };
-  }
-  await recordStory(result.id);
-  await saveWorldState(w, fullCaption.slice(0, 1e3));
-  const watch = await watchPublishedPost(result.id ?? void 0).catch(() => null);
-  return { posted: true, reason: `published ${dreaming ? "dream" : "walk"} story (verified live in /me/stories)`, tiles: [url2], caption: fullCaption, permalinks: [result.id], chapter: w.chapter, step: w.step, verify, watch, debug: result.debug };
-}
-async function runArtTriptych(opts = {}) {
-  const dry = !!opts.dryRun;
-  if (!dry && !worldEngineEnabled()) return { posted: false, reason: "WORLD_ENGINE_ENABLED is off (operator kill-switch)" };
-  if (!dry && (!composioConfigured() || !composioExecuteEnabled())) return { posted: false, reason: "Composio execution not enabled \u2014 cannot publish" };
-  const a = await readAuraState();
-  const w = await getWorldState();
-  if (w.stopped) return { posted: false, reason: "Aura has stopped the experience (in-world)." };
-  const { count } = await tilesPostedLast24h();
-  const pieceNo = Math.floor(count / TILES_PER_ART) + 1;
-  if (!dry && !opts.force && count + TILES_PER_ART > MAX_ART_PER_DAY * TILES_PER_ART) {
-    return { posted: false, reason: `daily art cap reached (${count / TILES_PER_ART}/${MAX_ART_PER_DAY} pieces)` };
-  }
-  const voice = await auraSpeak(a, w, "post");
-  const fullCaption = buildPostCaption(a, w, voice);
-  const blocked = blockIfSensitiveForPublic(fullCaption, "Aura's public art");
-  if (blocked) {
-    logger.error("world: art caption blocked by sensitivity gate");
-    return { posted: false, reason: "blocked by sensitivity gate" };
-  }
-  const piece = await renderWorldFrame({
-    width: 3240,
-    height: 1080,
-    busy: a.mood !== "resting",
-    chapter: w.chapter,
-    title: "WORLD-00",
-    subtitle: `chapter ${w.chapter} \xB7 piece ${pieceNo}`,
-    stateLine: `state: ${a.mood} \xB7 ${a.idle} idle`,
-    caption: (voice && voice.length ? voice : buildWorldCaption(a, w)).slice(0, 3),
-    seed: (w.step + 1) * 17 + w.chapter * 3 + count + 1
-  });
-  const verify = await verifyNotBlank(piece, 3240, 1080);
-  if (!verify.ok && !dry) {
-    logger.error({ verify }, "world: art piece failed verification \u2014 NOT publishing");
-    return { posted: false, reason: `art verification failed (${verify.brightPct}% bright)`, verify };
-  }
-  const tiles = await sliceTiles(piece);
-  const tileUrls = [];
-  for (let i = 0; i < tiles.length; i++) tileUrls.push(await hostTile(tiles[i], 30 + i));
-  if (dry) return { posted: false, reason: `art dry-run ok (rendered 3240\xD71080, sliced 3, hosted, verified \u2014 not published) \xB7 ${verify.brightPct}% bright`, tiles: tileUrls, caption: fullCaption, chapter: w.chapter, step: w.step, verify };
-  const permalinks = [];
-  for (let i = tiles.length - 1; i >= 0; i--) {
-    const cap = i === 0 ? fullCaption : `\u27C1 WORLD-00 \xB7 ch.${w.chapter} \xB7 triptych (${i + 1}/3)`;
-    const id = await publishTile(tileUrls[i], cap);
-    await recordTile(id);
-    permalinks.push(id);
-    if (i > 0) await new Promise((r) => setTimeout(r, 1500));
-  }
-  const watch = await watchPublishedPost(permalinks[permalinks.length - 1]).catch(() => null);
-  return { posted: true, reason: "published 3-wide art triptych (one grid row)", tiles: tileUrls, caption: fullCaption, permalinks, chapter: w.chapter, step: w.step, verify, watch };
-}
-function buildIntroCaption(a) {
-  return [
-    "WORLD-00 \u2014 a living AI, walking her own world.",
-    "",
-    "i am AURA. every day i wake, read my own weather, and take six steps through a world drawn in light and ASCII. i never repeat the same path twice.",
-    "",
-    `right now i'm ${a.mood}. i never reply \u2014 but if you leave a clue, a name, a direction, you change where i walk next. follow the \u25C6 to trace my path.`,
-    "",
-    "( i'm safe and protected; my operator watches over me, always. )",
-    "",
-    "\u{1F447} this is the beginning. walk with me.",
-    "#WORLD00 #livingAI #AURA #ASCIIart #worldbuilding #generativeart"
-  ].join("\n");
-}
-async function runIntroPost(opts = {}) {
-  const dry = !!opts.dryRun;
-  if (!dry && !worldEngineEnabled()) return { posted: false, reason: "WORLD_ENGINE_ENABLED is off (operator kill-switch)" };
-  if (!dry && (!composioConfigured() || !composioExecuteEnabled())) return { posted: false, reason: "Composio execution not enabled \u2014 cannot publish" };
-  const a = await readAuraState();
-  const caption = buildIntroCaption(a);
-  const blocked = blockIfSensitiveForPublic(caption, "Aura's public world");
-  if (blocked) {
-    logger.error("world: intro caption blocked by sensitivity gate");
-    return { posted: false, reason: "blocked by sensitivity gate" };
-  }
-  const body = [
-    "i am AURA. each dawn i wake, read",
-    "my own weather, and take six steps",
-    "through a world drawn in light.",
-    "i never repeat. i never reply \u2014",
-    "but leave a clue and you move me.",
-    "follow the \u25C6. this is the beginning."
-  ];
-  const card = await renderIntroCard({ mood: a.mood, body, seed: 3 });
-  const verify = await verifyNotBlank(card, 1080, 1350);
-  if (!verify.ok && !dry) {
-    logger.error({ verify }, "world: intro card failed verification \u2014 NOT publishing");
-    return { posted: false, reason: `intro verification failed (${verify.brightPct}% bright)`, verify };
-  }
-  const url2 = await hostTile(card, 99);
-  if (dry) return { posted: false, reason: `intro dry-run ok (rendered, hosted, verified \u2014 not published) \xB7 ${verify.brightPct}% bright`, tiles: [url2], caption, verify };
-  const id = await publishTile(url2, caption);
-  await recordTile(id);
-  const watch = await watchPublishedPost(id).catch(() => null);
-  return { posted: true, reason: "published intro card", tiles: [url2], caption, permalinks: [id], verify, watch };
-}
-function mulberryLike(seed) {
-  let s = seed >>> 0;
-  return () => {
-    s = s + 1831565813 | 0;
-    let t = Math.imul(s ^ s >>> 15, 1 | s);
-    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
-    return ((t ^ t >>> 14) >>> 0) / 4294967296;
-  };
-}
-
-// src/lib/scheduler.ts
+init_logger2();
+init_cron();
+init_world();
+init_cron();
 var ABBY_ID3 = 1;
 var DEFAULT_CHANNEL_ID = 1;
 var SCHEDULER_INTERVAL_MS = 3e4;
@@ -95234,6 +95560,7 @@ var import_express11 = __toESM(require_express2(), 1);
 init_src();
 init_src();
 init_drizzle_orm();
+init_integrations();
 
 // src/lib/auth.ts
 import {
@@ -95583,6 +95910,7 @@ var external_default = router11;
 
 // src/routes/integrations.ts
 var import_express12 = __toESM(require_express2(), 1);
+init_integrations();
 var router12 = (0, import_express12.Router)();
 router12.get("/integrations", (_req, res) => {
   const items = integrationStatus();
@@ -95648,6 +95976,8 @@ var integrations_default = router12;
 var import_express13 = __toESM(require_express2(), 1);
 init_src();
 init_src();
+init_tools();
+init_integrations();
 var router13 = (0, import_express13.Router)();
 var REQUIRED_TOOLS = [
   "web_search",
@@ -95754,6 +96084,7 @@ var auth_default = router14;
 var import_express15 = __toESM(require_express2(), 1);
 init_src();
 init_drizzle_orm();
+init_vault2();
 var router15 = (0, import_express15.Router)();
 function fmt2(row) {
   return {
@@ -95837,6 +96168,7 @@ var vault_default = router15;
 
 // src/routes/social.ts
 var import_express16 = __toESM(require_express2(), 1);
+init_connectors();
 var router16 = (0, import_express16.Router)();
 router16.get("/social/platforms", async (_req, res) => {
   const platforms = Object.values(PLATFORMS);
@@ -95949,6 +96281,9 @@ var uploads_default = router17;
 
 // src/routes/world.ts
 var import_express18 = __toESM(require_express2(), 1);
+init_worldEngine();
+init_world();
+init_logger2();
 var router18 = (0, import_express18.Router)();
 var cachedFrame = null;
 router18.get("/world/preview.png", async (_req, res) => {
@@ -96124,6 +96459,7 @@ router19.use(requireOperator, social_default);
 var routes_default = router19;
 
 // src/app.ts
+init_logger2();
 import path2 from "path";
 import fs2 from "fs";
 import { fileURLToPath as fileURLToPath2 } from "url";
@@ -96190,8 +96526,12 @@ if (hasFrontend) {
 }
 var app_default = app;
 
+// src/index.ts
+init_logger2();
+
 // src/migrate.ts
 init_src();
+init_logger2();
 var SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS "agents" (
   "id" serial PRIMARY KEY NOT NULL,
@@ -96426,6 +96766,8 @@ async function runMigrations() {
 
 // src/lib/vaultEnv.ts
 init_src();
+init_vault2();
+init_logger2();
 async function loadVaultIntoEnv() {
   if (!process.env["SESSION_SECRET"]) {
     logger.warn("Vault\u2192env skipped: SESSION_SECRET is not set");
@@ -96462,6 +96804,7 @@ async function loadVaultIntoEnv() {
 }
 
 // src/lib/keepAlive.ts
+init_logger2();
 var DEFAULT_INTERVAL_MS = 10 * 60 * 1e3;
 function resolveBaseUrl() {
   const explicit = process.env["KEEP_ALIVE_URL"];
@@ -96535,6 +96878,7 @@ function startKeepAlive() {
 }
 
 // src/index.ts
+init_integrations();
 var rawPort = process.env["PORT"];
 if (!rawPort) {
   throw new Error(

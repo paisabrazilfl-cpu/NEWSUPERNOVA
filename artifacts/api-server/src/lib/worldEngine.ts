@@ -416,6 +416,80 @@ export async function renderIntroCard(opts: { mood?: TraversalOpts["mood"]; body
   return toBuffer(img);
 }
 
+export interface ContentCardOpts {
+  kind?: "news" | "quote" | "hook" | "stat";
+  eyebrow?: string;   // small top label, e.g. "> AI_NEWS"
+  headline?: string;  // the main large text (quote: the quote; stat: the supporting line)
+  body?: string;      // smaller supporting paragraph
+  big?: string;       // stat kind only: the giant number, e.g. "$0.00"
+  footer?: string;    // bottom ticker line
+  seed?: number;
+}
+
+/**
+ * Render a FREE on-brand terminal/cyber 1080×1080 post card from text — drawn by
+ * code (~$0), NO AI image generation. The cheap content engine: an LLM writes the
+ * words, this draws the card, Composio publishes it. Monospace, char-based wrap
+ * (no measureText dependency). kinds: news | quote | hook | stat.
+ */
+export async function renderContentCard(opts: ContentCardOpts = {}): Promise<Buffer> {
+  await ensureFont();
+  const W = 1080, H = 1080;
+  const img = PImage.make(W, H);
+  const ctx = img.getContext("2d");
+  const rnd = mulberry32((opts.seed ?? 7) * 13 + 1);
+  const BG = "#080a14", PANEL = "#0a0d18", CYAN = "#00e5ff", INK = "#e1ebf5", DIM = "#7888a0", GREEN = "#78f6aa";
+  ctx.fillStyle = BG; ctx.fillRect(0, 0, W, H);
+
+  // faint glyph texture
+  const tex = ".·:+=*";
+  for (let i = 0; i < 700; i++) { ctx.fillStyle = "#121a28"; ctx.font = `12pt ${MONO}`; ctx.fillText(tex.charAt(Math.floor(rnd() * tex.length)), rnd() * W, 120 + rnd() * (H - 300)); }
+
+  // top chrome bar (terminal window)
+  ctx.fillStyle = PANEL; ctx.fillRect(0, 0, W, 92); ctx.fillStyle = CYAN; ctx.fillRect(0, 92, W, 3);
+  ["#ff5f56", "#ffbd2e", "#27c93f"].forEach((c, i) => { ctx.fillStyle = c; ctx.beginPath(); ctx.arc(40 + i * 34, 46, 9, 0, Math.PI * 2); ctx.fill(); });
+  ctx.fillStyle = DIM; ctx.font = `22pt ${MONO}`; ctx.fillText("bos-omega — execution mode", 150, 34 + 22);
+  ctx.fillStyle = GREEN; ctx.font = `18pt ${MONO}`; ctx.fillText("● live", W - 140, 38 + 18);
+
+  // bottom ticker
+  ctx.fillStyle = PANEL; ctx.fillRect(0, H - 84, W, 84); ctx.fillStyle = CYAN; ctx.fillRect(0, H - 87, W, 3);
+  ctx.fillStyle = DIM; ctx.font = `18pt ${MONO}`; ctx.fillText(opts.footer ?? "⟁ rendered by code · $0 · @luis_lacerda16", 36, H - 58 + 18);
+
+  // monospace char-based word wrap (advance ≈ 0.62em — robust, no measureText)
+  const wrap = (text: string, px: number, maxw: number): string[] => {
+    const max = Math.max(1, Math.floor(maxw / (px * 0.62)));
+    const out: string[] = [];
+    for (const para of text.split("\n")) {
+      let line = "";
+      for (const w of para.split(" ")) {
+        const t = line ? `${line} ${w}` : w;
+        if (t.length <= max) line = t; else { if (line) out.push(line); line = w; }
+      }
+      out.push(line);
+    }
+    return out;
+  };
+  const put = (text: string, x: number, yTop: number, px: number, color: string) => { ctx.fillStyle = color; ctx.font = `${px}pt ${MONO}`; ctx.fillText(text, x, yTop + px); };
+
+  put(opts.eyebrow ?? "> POST", 40, 150, 28, CYAN);
+  const kind = opts.kind ?? "news";
+  const head = opts.headline ?? "";
+
+  if (kind === "stat") {
+    put(opts.big ?? "$0.00", 40, 300, 150, CYAN);
+    let y = 540; for (const ln of wrap(head, 32, W - 90)) { put(ln, 48, y, 32, INK); y += 46; }
+    if (opts.body) { y += 18; for (const ln of wrap(opts.body, 26, W - 90)) { put(ln, 40, y, 26, DIM); y += 38; } }
+  } else if (kind === "quote") {
+    let y = 320; for (const ln of wrap(`"${head}"`, 50, W - 110)) { put(ln, 55, y, 50, INK); y += 66; }
+    put(opts.body ?? "— bos-omega field notes", 55, y + 24, 28, CYAN);
+  } else { // news | hook
+    let y = 224; for (const ln of wrap(head, 52, W - 90)) { put(ln, 40, y, 52, INK); y += 64; }
+    if (opts.body) { y += 22; put(kind === "hook" ? "the build:" : "why it matters:", 40, y, 26, CYAN); y += 44; for (const ln of wrap(opts.body, 28, W - 90)) { put(ln, 40, y, 28, DIM); y += 40; } }
+  }
+  return toBuffer(img);
+}
+
+
 /**
  * Verify a rendered block + its tiles are not broken BEFORE we publish:
  *  - every tile decodes and is exactly TILE×TILE
