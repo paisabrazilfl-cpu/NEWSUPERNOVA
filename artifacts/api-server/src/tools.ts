@@ -928,7 +928,7 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
   memory_write: {
     name: "memory_write",
     description:
-      "Persist a fact, finding, or result to the swarm's shared long-term memory so any agent can retrieve it later.",
+      "Persist a fact, finding, or result to the swarm's shared long-term memory (durable — Postgres + semantic vector search, survives across runs) so any agent can retrieve it later. Use it to LEARN: after you solve a non-obvious problem or verify something online, store the lesson in reusable 'PROBLEM → SOLUTION (evidence)' form with clear tags, so the swarm never re-learns it.",
     parameters: {
       type: "object",
       properties: {
