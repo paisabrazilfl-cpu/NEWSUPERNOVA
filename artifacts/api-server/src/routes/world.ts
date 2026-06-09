@@ -1,6 +1,6 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { renderWorldFrame, renderTraversalBlock } from "../lib/worldEngine";
-import { runWorldCycle, readAuraState, getWorldState, resetWorldState, worldEngineEnabled } from "../lib/world";
+import { runWorldCycle, readAuraState, getWorldState, resetWorldState, worldDiag, worldEngineEnabled } from "../lib/world";
 import { requireOperator } from "../lib/auth";
 import { timingSafeStrEqual } from "../lib/auth";
 import { logger } from "../lib/logger";
@@ -69,6 +69,12 @@ router.post("/world/cycle", cycleAuth, async (req, res) => {
     const result = await runWorldCycle({ dryRun: dry, force });
     res.json(result);
   } catch (err) { res.status(500).json({ error: String(err).slice(0, 300) }); }
+});
+
+// ── read-only diagnostic (cap usage + actual IG media) — same auth as cycle ──
+router.post("/world/diag", cycleAuth, async (_req, res) => {
+  try { res.json(await worldDiag()); }
+  catch (err) { res.status(500).json({ error: String(err).slice(0, 300) }); }
 });
 
 // ── reset the world to the beginning (chapter 0, step 0) — same auth as cycle ──

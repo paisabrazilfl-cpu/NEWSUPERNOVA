@@ -94,6 +94,24 @@ export async function saveWorldState(s: WorldState, lastCaption?: string): Promi
   );
 }
 
+/** Read-only diagnostic: cap usage + what IG actually shows (to resolve ambiguity). */
+export async function worldDiag(): Promise<Record<string, unknown>> {
+  const { count, lastAt } = await tilesPostedLast24h();
+  let media: Array<Record<string, unknown>> = [];
+  let mediaErr: string | null = null;
+  try {
+    const r = await composioExecute({ toolkit: "instagram", endpoint: "/me/media?fields=id,media_type,timestamp,permalink&limit=20", method: "GET" });
+    const j = JSON.parse(r.slice(r.indexOf("\n") + 1));
+    const arr = ((j?.["data"] as Record<string, unknown>)?.["data"]) as Array<Record<string, unknown>> | undefined;
+    media = (arr ?? []).map((m) => ({ id: m["id"], type: m["media_type"], at: m["timestamp"], permalink: m["permalink"] }));
+  } catch (e) { mediaErr = String(e).slice(0, 200); }
+  return {
+    capCount24h: count, capMax: MAX_TILES_PER_DAY, lastPostAt: lastAt,
+    engineEnabled: worldEngineEnabled(), composio: composioConfigured() && composioExecuteEnabled(),
+    igMediaCount: media.length, igMedia: media, mediaErr,
+  };
+}
+
 /** Reset the world back to the very beginning (chapter 0, step 0) — a clean restart. */
 export async function resetWorldState(): Promise<WorldState> {
   await pool.query(

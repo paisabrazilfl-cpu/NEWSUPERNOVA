@@ -28105,7 +28105,7 @@ var require_pino = __commonJS({
     function pinoBundlerAbsolutePath(p) {
       try {
         const path3 = __require("path");
-        const outputDir = "/home/runner/work/BOS-AURA/BOS-AURA/artifacts/api-server/dist";
+        const outputDir = "/home/user/BOS-AURA/artifacts/api-server/dist";
         return path3.resolve(outputDir, p.replace(/^\.\//, ""));
       } catch (e) {
         const f = new Function("p", "return new URL(p, import.meta.url).pathname");
@@ -93784,6 +93784,29 @@ async function saveWorldState(s, lastCaption) {
     [s.chapter, s.step, s.heroX, s.heroY, s.direction, JSON.stringify(s.trail.slice(-120)), lastCaption ?? null, s.stopped]
   );
 }
+async function worldDiag() {
+  const { count, lastAt } = await tilesPostedLast24h();
+  let media = [];
+  let mediaErr = null;
+  try {
+    const r = await composioExecute({ toolkit: "instagram", endpoint: "/me/media?fields=id,media_type,timestamp,permalink&limit=20", method: "GET" });
+    const j = JSON.parse(r.slice(r.indexOf("\n") + 1));
+    const arr = j?.["data"]?.["data"];
+    media = (arr ?? []).map((m) => ({ id: m["id"], type: m["media_type"], at: m["timestamp"], permalink: m["permalink"] }));
+  } catch (e) {
+    mediaErr = String(e).slice(0, 200);
+  }
+  return {
+    capCount24h: count,
+    capMax: MAX_TILES_PER_DAY,
+    lastPostAt: lastAt,
+    engineEnabled: worldEngineEnabled(),
+    composio: composioConfigured() && composioExecuteEnabled(),
+    igMediaCount: media.length,
+    igMedia: media,
+    mediaErr
+  };
+}
 async function resetWorldState() {
   await pool.query(
     `UPDATE world_state SET chapter=0, step=0, hero_x=75, hero_y=4, direction='down',
@@ -95355,6 +95378,13 @@ router18.post("/world/cycle", cycleAuth, async (req, res) => {
     }
     const result = await runWorldCycle({ dryRun: dry, force });
     res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: String(err).slice(0, 300) });
+  }
+});
+router18.post("/world/diag", cycleAuth, async (_req, res) => {
+  try {
+    res.json(await worldDiag());
   } catch (err) {
     res.status(500).json({ error: String(err).slice(0, 300) });
   }
