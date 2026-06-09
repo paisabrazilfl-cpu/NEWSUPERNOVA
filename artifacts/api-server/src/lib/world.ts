@@ -276,6 +276,56 @@ async function publishTile(imageUrl: string, caption: string): Promise<string> {
   return pubId;
 }
 
+/** Poll an IG media container's status_code until FINISHED (IG processes uploads
+ * async; publishing/attaching an unfinished container silently no-ops). Returns
+ * the last status seen. */
+async function waitForContainer(cid: string, tries = 8): Promise<string> {
+  let status = "";
+  for (let a = 0; a < tries; a++) {
+    const rs = await composioExecute({ toolkit: "instagram", endpoint: `/${cid}?fields=status_code,status`, method: "GET" });
+    status = (((parseJson(rs)?.["data"] as Record<string, unknown>)?.["status_code"]) as string | undefined) ?? "";
+    if (/FINISHED/i.test(status)) break;
+    if (/ERROR|EXPIRED/i.test(status)) break;
+    await new Promise((r) => setTimeout(r, 3000));
+  }
+  return status;
+}
+
+/**
+ * Publish ONE Instagram CAROUSEL from up to 10 images — a single grid cell the
+ * viewer swipes through. This is how a 6-tile walk should land: one post, one
+ * cell, no dependence on how many other posts precede it (so it can never shear
+ * on the profile grid the way 6 separate tiles do). IG flow: create each child
+ * container (is_carousel_item) → wait FINISHED → create CAROUSEL parent with
+ * children=ids + caption → wait FINISHED → publish. Returns the published id.
+ */
+async function publishCarousel(imageUrls: string[], caption: string): Promise<{ id: string; debug: Record<string, unknown> }> {
+  const debug: Record<string, unknown> = {};
+  const childIds: string[] = [];
+  for (let i = 0; i < imageUrls.length; i++) {
+    const r = await composioExecute({ toolkit: "instagram", endpoint: "/me/media", method: "POST", arguments: { image_url: imageUrls[i], is_carousel_item: "true" } });
+    const cid = ((parseJson(r)?.["data"] as Record<string, unknown>)?.["id"]) as string | undefined;
+    if (!cid) throw new Error(`carousel child ${i + 1}/${imageUrls.length} container failed: ${r.slice(0, 160)}`);
+    await waitForContainer(cid);
+    childIds.push(cid);
+  }
+  debug["childIds"] = childIds.join(",");
+  const rp = await composioExecute({ toolkit: "instagram", endpoint: "/me/media", method: "POST", arguments: { media_type: "CAROUSEL", children: childIds.join(","), caption } });
+  const pid = ((parseJson(rp)?.["data"] as Record<string, unknown>)?.["id"]) as string | undefined;
+  if (!pid) throw new Error(`carousel parent container failed: ${rp.slice(0, 200)}`);
+  debug["parentId"] = pid;
+  debug["parentStatus"] = await waitForContainer(pid);
+  let pubId: string | undefined; let last = "";
+  for (let a = 0; a < 5 && !pubId; a++) {
+    if (a) await new Promise((r) => setTimeout(r, 3000));
+    const r2 = await composioExecute({ toolkit: "instagram", endpoint: "/me/media_publish", method: "POST", arguments: { creation_id: String(pid) } });
+    last = r2; pubId = ((parseJson(r2)?.["data"] as Record<string, unknown>)?.["id"]) as string | undefined;
+  }
+  debug["publish"] = last.slice(0, 200);
+  if (!pubId) throw new Error(`carousel publish failed: ${last.slice(0, 200)}`);
+  return { id: pubId, debug };
+}
+
 async function tilesPostedLast24h(): Promise<{ count: number; lastAt: Date | null }> {
   try {
     const { rows } = await pool.query(
@@ -342,7 +392,9 @@ export async function runWorldCycle(opts: { dryRun?: boolean; force?: boolean } 
   // cap + spacing
   const { count, lastAt } = await tilesPostedLast24h();
   const gapMin = lastAt ? (Date.now() - lastAt.getTime()) / 60000 : Number.MAX_SAFE_INTEGER;
-  if (!dry && count + TILES_PER_BLOCK > MAX_TILES_PER_DAY) return { posted: false, reason: `daily cap reached (${count}/${MAX_TILES_PER_DAY} tiles)` };
+  // operator `force` overrides BOTH safety gates (cap + spacing) — a deliberate
+  // override for tests/manual posts; the autonomous heartbeat never passes force.
+  if (!dry && !opts.force && count + TILES_PER_BLOCK > MAX_TILES_PER_DAY) return { posted: false, reason: `daily cap reached (${count}/${MAX_TILES_PER_DAY} tiles)` };
   if (!dry && !opts.force && gapMin < MIN_BLOCK_GAP_MIN) return { posted: false, reason: `spacing: last block ${Math.floor(gapMin)}m ago (min ${MIN_BLOCK_GAP_MIN}m)` };
 
   // advance her one move
@@ -375,19 +427,17 @@ export async function runWorldCycle(opts: { dryRun?: boolean; force?: boolean } 
     return { posted: false, reason: `dry-run ok (rendered, sliced, hosted, gated, verified — not published) · ${verify.reason}`, tiles: tileUrls, caption: fullCaption, chapter: w.chapter, step: w.step, verify };
   }
 
-  // publish in REVERSE display order so the grid lines up (tile1 lands top-left, with the caption)
-  const permalinks: string[] = [];
-  for (let i = tiles.length - 1; i >= 0; i--) {
-    const cap = i === 0 ? fullCaption : `⟁ WORLD-00 · ch.${w.chapter} (${i + 1}/6)`;
-    const id = await publishTile(tileUrls[i], cap);
-    await recordTile(id);
-    permalinks.push(id);
-    if (i > 0) await new Promise((r) => setTimeout(r, 1500));
-  }
+  // Publish the whole walk as ONE carousel — a single grid cell the viewer swipes
+  // through (tile1 with the caption first). One post per block means the profile
+  // grid can never shear, no matter how many other posts precede it.
+  const { id, debug } = await publishCarousel(tileUrls, fullCaption);
+  // Cap counts tiles/day; a carousel is still TILES_PER_BLOCK tiles of content, so
+  // record that many cap-rows to preserve the ~2-blocks/day cadence.
+  for (let k = 0; k < TILES_PER_BLOCK; k++) await recordTile(`${id}#${k + 1}`);
   await saveWorldState(w, fullCaption.slice(0, 1000));
   // POST-PUBLISH WATCHER (best-effort): confirm the live post actually renders.
-  const watch = await watchPublishedPost(permalinks[permalinks.length - 1]).catch(() => null);
-  return { posted: true, reason: "published 6-tile block", tiles: tileUrls, caption: fullCaption, permalinks, chapter: w.chapter, step: w.step, verify, watch };
+  const watch = await watchPublishedPost(id).catch(() => null);
+  return { posted: true, reason: "published 6-tile carousel (single grid cell)", tiles: tileUrls, caption: fullCaption, permalinks: [id], chapter: w.chapter, step: w.step, verify, watch, debug };
 }
 
 /** Best-effort: resolve the live IG permalink for a media id and Steel-scrape it to confirm it loads. */
