@@ -274,6 +274,60 @@ export async function renderTraversalBlock(opts: TraversalOpts = {}): Promise<Bu
   return toBuffer(img);
 }
 
+/**
+ * Verify a rendered block + its tiles are not broken BEFORE we publish:
+ *  - every tile decodes and is exactly TILE×TILE
+ *  - no tile is blank/near-black (must carry visible content) or a flat solid color
+ *  - the block actually rendered Aura (cyan signature) and her clues (gold)
+ * Returns { ok, reason, perTile, hasAura, hasClues }. Pure pixel inspection.
+ */
+export async function verifyBlock(block: Buffer, tiles: Buffer[]): Promise<{
+  ok: boolean; reason: string; perTile: Array<{ ok: boolean; brightPct: number; w: number; h: number }>;
+  hasAura: boolean; hasClues: boolean;
+}> {
+  const decode = async (buf: Buffer) => { const ps = new PassThrough(); const d = PImage.decodePNGFromStream(ps); ps.end(buf); return d; };
+  const TILE = 1080;
+  const perTile: Array<{ ok: boolean; brightPct: number; w: number; h: number }> = [];
+  let allTilesOk = tiles.length === 6;
+  for (const t of tiles) {
+    let ok = true, brightPct = 0, w = 0, h = 0;
+    try {
+      const bmp = await decode(t); w = bmp.width; h = bmp.height;
+      if (w !== TILE || h !== TILE) ok = false;
+      let bright = 0, total = 0; const seen = new Set<number>();
+      for (let y = 4; y < h; y += 12) for (let x = 4; x < w; x += 12) {
+        const v = bmp.getPixelRGBA(x, y) >>> 0;
+        const r = (v >>> 24) & 255, g = (v >>> 16) & 255, b = (v >>> 8) & 255;
+        if (r + g + b > 70) bright++;
+        seen.add((r >> 4 << 8) | (g >> 4 << 4) | (b >> 4)); total++;
+      }
+      brightPct = total ? (bright / total) * 100 : 0;
+      // blank/near-black tile, OR a flat single-color tile (corrupt) -> broken
+      if (brightPct < 0.15 || seen.size < 3) ok = false;
+    } catch { ok = false; }
+    perTile.push({ ok, brightPct: Math.round(brightPct * 100) / 100, w, h });
+    if (!ok) allTilesOk = false;
+  }
+  // block-level: Aura's cyan (~0,229,255) and gold clues (~255,209,102) must exist
+  let hasAura = false, hasClues = false;
+  try {
+    const bmp = await decode(block);
+    for (let y = 0; y < bmp.height && !(hasAura && hasClues); y += 6)
+      for (let x = 0; x < bmp.width; x += 6) {
+        const v = bmp.getPixelRGBA(x, y) >>> 0;
+        const r = (v >>> 24) & 255, g = (v >>> 16) & 255, b = (v >>> 8) & 255;
+        if (!hasAura && b > 180 && g > 150 && r < 130) hasAura = true;
+        if (!hasClues && r > 200 && g > 150 && b < 150) hasClues = true;
+        if (hasAura && hasClues) break;
+      }
+  } catch { /* decode failure handled below */ }
+  const ok = allTilesOk && hasAura && hasClues;
+  const bad = perTile.map((p, i) => (p.ok ? null : `tile${i + 1}(${p.brightPct}%)`)).filter(Boolean);
+  const reason = ok ? "all tiles render; Aura + clues present"
+    : `verification failed: ${[...bad, !hasAura ? "no-Aura" : "", !hasClues ? "no-clues" : ""].filter(Boolean).join(", ")}`;
+  return { ok, reason, perTile, hasAura, hasClues };
+}
+
 /** Slice a 6-tile (3w×2h) block into the 6 IG tiles in display order (row-major). */
 export async function sliceSixTiles(block: Buffer): Promise<Buffer[]> {
   const ps = new PassThrough();

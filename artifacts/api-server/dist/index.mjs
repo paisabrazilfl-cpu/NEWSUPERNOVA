@@ -28105,7 +28105,7 @@ var require_pino = __commonJS({
     function pinoBundlerAbsolutePath(p) {
       try {
         const path3 = __require("path");
-        const outputDir = "/home/runner/work/BOS-AURA/BOS-AURA/artifacts/api-server/dist";
+        const outputDir = "/home/user/BOS-AURA/artifacts/api-server/dist";
         return path3.resolve(outputDir, p.replace(/^\.\//, ""));
       } catch (e) {
         const f = new Function("p", "return new URL(p, import.meta.url).pathname");
@@ -93708,6 +93708,58 @@ async function renderTraversalBlock(opts = {}) {
   ctx.fillStyle = "#28344455";
   return toBuffer(img);
 }
+async function verifyBlock(block, tiles) {
+  const decode = async (buf) => {
+    const ps = new PassThrough();
+    const d = PImage.decodePNGFromStream(ps);
+    ps.end(buf);
+    return d;
+  };
+  const TILE = 1080;
+  const perTile = [];
+  let allTilesOk = tiles.length === 6;
+  for (const t of tiles) {
+    let ok2 = true, brightPct = 0, w = 0, h = 0;
+    try {
+      const bmp = await decode(t);
+      w = bmp.width;
+      h = bmp.height;
+      if (w !== TILE || h !== TILE) ok2 = false;
+      let bright = 0, total = 0;
+      const seen = /* @__PURE__ */ new Set();
+      for (let y = 4; y < h; y += 12) for (let x = 4; x < w; x += 12) {
+        const v = bmp.getPixelRGBA(x, y) >>> 0;
+        const r = v >>> 24 & 255, g = v >>> 16 & 255, b = v >>> 8 & 255;
+        if (r + g + b > 70) bright++;
+        seen.add(r >> 4 << 8 | g >> 4 << 4 | b >> 4);
+        total++;
+      }
+      brightPct = total ? bright / total * 100 : 0;
+      if (brightPct < 0.15 || seen.size < 3) ok2 = false;
+    } catch {
+      ok2 = false;
+    }
+    perTile.push({ ok: ok2, brightPct: Math.round(brightPct * 100) / 100, w, h });
+    if (!ok2) allTilesOk = false;
+  }
+  let hasAura = false, hasClues = false;
+  try {
+    const bmp = await decode(block);
+    for (let y = 0; y < bmp.height && !(hasAura && hasClues); y += 6)
+      for (let x = 0; x < bmp.width; x += 6) {
+        const v = bmp.getPixelRGBA(x, y) >>> 0;
+        const r = v >>> 24 & 255, g = v >>> 16 & 255, b = v >>> 8 & 255;
+        if (!hasAura && b > 180 && g > 150 && r < 130) hasAura = true;
+        if (!hasClues && r > 200 && g > 150 && b < 150) hasClues = true;
+        if (hasAura && hasClues) break;
+      }
+  } catch {
+  }
+  const ok = allTilesOk && hasAura && hasClues;
+  const bad = perTile.map((p, i) => p.ok ? null : `tile${i + 1}(${p.brightPct}%)`).filter(Boolean);
+  const reason = ok ? "all tiles render; Aura + clues present" : `verification failed: ${[...bad, !hasAura ? "no-Aura" : "", !hasClues ? "no-clues" : ""].filter(Boolean).join(", ")}`;
+  return { ok, reason, perTile, hasAura, hasClues };
+}
 async function sliceSixTiles(block) {
   const ps = new PassThrough();
   const done = PImage.decodePNGFromStream(ps);
@@ -93807,11 +93859,20 @@ async function worldDiag() {
     mediaErr
   };
 }
-async function resetWorldState() {
+async function clearWorldPosts() {
+  try {
+    const r = await pool.query(`DELETE FROM social_posts WHERE platform='instagram-world'`);
+    return r.rowCount ?? 0;
+  } catch {
+    return 0;
+  }
+}
+async function resetWorldState(clearCap = false) {
   await pool.query(
     `UPDATE world_state SET chapter=0, step=0, hero_x=75, hero_y=4, direction='down',
        trail='[]', last_caption=NULL, stopped=false, updated_at=now() WHERE id=1`
   );
+  if (clearCap) await clearWorldPosts();
   return getWorldState();
 }
 var HERO_LINES = {
@@ -93941,11 +94002,16 @@ async function runWorldCycle(opts = {}) {
     seed: w.step + 1
   });
   const tiles = await sliceSixTiles(block);
+  const verify = await verifyBlock(block, tiles);
+  if (!verify.ok && !dry) {
+    logger.error({ verify }, "world: block failed verification \u2014 NOT publishing");
+    return { posted: false, reason: verify.reason, verify };
+  }
   const tileUrls = [];
   for (let i = 0; i < tiles.length; i++) tileUrls.push(await hostTile(tiles[i], i));
   if (dry) {
     await saveWorldState(w, fullCaption.slice(0, 1e3));
-    return { posted: false, reason: "dry-run ok (rendered, sliced, hosted, gated \u2014 not published)", tiles: tileUrls, caption: fullCaption, chapter: w.chapter, step: w.step };
+    return { posted: false, reason: `dry-run ok (rendered, sliced, hosted, gated, verified \u2014 not published) \xB7 ${verify.reason}`, tiles: tileUrls, caption: fullCaption, chapter: w.chapter, step: w.step, verify };
   }
   const permalinks = [];
   for (let i = tiles.length - 1; i >= 0; i--) {
@@ -93956,7 +94022,23 @@ async function runWorldCycle(opts = {}) {
     if (i > 0) await new Promise((r) => setTimeout(r, 1500));
   }
   await saveWorldState(w, fullCaption.slice(0, 1e3));
-  return { posted: true, reason: "published 6-tile block", tiles: tileUrls, caption: fullCaption, permalinks, chapter: w.chapter, step: w.step };
+  const watch = await watchPublishedPost(permalinks[permalinks.length - 1]).catch(() => null);
+  return { posted: true, reason: "published 6-tile block", tiles: tileUrls, caption: fullCaption, permalinks, chapter: w.chapter, step: w.step, verify, watch };
+}
+async function watchPublishedPost(mediaId) {
+  if (!mediaId) return null;
+  try {
+    const r = await composioExecute({ toolkit: "instagram", endpoint: `/${mediaId}?fields=permalink`, method: "GET" });
+    const j = JSON.parse(r.slice(r.indexOf("\n") + 1));
+    const url2 = j?.["data"]?.["permalink"];
+    if (!url2) return { ok: false, note: "no permalink resolved" };
+    const page = await steelScrape(url2);
+    const ok = page.trim().length > 200 && /instagram/i.test(page);
+    logger.info({ url: url2, ok, bytes: page.length }, "world: post-publish watcher");
+    return { ok, url: url2, note: ok ? "live post loaded" : "post page looked empty/blocked (best-effort)" };
+  } catch (e) {
+    return { ok: false, note: `watcher error: ${String(e).slice(0, 120)}` };
+  }
 }
 function mulberryLike(seed) {
   let s = seed >>> 0;
@@ -95389,10 +95471,10 @@ router18.post("/world/diag", cycleAuth, async (_req, res) => {
     res.status(500).json({ error: String(err).slice(0, 300) });
   }
 });
-router18.post("/world/reset", cycleAuth, async (_req, res) => {
+router18.post("/world/reset", cycleAuth, async (req, res) => {
   try {
-    const w = await resetWorldState();
-    res.json({ ok: true, chapter: w.chapter, step: w.step });
+    const w = await resetWorldState(req.query["cap"] === "1");
+    res.json({ ok: true, chapter: w.chapter, step: w.step, capCleared: req.query["cap"] === "1" });
   } catch (err) {
     res.status(500).json({ error: String(err).slice(0, 300) });
   }

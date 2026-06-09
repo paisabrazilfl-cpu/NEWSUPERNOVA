@@ -78,10 +78,10 @@ router.post("/world/diag", cycleAuth, async (_req, res) => {
 });
 
 // ── reset the world to the beginning (chapter 0, step 0) — same auth as cycle ──
-router.post("/world/reset", cycleAuth, async (_req, res) => {
+router.post("/world/reset", cycleAuth, async (req, res) => {
   try {
-    const w = await resetWorldState();
-    res.json({ ok: true, chapter: w.chapter, step: w.step });
+    const w = await resetWorldState(req.query["cap"] === "1"); // cap=1 also clears the 24h post ledger
+    res.json({ ok: true, chapter: w.chapter, step: w.step, capCleared: req.query["cap"] === "1" });
   } catch (err) { res.status(500).json({ error: String(err).slice(0, 300) }); }
 });
 

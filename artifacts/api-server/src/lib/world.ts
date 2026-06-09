@@ -12,7 +12,8 @@ import { gte } from "drizzle-orm";
 import { logger } from "./logger";
 import { composioConfigured, composioExecuteEnabled, composioExecute } from "./integrations";
 import { blockIfSensitiveForPublic } from "./safety";
-import { renderTraversalBlock, sliceSixTiles } from "./worldEngine";
+import { renderTraversalBlock, sliceSixTiles, verifyBlock } from "./worldEngine";
+import { steelScrape } from "../tools";
 
 // ── caps & operator sovereignty ─────────────────────────────────────────────
 const MAX_TILES_PER_DAY = Number(process.env["WORLD_MAX_TILES_PER_DAY"] ?? 12);
@@ -112,12 +113,21 @@ export async function worldDiag(): Promise<Record<string, unknown>> {
   };
 }
 
+/** Clear the world's posted-tile ledger (frees the 24h cap) — for a clean restart. */
+export async function clearWorldPosts(): Promise<number> {
+  try {
+    const r = await pool.query(`DELETE FROM social_posts WHERE platform='instagram-world'`);
+    return r.rowCount ?? 0;
+  } catch { return 0; }
+}
+
 /** Reset the world back to the very beginning (chapter 0, step 0) — a clean restart. */
-export async function resetWorldState(): Promise<WorldState> {
+export async function resetWorldState(clearCap = false): Promise<WorldState> {
   await pool.query(
     `UPDATE world_state SET chapter=0, step=0, hero_x=75, hero_y=4, direction='down',
        trail='[]', last_caption=NULL, stopped=false, updated_at=now() WHERE id=1`,
   );
+  if (clearCap) await clearWorldPosts();
   return getWorldState();
 }
 
@@ -246,6 +256,8 @@ export interface CycleResult {
   permalinks?: string[];
   chapter?: number;
   step?: number;
+  verify?: unknown;
+  watch?: unknown;
 }
 
 /**
@@ -284,12 +296,17 @@ export async function runWorldCycle(opts: { dryRun?: boolean; force?: boolean } 
     caption: captionLines, stateLine: `state: ${a.mood} · ${a.idle} idle`, seed: w.step + 1,
   });
   const tiles = await sliceSixTiles(block);
+
+  // VERIFICATION GATE — never publish a broken/blank block. Inspect the pixels.
+  const verify = await verifyBlock(block, tiles);
+  if (!verify.ok && !dry) { logger.error({ verify }, "world: block failed verification — NOT publishing"); return { posted: false, reason: verify.reason, verify }; }
+
   const tileUrls: string[] = [];
   for (let i = 0; i < tiles.length; i++) tileUrls.push(await hostTile(tiles[i], i));
 
   if (dry) {
     await saveWorldState(w, fullCaption.slice(0, 1000)); // advance the dry-run too so previews progress
-    return { posted: false, reason: "dry-run ok (rendered, sliced, hosted, gated — not published)", tiles: tileUrls, caption: fullCaption, chapter: w.chapter, step: w.step };
+    return { posted: false, reason: `dry-run ok (rendered, sliced, hosted, gated, verified — not published) · ${verify.reason}`, tiles: tileUrls, caption: fullCaption, chapter: w.chapter, step: w.step, verify };
   }
 
   // publish in REVERSE display order so the grid lines up (tile1 lands top-left, with the caption)
@@ -302,7 +319,24 @@ export async function runWorldCycle(opts: { dryRun?: boolean; force?: boolean } 
     if (i > 0) await new Promise((r) => setTimeout(r, 1500));
   }
   await saveWorldState(w, fullCaption.slice(0, 1000));
-  return { posted: true, reason: "published 6-tile block", tiles: tileUrls, caption: fullCaption, permalinks, chapter: w.chapter, step: w.step };
+  // POST-PUBLISH WATCHER (best-effort): confirm the live post actually renders.
+  const watch = await watchPublishedPost(permalinks[permalinks.length - 1]).catch(() => null);
+  return { posted: true, reason: "published 6-tile block", tiles: tileUrls, caption: fullCaption, permalinks, chapter: w.chapter, step: w.step, verify, watch };
+}
+
+/** Best-effort: resolve the live IG permalink for a media id and Steel-scrape it to confirm it loads. */
+async function watchPublishedPost(mediaId?: string): Promise<{ ok: boolean; url?: string; note: string } | null> {
+  if (!mediaId) return null;
+  try {
+    const r = await composioExecute({ toolkit: "instagram", endpoint: `/${mediaId}?fields=permalink`, method: "GET" });
+    const j = JSON.parse(r.slice(r.indexOf("\n") + 1));
+    const url = ((j?.["data"] as Record<string, unknown>)?.["permalink"]) as string | undefined;
+    if (!url) return { ok: false, note: "no permalink resolved" };
+    const page = await steelScrape(url);
+    const ok = page.trim().length > 200 && /instagram/i.test(page);
+    logger.info({ url, ok, bytes: page.length }, "world: post-publish watcher");
+    return { ok, url, note: ok ? "live post loaded" : "post page looked empty/blocked (best-effort)" };
+  } catch (e) { return { ok: false, note: `watcher error: ${String(e).slice(0, 120)}` }; }
 }
 
 // small local RNG (avoid importing the renderer's private one)
