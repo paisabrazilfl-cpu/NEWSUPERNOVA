@@ -164,6 +164,23 @@ CREATE TABLE IF NOT EXISTS "social_posts" (
   "created_at" timestamp DEFAULT now() NOT NULL
 );
 CREATE INDEX IF NOT EXISTS "social_posts_platform_created_idx" ON "social_posts" ("platform", "created_at");
+
+-- WORLD-00: single-row persistent state for Aura's living world (her position,
+-- direction, chapter, path history, breadcrumb clues, enabled flag). Only ONE
+-- row (id=1). Stores NO task content — world/render state only.
+CREATE TABLE IF NOT EXISTS "world_state" (
+  "id" integer PRIMARY KEY DEFAULT 1,
+  "chapter" integer DEFAULT 0 NOT NULL,
+  "step" integer DEFAULT 0 NOT NULL,
+  "hero_x" double precision DEFAULT 75 NOT NULL,
+  "hero_y" double precision DEFAULT 4 NOT NULL,
+  "direction" text DEFAULT 'down' NOT NULL,
+  "trail" text DEFAULT '[]' NOT NULL,
+  "last_caption" text,
+  "stopped" boolean DEFAULT false NOT NULL,
+  "updated_at" timestamp DEFAULT now() NOT NULL
+);
+INSERT INTO "world_state" ("id") VALUES (1) ON CONFLICT ("id") DO NOTHING;
 `;
 
 const SEED_AGENTS = `
