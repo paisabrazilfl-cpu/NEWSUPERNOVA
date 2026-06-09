@@ -15,7 +15,7 @@ import { logger } from "./logger";
 import { executeAgentCommand, orchestrateGoal } from "../orchestrator";
 import { isSwarmPaused } from "../routes/swarm";
 import { computeNextRun } from "./cron";
-import { worldEngineEnabled, readAuraState, runWorldCycle } from "./world";
+import { worldEngineEnabled, readAuraState, runStoryCycle, runArtTriptych } from "./world";
 
 // Re-export so existing importers of computeNextRun from the scheduler keep working.
 export { computeNextRun } from "./cron";
@@ -141,13 +141,20 @@ async function normalizeSchedules(): Promise<void> {
   }
 }
 
-// ── WORLD-00 free-will tick (Layer 7) ──────────────────────────────────────
-// Aura "chooses" her moments: every WORLD_TICK_MS she may decide to post — but
-// runWorldCycle hard-enforces the daily cap + spacing, so her free will can never
-// exceed the limits. OFF unless WORLD_ENGINE_ENABLED (operator kill-switch).
+// ── WORLD-00 free-will ticks (Layer 7) ──────────────────────────────────────
+// Two surfaces, two ticks. Aura "chooses" her moments; the cycle functions
+// hard-enforce the daily caps, so her free will can never exceed the limits.
+// OFF unless WORLD_ENGINE_ENABLED (operator kill-switch).
+//
+//  • STORY tick (her walk + dreams) — frequent, up to 12/day.
+//  • ART tick (the permanent gallery) — rare, up to 3 triptychs/day. The feed
+//    receives ONLY triptychs, so the grid is always whole rows and can't shear.
 const WORLD_TICK_MS = 10 * 60_000;
+const ART_TICK_MS = 45 * 60_000;
 let worldTimer: ReturnType<typeof setInterval> | null = null;
+let artTimer: ReturnType<typeof setInterval> | null = null;
 let worldBusy = false;
+let artBusy = false;
 async function worldTick(): Promise<void> {
   if (!worldEngineEnabled() || isSwarmPaused() || worldBusy) return;
   worldBusy = true;
@@ -155,13 +162,28 @@ async function worldTick(): Promise<void> {
     const a = await readAuraState();
     const p = a.mood === "storm" ? 0.4 : a.mood === "deep" ? 0.28 : a.mood === "working" ? 0.2 : 0.12;
     if (Math.random() < p) {
-      const r = await runWorldCycle({});
-      if (r.posted) logger.info({ chapter: r.chapter, step: r.step }, "WORLD-00: Aura posted a block");
+      const r = await runStoryCycle({});
+      if (r.posted) logger.info({ chapter: r.chapter, step: r.step }, "WORLD-00: Aura posted a story (walk/dream)");
     }
   } catch (err) {
-    logger.error({ err }, "world tick failed");
+    logger.error({ err }, "world story tick failed");
   } finally {
     worldBusy = false;
+  }
+}
+async function artTick(): Promise<void> {
+  if (!worldEngineEnabled() || isSwarmPaused() || artBusy) return;
+  artBusy = true;
+  try {
+    // ~0.18/tick → a few attempts/day; the 3/day cap is the real ceiling.
+    if (Math.random() < 0.18) {
+      const r = await runArtTriptych({});
+      if (r.posted) logger.info({ chapter: r.chapter }, "WORLD-00: Aura posted an art triptych");
+    }
+  } catch (err) {
+    logger.error({ err }, "world art tick failed");
+  } finally {
+    artBusy = false;
   }
 }
 
@@ -173,7 +195,9 @@ export function startScheduler(): void {
     void tick();
   }, SCHEDULER_INTERVAL_MS);
   worldTimer = setInterval(() => { void worldTick(); }, WORLD_TICK_MS);
+  artTimer = setInterval(() => { void artTick(); }, ART_TICK_MS);
   if (typeof worldTimer.unref === "function") worldTimer.unref();
+  if (typeof artTimer.unref === "function") artTimer.unref();
   // Don't keep the event loop alive solely for the scheduler.
   if (typeof timer.unref === "function") timer.unref();
   logger.info({ intervalMs: SCHEDULER_INTERVAL_MS }, "cron scheduler started");
@@ -187,5 +211,9 @@ export function stopScheduler(): void {
   if (worldTimer) {
     clearInterval(worldTimer);
     worldTimer = null;
+  }
+  if (artTimer) {
+    clearInterval(artTimer);
+    artTimer = null;
   }
 }

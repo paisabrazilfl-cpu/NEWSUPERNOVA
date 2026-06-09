@@ -1,6 +1,6 @@
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { renderWorldFrame, renderTraversalBlock } from "../lib/worldEngine";
-import { runWorldCycle, runStoryCycle, runIntroPost, readAuraState, getWorldState, resetWorldState, worldDiag, worldEngineEnabled } from "../lib/world";
+import { runWorldCycle, runStoryCycle, runArtTriptych, runIntroPost, readAuraState, getWorldState, resetWorldState, worldDiag, worldEngineEnabled } from "../lib/world";
 import { requireOperator } from "../lib/auth";
 import { timingSafeStrEqual } from "../lib/auth";
 import { logger } from "../lib/logger";
@@ -84,16 +84,32 @@ router.post("/world/intro", cycleAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: String(err).slice(0, 300) }); }
 });
 
-// ── post an Instagram STORY (vertical) — dry by default; same auth as cycle ──
+// ── post an Instagram STORY (vertical, walk/dream) — dry by default ──────────
 router.post("/world/story", cycleAuth, async (req, res) => {
   try {
     const dry = req.query["dry"] !== "0";
+    const force = req.query["force"] === "1";
     if (req.query["async"] === "1") {
-      runStoryCycle({ dryRun: dry }).catch((e) => logger.error({ err: String(e) }, "world: async story failed"));
+      runStoryCycle({ dryRun: dry, force }).catch((e) => logger.error({ err: String(e) }, "world: async story failed"));
       res.status(202).json({ accepted: true, async: true, note: "story running in background — poll /api/world/status" });
       return;
     }
-    res.json(await runStoryCycle({ dryRun: dry }));
+    res.json(await runStoryCycle({ dryRun: dry, force }));
+  } catch (err) { res.status(500).json({ error: String(err).slice(0, 300) }); }
+});
+
+// ── post an ART TRIPTYCH to the feed (3 tiles = one grid row) — dry by default ─
+router.post("/world/art", cycleAuth, async (req, res) => {
+  try {
+    const dry = req.query["dry"] !== "0";
+    const force = req.query["force"] === "1";
+    // 3 sequential feed publishes can exceed the gateway timeout — async=1 backgrounds it.
+    if (req.query["async"] === "1") {
+      runArtTriptych({ dryRun: dry, force }).catch((e) => logger.error({ err: String(e) }, "world: async art failed"));
+      res.status(202).json({ accepted: true, async: true, note: "art triptych running in background — poll /api/world/status" });
+      return;
+    }
+    res.json(await runArtTriptych({ dryRun: dry, force }));
   } catch (err) { res.status(500).json({ error: String(err).slice(0, 300) }); }
 });
 

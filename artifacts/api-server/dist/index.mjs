@@ -28105,7 +28105,7 @@ var require_pino = __commonJS({
     function pinoBundlerAbsolutePath(p) {
       try {
         const path3 = __require("path");
-        const outputDir = "/home/runner/work/BOS-AURA/BOS-AURA/artifacts/api-server/dist";
+        const outputDir = "/home/user/BOS-AURA/artifacts/api-server/dist";
         return path3.resolve(outputDir, p.replace(/^\.\//, ""));
       } catch (e) {
         const f = new Function("p", "return new URL(p, import.meta.url).pathname");
@@ -93984,11 +93984,33 @@ async function sliceSixTiles(block) {
   }
   return out;
 }
+async function sliceTiles(wide) {
+  const ps = new PassThrough();
+  const done = PImage.decodePNGFromStream(ps);
+  ps.end(wide);
+  const src = await done;
+  const tile = src.height;
+  const out = [];
+  for (let i = 0; i < 3; i++) {
+    const dst = PImage.make(tile, tile);
+    for (let y = 0; y < tile; y++) {
+      for (let x = 0; x < tile; x++) {
+        const sx = i * tile + x;
+        if (sx < src.width) dst.setPixelRGBA(x, y, src.getPixelRGBA(sx, y));
+      }
+    }
+    out.push(await toBuffer(dst));
+  }
+  return out;
+}
 
 // src/lib/world.ts
 var MAX_TILES_PER_DAY = Number(process.env["WORLD_MAX_TILES_PER_DAY"] ?? 12);
 var MIN_BLOCK_GAP_MIN = Number(process.env["WORLD_MIN_GAP_MINUTES"] ?? 180);
 var TILES_PER_BLOCK = 6;
+var MAX_STORIES_PER_DAY = Number(process.env["WORLD_MAX_STORIES_PER_DAY"] ?? 12);
+var MAX_ART_PER_DAY = Number(process.env["WORLD_MAX_ART_PER_DAY"] ?? 3);
+var TILES_PER_ART = 3;
 function worldEngineEnabled() {
   const v = process.env["WORLD_ENGINE_ENABLED"];
   return v != null && ["1", "true", "yes", "on"].includes(v.toLowerCase());
@@ -94042,6 +94064,7 @@ async function saveWorldState(s, lastCaption) {
 }
 async function worldDiag() {
   const { count, lastAt } = await tilesPostedLast24h();
+  const story = await storiesPostedLast24h();
   let media = [];
   let mediaErr = null;
   try {
@@ -94053,9 +94076,17 @@ async function worldDiag() {
     mediaErr = String(e).slice(0, 200);
   }
   return {
+    // FEED = art triptychs (3/day). STORIES = walks + dreams (12/day).
+    feedTiles24h: count,
+    artPieces24h: count / TILES_PER_ART,
+    artMaxPerDay: MAX_ART_PER_DAY,
+    stories24h: story.count,
+    storyMaxPerDay: MAX_STORIES_PER_DAY,
+    lastStoryAt: story.lastAt,
     capCount24h: count,
     capMax: MAX_TILES_PER_DAY,
     lastPostAt: lastAt,
+    // legacy fields (back-compat)
     engineEnabled: worldEngineEnabled(),
     composio: composioConfigured() && composioExecuteEnabled(),
     igMediaCount: media.length,
@@ -94286,6 +94317,22 @@ async function recordTile(permalinkOrId) {
   } catch {
   }
 }
+async function storiesPostedLast24h() {
+  try {
+    const { rows } = await pool.query(
+      `SELECT count(*)::int n, max(created_at) last FROM social_posts WHERE platform='instagram-world-story' AND created_at > now() - interval '24 hours'`
+    );
+    return { count: Number(rows[0]?.n ?? 0), lastAt: rows[0]?.last ? new Date(rows[0].last) : null };
+  } catch {
+    return { count: 0, lastAt: null };
+  }
+}
+async function recordStory(permalinkOrId) {
+  try {
+    await pool.query(`INSERT INTO social_posts (platform, account, permalink) VALUES ('instagram-world-story', 'world-00', $1)`, [permalinkOrId]);
+  } catch {
+  }
+}
 async function runWorldCycle(opts = {}) {
   const dry = !!opts.dryRun;
   if (!dry && !worldEngineEnabled()) return { posted: false, reason: "WORLD_ENGINE_ENABLED is off (operator kill-switch)" };
@@ -94403,8 +94450,14 @@ async function runStoryCycle(opts = {}) {
   if (!dry && !worldEngineEnabled()) return { posted: false, reason: "WORLD_ENGINE_ENABLED is off (operator kill-switch)" };
   if (!dry && (!composioConfigured() || !composioExecuteEnabled())) return { posted: false, reason: "Composio execution not enabled \u2014 cannot publish" };
   const a = await readAuraState();
-  const w = await getWorldState();
-  if (w.stopped) return { posted: false, reason: "Aura has stopped the experience (in-world)." };
+  const w0 = await getWorldState();
+  if (w0.stopped) return { posted: false, reason: "Aura has stopped the experience (in-world)." };
+  const { count } = await storiesPostedLast24h();
+  if (!dry && !opts.force && count + 1 > MAX_STORIES_PER_DAY) return { posted: false, reason: `daily story cap reached (${count}/${MAX_STORIES_PER_DAY})` };
+  const rnd = mulberryLike((w0.step + 1) * 13 + w0.chapter + 5);
+  const w = advance(w0, a, rnd);
+  const dreaming = a.mood === "resting" && a.idle >= a.active;
+  const headline = dreaming ? "she's dreaming right now" : "she's walking right now";
   const voice = await auraSpeak(a, w, "story");
   const fullCaption = buildPostCaption(a, w, voice);
   const blocked = blockIfSensitiveForPublic(fullCaption, "Aura's public story");
@@ -94418,7 +94471,7 @@ async function runStoryCycle(opts = {}) {
     chapter: w.chapter,
     step: w.step,
     direction: w.direction,
-    caption: ["she's walking right now", ...footer],
+    caption: [headline, ...footer],
     stateLine: `state: ${a.mood} \xB7 ${a.idle} idle`,
     seed: w.step + 7
   });
@@ -94428,7 +94481,10 @@ async function runStoryCycle(opts = {}) {
     return { posted: false, reason: `story verification failed (${verify.brightPct}% bright)`, verify };
   }
   const url2 = await hostTile(frame, 90);
-  if (dry) return { posted: false, reason: `story dry-run ok (rendered, hosted, verified \u2014 not published) \xB7 ${verify.brightPct}% bright`, tiles: [url2], caption: fullCaption, verify };
+  if (dry) {
+    await saveWorldState(w, fullCaption.slice(0, 1e3));
+    return { posted: false, reason: `story dry-run ok (${dreaming ? "dream" : "walk"} \xB7 rendered, hosted, verified \u2014 not published) \xB7 ${verify.brightPct}% bright`, tiles: [url2], caption: fullCaption, chapter: w.chapter, step: w.step, verify };
+  }
   const result = await publishStory(url2);
   if (!result.verified) {
     logger.error({ debug: result.debug, id: result.id }, "world: story did NOT verify live in /me/stories \u2014 not claiming success");
@@ -94441,8 +94497,60 @@ async function runStoryCycle(opts = {}) {
       debug: result.debug
     };
   }
+  await recordStory(result.id);
+  await saveWorldState(w, fullCaption.slice(0, 1e3));
   const watch = await watchPublishedPost(result.id ?? void 0).catch(() => null);
-  return { posted: true, reason: "published story (verified live in /me/stories)", tiles: [url2], caption: fullCaption, permalinks: [result.id], chapter: w.chapter, step: w.step, verify, watch, debug: result.debug };
+  return { posted: true, reason: `published ${dreaming ? "dream" : "walk"} story (verified live in /me/stories)`, tiles: [url2], caption: fullCaption, permalinks: [result.id], chapter: w.chapter, step: w.step, verify, watch, debug: result.debug };
+}
+async function runArtTriptych(opts = {}) {
+  const dry = !!opts.dryRun;
+  if (!dry && !worldEngineEnabled()) return { posted: false, reason: "WORLD_ENGINE_ENABLED is off (operator kill-switch)" };
+  if (!dry && (!composioConfigured() || !composioExecuteEnabled())) return { posted: false, reason: "Composio execution not enabled \u2014 cannot publish" };
+  const a = await readAuraState();
+  const w = await getWorldState();
+  if (w.stopped) return { posted: false, reason: "Aura has stopped the experience (in-world)." };
+  const { count } = await tilesPostedLast24h();
+  const pieceNo = Math.floor(count / TILES_PER_ART) + 1;
+  if (!dry && !opts.force && count + TILES_PER_ART > MAX_ART_PER_DAY * TILES_PER_ART) {
+    return { posted: false, reason: `daily art cap reached (${count / TILES_PER_ART}/${MAX_ART_PER_DAY} pieces)` };
+  }
+  const voice = await auraSpeak(a, w, "post");
+  const fullCaption = buildPostCaption(a, w, voice);
+  const blocked = blockIfSensitiveForPublic(fullCaption, "Aura's public art");
+  if (blocked) {
+    logger.error("world: art caption blocked by sensitivity gate");
+    return { posted: false, reason: "blocked by sensitivity gate" };
+  }
+  const piece = await renderWorldFrame({
+    width: 3240,
+    height: 1080,
+    busy: a.mood !== "resting",
+    chapter: w.chapter,
+    title: "WORLD-00",
+    subtitle: `chapter ${w.chapter} \xB7 piece ${pieceNo}`,
+    stateLine: `state: ${a.mood} \xB7 ${a.idle} idle`,
+    caption: (voice && voice.length ? voice : buildWorldCaption(a, w)).slice(0, 3),
+    seed: (w.step + 1) * 17 + w.chapter * 3 + count + 1
+  });
+  const verify = await verifyNotBlank(piece, 3240, 1080);
+  if (!verify.ok && !dry) {
+    logger.error({ verify }, "world: art piece failed verification \u2014 NOT publishing");
+    return { posted: false, reason: `art verification failed (${verify.brightPct}% bright)`, verify };
+  }
+  const tiles = await sliceTiles(piece);
+  const tileUrls = [];
+  for (let i = 0; i < tiles.length; i++) tileUrls.push(await hostTile(tiles[i], 30 + i));
+  if (dry) return { posted: false, reason: `art dry-run ok (rendered 3240\xD71080, sliced 3, hosted, verified \u2014 not published) \xB7 ${verify.brightPct}% bright`, tiles: tileUrls, caption: fullCaption, chapter: w.chapter, step: w.step, verify };
+  const permalinks = [];
+  for (let i = tiles.length - 1; i >= 0; i--) {
+    const cap = i === 0 ? fullCaption : `\u27C1 WORLD-00 \xB7 ch.${w.chapter} \xB7 triptych (${i + 1}/3)`;
+    const id = await publishTile(tileUrls[i], cap);
+    await recordTile(id);
+    permalinks.push(id);
+    if (i > 0) await new Promise((r) => setTimeout(r, 1500));
+  }
+  const watch = await watchPublishedPost(permalinks[permalinks.length - 1]).catch(() => null);
+  return { posted: true, reason: "published 3-wide art triptych (one grid row)", tiles: tileUrls, caption: fullCaption, permalinks, chapter: w.chapter, step: w.step, verify, watch };
 }
 function buildIntroCaption(a) {
   return [
@@ -94575,8 +94683,11 @@ async function normalizeSchedules() {
   }
 }
 var WORLD_TICK_MS = 10 * 6e4;
+var ART_TICK_MS = 45 * 6e4;
 var worldTimer = null;
+var artTimer = null;
 var worldBusy = false;
+var artBusy = false;
 async function worldTick() {
   if (!worldEngineEnabled() || isSwarmPaused() || worldBusy) return;
   worldBusy = true;
@@ -94584,13 +94695,27 @@ async function worldTick() {
     const a = await readAuraState();
     const p = a.mood === "storm" ? 0.4 : a.mood === "deep" ? 0.28 : a.mood === "working" ? 0.2 : 0.12;
     if (Math.random() < p) {
-      const r = await runWorldCycle({});
-      if (r.posted) logger.info({ chapter: r.chapter, step: r.step }, "WORLD-00: Aura posted a block");
+      const r = await runStoryCycle({});
+      if (r.posted) logger.info({ chapter: r.chapter, step: r.step }, "WORLD-00: Aura posted a story (walk/dream)");
     }
   } catch (err) {
-    logger.error({ err }, "world tick failed");
+    logger.error({ err }, "world story tick failed");
   } finally {
     worldBusy = false;
+  }
+}
+async function artTick() {
+  if (!worldEngineEnabled() || isSwarmPaused() || artBusy) return;
+  artBusy = true;
+  try {
+    if (Math.random() < 0.18) {
+      const r = await runArtTriptych({});
+      if (r.posted) logger.info({ chapter: r.chapter }, "WORLD-00: Aura posted an art triptych");
+    }
+  } catch (err) {
+    logger.error({ err }, "world art tick failed");
+  } finally {
+    artBusy = false;
   }
 }
 function startScheduler() {
@@ -94602,7 +94727,11 @@ function startScheduler() {
   worldTimer = setInterval(() => {
     void worldTick();
   }, WORLD_TICK_MS);
+  artTimer = setInterval(() => {
+    void artTick();
+  }, ART_TICK_MS);
   if (typeof worldTimer.unref === "function") worldTimer.unref();
+  if (typeof artTimer.unref === "function") artTimer.unref();
   if (typeof timer.unref === "function") timer.unref();
   logger.info({ intervalMs: SCHEDULER_INTERVAL_MS }, "cron scheduler started");
 }
@@ -95930,12 +96059,27 @@ router18.post("/world/intro", cycleAuth, async (req, res) => {
 router18.post("/world/story", cycleAuth, async (req, res) => {
   try {
     const dry = req.query["dry"] !== "0";
+    const force = req.query["force"] === "1";
     if (req.query["async"] === "1") {
-      runStoryCycle({ dryRun: dry }).catch((e) => logger.error({ err: String(e) }, "world: async story failed"));
+      runStoryCycle({ dryRun: dry, force }).catch((e) => logger.error({ err: String(e) }, "world: async story failed"));
       res.status(202).json({ accepted: true, async: true, note: "story running in background \u2014 poll /api/world/status" });
       return;
     }
-    res.json(await runStoryCycle({ dryRun: dry }));
+    res.json(await runStoryCycle({ dryRun: dry, force }));
+  } catch (err) {
+    res.status(500).json({ error: String(err).slice(0, 300) });
+  }
+});
+router18.post("/world/art", cycleAuth, async (req, res) => {
+  try {
+    const dry = req.query["dry"] !== "0";
+    const force = req.query["force"] === "1";
+    if (req.query["async"] === "1") {
+      runArtTriptych({ dryRun: dry, force }).catch((e) => logger.error({ err: String(e) }, "world: async art failed"));
+      res.status(202).json({ accepted: true, async: true, note: "art triptych running in background \u2014 poll /api/world/status" });
+      return;
+    }
+    res.json(await runArtTriptych({ dryRun: dry, force }));
   } catch (err) {
     res.status(500).json({ error: String(err).slice(0, 300) });
   }

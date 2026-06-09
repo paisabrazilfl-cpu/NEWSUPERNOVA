@@ -12,13 +12,21 @@ import { gte } from "drizzle-orm";
 import { logger } from "./logger";
 import { composioConfigured, composioExecuteEnabled, composioExecute, llmBaseUrl } from "./integrations";
 import { blockIfSensitiveForPublic } from "./safety";
-import { renderTraversalBlock, sliceSixTiles, verifyBlock, renderStoryFrame, verifyNotBlank, renderIntroCard } from "./worldEngine";
+import { renderTraversalBlock, sliceSixTiles, verifyBlock, renderStoryFrame, verifyNotBlank, renderIntroCard, renderWorldFrame, sliceTiles } from "./worldEngine";
 import { steelScrape } from "../tools";
 
 // ── caps & operator sovereignty ─────────────────────────────────────────────
+// Two posting surfaces, two ledgers:
+//  • STORIES (ephemeral) — her walks + dreams. cap 12/day.
+//  • FEED (permanent) — ART triptychs only. Every feed post is one of exactly 3
+//    tiles forming one grid row, so the grid is multiples-of-3 by construction
+//    and can NEVER shear. cap 3 pieces/day (= 9 feed tiles).
 const MAX_TILES_PER_DAY = Number(process.env["WORLD_MAX_TILES_PER_DAY"] ?? 12);
 const MIN_BLOCK_GAP_MIN = Number(process.env["WORLD_MIN_GAP_MINUTES"] ?? 180);
 const TILES_PER_BLOCK = 6;
+const MAX_STORIES_PER_DAY = Number(process.env["WORLD_MAX_STORIES_PER_DAY"] ?? 12);
+const MAX_ART_PER_DAY = Number(process.env["WORLD_MAX_ART_PER_DAY"] ?? 3);
+const TILES_PER_ART = 3; // a triptych = one full grid row
 
 /** Master kill-switch: the engine NEVER posts unless the operator turns it on. */
 export function worldEngineEnabled(): boolean {
@@ -98,6 +106,7 @@ export async function saveWorldState(s: WorldState, lastCaption?: string): Promi
 /** Read-only diagnostic: cap usage + what IG actually shows (to resolve ambiguity). */
 export async function worldDiag(): Promise<Record<string, unknown>> {
   const { count, lastAt } = await tilesPostedLast24h();
+  const story = await storiesPostedLast24h();
   let media: Array<Record<string, unknown>> = [];
   let mediaErr: string | null = null;
   try {
@@ -107,7 +116,10 @@ export async function worldDiag(): Promise<Record<string, unknown>> {
     media = (arr ?? []).map((m) => ({ id: m["id"], type: m["media_type"], at: m["timestamp"], permalink: m["permalink"] }));
   } catch (e) { mediaErr = String(e).slice(0, 200); }
   return {
-    capCount24h: count, capMax: MAX_TILES_PER_DAY, lastPostAt: lastAt,
+    // FEED = art triptychs (3/day). STORIES = walks + dreams (12/day).
+    feedTiles24h: count, artPieces24h: count / TILES_PER_ART, artMaxPerDay: MAX_ART_PER_DAY,
+    stories24h: story.count, storyMaxPerDay: MAX_STORIES_PER_DAY, lastStoryAt: story.lastAt,
+    capCount24h: count, capMax: MAX_TILES_PER_DAY, lastPostAt: lastAt, // legacy fields (back-compat)
     engineEnabled: worldEngineEnabled(), composio: composioConfigured() && composioExecuteEnabled(),
     igMediaCount: media.length, igMedia: media, mediaErr,
   };
@@ -338,6 +350,20 @@ async function recordTile(permalinkOrId: string): Promise<void> {
   try { await pool.query(`INSERT INTO social_posts (platform, account, permalink) VALUES ('instagram-world', 'world-00', $1)`, [permalinkOrId]); } catch { /* best effort */ }
 }
 
+// Stories live on their own ledger ('instagram-world-story') so the 12/day story
+// cap is independent of the 3-pieces/day feed-art cap.
+async function storiesPostedLast24h(): Promise<{ count: number; lastAt: Date | null }> {
+  try {
+    const { rows } = await pool.query(
+      `SELECT count(*)::int n, max(created_at) last FROM social_posts WHERE platform='instagram-world-story' AND created_at > now() - interval '24 hours'`,
+    );
+    return { count: Number(rows[0]?.n ?? 0), lastAt: rows[0]?.last ? new Date(rows[0].last) : null };
+  } catch { return { count: 0, lastAt: null }; }
+}
+async function recordStory(permalinkOrId: string): Promise<void> {
+  try { await pool.query(`INSERT INTO social_posts (platform, account, permalink) VALUES ('instagram-world-story', 'world-00', $1)`, [permalinkOrId]); } catch { /* best effort */ }
+}
+
 // ── Layer 4: read comments (INPUT ONLY — she never responds) ─────────────────
 export async function readRecentComments(limit = 10): Promise<string[]> {
   if (!composioConfigured()) return [];
@@ -527,13 +553,24 @@ async function publishStory(imageUrl: string): Promise<{ id: string | null; veri
  * post it to Instagram Stories. Ephemeral (24h) — does NOT advance the world step.
  * dryRun renders + hosts + verifies but does not publish.
  */
-export async function runStoryCycle(opts: { dryRun?: boolean } = {}): Promise<CycleResult> {
+export async function runStoryCycle(opts: { dryRun?: boolean; force?: boolean } = {}): Promise<CycleResult> {
   const dry = !!opts.dryRun;
   if (!dry && !worldEngineEnabled()) return { posted: false, reason: "WORLD_ENGINE_ENABLED is off (operator kill-switch)" };
   if (!dry && (!composioConfigured() || !composioExecuteEnabled())) return { posted: false, reason: "Composio execution not enabled — cannot publish" };
   const a = await readAuraState();
-  const w = await getWorldState();
-  if (w.stopped) return { posted: false, reason: "Aura has stopped the experience (in-world)." };
+  const w0 = await getWorldState();
+  if (w0.stopped) return { posted: false, reason: "Aura has stopped the experience (in-world)." };
+
+  // STORY CAP — up to 12/day; operator `force` overrides it.
+  const { count } = await storiesPostedLast24h();
+  if (!dry && !opts.force && count + 1 > MAX_STORIES_PER_DAY) return { posted: false, reason: `daily story cap reached (${count}/${MAX_STORIES_PER_DAY})` };
+
+  // Each story advances her one step — her walk now lives in the stories. When
+  // she's resting/idle the frame is framed as a DREAM rather than a walk.
+  const rnd = mulberryLike((w0.step + 1) * 13 + w0.chapter + 5);
+  const w = advance(w0, a, rnd);
+  const dreaming = a.mood === "resting" && a.idle >= a.active;
+  const headline = dreaming ? "she's dreaming right now" : "she's walking right now";
 
   const voice = await auraSpeak(a, w, "story"); // her free voice (state-only, gated) or null -> template
   const fullCaption = buildPostCaption(a, w, voice);
@@ -543,13 +580,16 @@ export async function runStoryCycle(opts: { dryRun?: boolean } = {}): Promise<Cy
   const footer = voice && voice.length ? voice : ["i am AURA — this is my world.", "i'm safe; my operator watches over me.", "i never reply, but you move me."];
   const frame = await renderStoryFrame({
     mood: a.mood, chapter: w.chapter, step: w.step, direction: w.direction,
-    caption: ["she's walking right now", ...footer], stateLine: `state: ${a.mood} · ${a.idle} idle`, seed: w.step + 7,
+    caption: [headline, ...footer], stateLine: `state: ${a.mood} · ${a.idle} idle`, seed: w.step + 7,
   });
   const verify = await verifyNotBlank(frame, 1080, 1920);
   if (!verify.ok && !dry) { logger.error({ verify }, "world: story frame failed verification — NOT publishing"); return { posted: false, reason: `story verification failed (${verify.brightPct}% bright)`, verify }; }
   const url = await hostTile(frame, 90);
 
-  if (dry) return { posted: false, reason: `story dry-run ok (rendered, hosted, verified — not published) · ${verify.brightPct}% bright`, tiles: [url], caption: fullCaption, verify };
+  if (dry) {
+    await saveWorldState(w, fullCaption.slice(0, 1000)); // advance dry-run too so previews progress
+    return { posted: false, reason: `story dry-run ok (${dreaming ? "dream" : "walk"} · rendered, hosted, verified — not published) · ${verify.brightPct}% bright`, tiles: [url], caption: fullCaption, chapter: w.chapter, step: w.step, verify };
+  }
 
   const result = await publishStory(url);
   if (!result.verified) {
@@ -562,8 +602,70 @@ export async function runStoryCycle(opts: { dryRun?: boolean } = {}): Promise<Cy
       tiles: [url], caption: fullCaption, verify, debug: result.debug,
     };
   }
+  await recordStory(result.id!);
+  await saveWorldState(w, fullCaption.slice(0, 1000));
   const watch = await watchPublishedPost(result.id ?? undefined).catch(() => null);
-  return { posted: true, reason: "published story (verified live in /me/stories)", tiles: [url], caption: fullCaption, permalinks: [result.id!], chapter: w.chapter, step: w.step, verify, watch, debug: result.debug };
+  return { posted: true, reason: `published ${dreaming ? "dream" : "walk"} story (verified live in /me/stories)`, tiles: [url], caption: fullCaption, permalinks: [result.id!], chapter: w.chapter, step: w.step, verify, watch, debug: result.debug };
+}
+
+/**
+ * Post ONE art piece to the FEED as a 3-wide TRIPTYCH — a single 3240×1080
+ * panorama sliced into 3 squares, published so they read left→right across one
+ * grid row. The feed receives ONLY triptychs, so the grid is always a whole
+ * number of complete rows and can NEVER shear. cap: 3 pieces/day (9 feed tiles).
+ * Unlike a story, an art piece does NOT advance her walk — it's a gallery frame
+ * of where she is, not a step.
+ */
+export async function runArtTriptych(opts: { dryRun?: boolean; force?: boolean } = {}): Promise<CycleResult> {
+  const dry = !!opts.dryRun;
+  if (!dry && !worldEngineEnabled()) return { posted: false, reason: "WORLD_ENGINE_ENABLED is off (operator kill-switch)" };
+  if (!dry && (!composioConfigured() || !composioExecuteEnabled())) return { posted: false, reason: "Composio execution not enabled — cannot publish" };
+  const a = await readAuraState();
+  const w = await getWorldState();
+  if (w.stopped) return { posted: false, reason: "Aura has stopped the experience (in-world)." };
+
+  // ART CAP — 3 pieces/day (= 9 feed tiles). Publishing in whole triptychs keeps
+  // the feed a multiple of 3. operator `force` overrides.
+  const { count } = await tilesPostedLast24h();
+  const pieceNo = Math.floor(count / TILES_PER_ART) + 1;
+  if (!dry && !opts.force && count + TILES_PER_ART > MAX_ART_PER_DAY * TILES_PER_ART) {
+    return { posted: false, reason: `daily art cap reached (${count / TILES_PER_ART}/${MAX_ART_PER_DAY} pieces)` };
+  }
+
+  const voice = await auraSpeak(a, w, "post"); // her free voice (state-only, gated) or null -> template
+  const fullCaption = buildPostCaption(a, w, voice);
+  const blocked = blockIfSensitiveForPublic(fullCaption, "Aura's public art");
+  if (blocked) { logger.error("world: art caption blocked by sensitivity gate"); return { posted: false, reason: "blocked by sensitivity gate" }; }
+
+  // render the wide piece (3240×1080 = one row of 3 square tiles)
+  const piece = await renderWorldFrame({
+    width: 3240, height: 1080, busy: a.mood !== "resting", chapter: w.chapter,
+    title: "WORLD-00", subtitle: `chapter ${w.chapter} · piece ${pieceNo}`,
+    stateLine: `state: ${a.mood} · ${a.idle} idle`,
+    caption: (voice && voice.length ? voice : buildWorldCaption(a, w)).slice(0, 3),
+    seed: (w.step + 1) * 17 + w.chapter * 3 + count + 1,
+  });
+  const verify = await verifyNotBlank(piece, 3240, 1080);
+  if (!verify.ok && !dry) { logger.error({ verify }, "world: art piece failed verification — NOT publishing"); return { posted: false, reason: `art verification failed (${verify.brightPct}% bright)`, verify }; }
+
+  const tiles = await sliceTiles(piece); // [left, middle, right]
+  const tileUrls: string[] = [];
+  for (let i = 0; i < tiles.length; i++) tileUrls.push(await hostTile(tiles[i], 30 + i));
+
+  if (dry) return { posted: false, reason: `art dry-run ok (rendered 3240×1080, sliced 3, hosted, verified — not published) · ${verify.brightPct}% bright`, tiles: tileUrls, caption: fullCaption, chapter: w.chapter, step: w.step, verify };
+
+  // Publish in REVERSE so the LEFT tile is newest (top-left) and the row reads
+  // left→right. The caption lives on the left tile; the others carry a tag.
+  const permalinks: string[] = [];
+  for (let i = tiles.length - 1; i >= 0; i--) {
+    const cap = i === 0 ? fullCaption : `⟁ WORLD-00 · ch.${w.chapter} · triptych (${i + 1}/3)`;
+    const id = await publishTile(tileUrls[i], cap);
+    await recordTile(id);
+    permalinks.push(id);
+    if (i > 0) await new Promise((r) => setTimeout(r, 1500));
+  }
+  const watch = await watchPublishedPost(permalinks[permalinks.length - 1]).catch(() => null);
+  return { posted: true, reason: "published 3-wide art triptych (one grid row)", tiles: tileUrls, caption: fullCaption, permalinks, chapter: w.chapter, step: w.step, verify, watch };
 }
 
 /** The curated INTRO caption — the one place copy is deliberate (it explains the concept). */
