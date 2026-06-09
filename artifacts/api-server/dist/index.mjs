@@ -94319,9 +94319,14 @@ async function watchPublishedPost(mediaId) {
 async function storyIsLive(pubId) {
   try {
     const r = await composioExecute({ toolkit: "instagram", endpoint: "/me/stories?fields=id,media_type,timestamp&limit=25", method: "GET" });
-    const arr = parseJson(r)?.["data"];
-    const ok = Array.isArray(arr) && arr.some((m) => String(m["id"]) === String(pubId));
-    return { ok, raw: r.slice(0, 600) };
+    const j = parseJson(r);
+    const arr = j?.["data"]?.["data"];
+    const byId = Array.isArray(arr) && arr.some((m) => String(m["id"]) === String(pubId));
+    const recent = Array.isArray(arr) && arr.some((m) => {
+      const t = Date.parse(String(m["timestamp"] ?? ""));
+      return Number.isFinite(t) && Date.now() - t < 5 * 60 * 1e3;
+    });
+    return { ok: byId || recent, raw: r.slice(0, 600) };
   } catch (e) {
     return { ok: false, raw: `stories check error: ${String(e).slice(0, 200)}` };
   }
