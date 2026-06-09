@@ -5,26 +5,27 @@ const router = Router();
 
 // Memoized so a public GET can't be used to burn CPU: the demo frame is rendered
 // at most once per process, then the bytes are served from memory.
-let cached: Buffer | null = null;
-function previewFrame(): Buffer {
-  if (cached) return cached;
-  cached = renderWorldFrame({
-    width: 1080, height: 1080, // single square for a quick browser-viewable preview
-    busy: false,
-    chapter: 0,
-    title: "⟁ WORLD-00",
-    subtitle: "chapter 0 — preview",
-    stateLine: "render: production · $0",
-    caption: ["AURA's world — rendered in production.", "this is a preview frame. ☼"],
-    seed: 7,
-  });
+let cached: Promise<Buffer> | null = null;
+function previewFrame(): Promise<Buffer> {
+  if (!cached) {
+    cached = renderWorldFrame({
+      width: 1080, height: 1080,
+      busy: false,
+      chapter: 0,
+      title: "WORLD-00",
+      subtitle: "chapter 0 — preview",
+      stateLine: "render: production · $0",
+      caption: ["AURA's world — rendered in production.", "this is a preview frame."],
+      seed: 7,
+    }).catch((e) => { cached = null; throw e; });
+  }
   return cached;
 }
 
 // GET /api/world/preview.png — proves the production renderer works (browser-viewable).
-router.get("/world/preview.png", (_req, res) => {
+router.get("/world/preview.png", async (_req, res) => {
   try {
-    const buf = previewFrame();
+    const buf = await previewFrame();
     res.setHeader("Content-Type", "image/png");
     res.setHeader("Content-Length", String(buf.length));
     res.setHeader("Cache-Control", "public, max-age=3600");
