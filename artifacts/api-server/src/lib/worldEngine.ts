@@ -4,37 +4,48 @@
  * (non-content) telemetry shapes the weather, breath, and fog. This module ONLY
  * draws; it is never handed task content (the constitution's expression wall).
  */
-import { createCanvas, GlobalFonts, Image } from "@napi-rs/canvas";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 
-// Register the bundled monospace font so rendering is identical everywhere.
-let MONO = "DejaVu Sans Mono";
-(() => {
+/**
+ * Lazy, boot-safe access to @napi-rs/canvas. Loaded on FIRST render, never at
+ * import — so if the native binary is somehow unavailable on a host, only the
+ * render fails (a clean error), it can NEVER crash the server at startup.
+ * (Safe-by-default per the World-00 constitution.)
+ */
+type CanvasMod = typeof import("@napi-rs/canvas");
+let _canvas: CanvasMod | null = null;
+let MONO = "monospace";
+let MONOB = "monospace";
+function canvasMod(): CanvasMod {
+  if (_canvas) return _canvas;
+  const req = createRequire(import.meta.url);
+  const mod = req("@napi-rs/canvas") as CanvasMod;
+  // register bundled fonts once, best-effort
   try {
     const here = path.dirname(fileURLToPath(import.meta.url));
     const candidates = [
-      path.join(here, "..", "assets"),        // dist/  -> ../assets
-      path.join(here, "..", "..", "assets"),  // src/lib -> ../../assets
+      path.join(here, "..", "assets"),
+      path.join(here, "..", "..", "assets"),
       path.join(process.cwd(), "assets"),
       path.join(process.cwd(), "artifacts", "api-server", "assets"),
     ];
     for (const dir of candidates) {
       const reg = path.join(dir, "DejaVuSansMono.ttf");
-      const regB = path.join(dir, "DejaVuSansMono-Bold.ttf");
       if (fs.existsSync(reg)) {
-        GlobalFonts.registerFromPath(reg, "WorldMono");
-        if (fs.existsSync(regB)) GlobalFonts.registerFromPath(regB, "WorldMonoB");
-        MONO = "WorldMono";
+        mod.GlobalFonts.registerFromPath(reg, "WorldMono");
+        const regB = path.join(dir, "DejaVuSansMono-Bold.ttf");
+        if (fs.existsSync(regB)) mod.GlobalFonts.registerFromPath(regB, "WorldMonoB");
+        MONO = "WorldMono"; MONOB = "WorldMonoB";
         break;
       }
     }
-  } catch {
-    /* fall back to a generic monospace */
-  }
-})();
-const MONOB = MONO === "WorldMono" ? "WorldMonoB" : MONO;
+  } catch { /* generic monospace fallback */ }
+  _canvas = mod;
+  return mod;
+}
 
 function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
@@ -66,6 +77,7 @@ export function renderWorldFrame(opts: WorldFrameOpts = {}): Buffer {
   const chapter = Math.max(0, opts.chapter ?? 0);
   const rnd = mulberry32((opts.seed ?? 7) + chapter * 101);
 
+  const { createCanvas } = canvasMod();
   const canvas = createCanvas(W, H);
   const ctx = canvas.getContext("2d");
 
@@ -163,6 +175,7 @@ export function renderWorldFrame(opts: WorldFrameOpts = {}): Buffer {
 /** Slice a wide frame into the 3 square IG tiles (left→right). */
 export function sliceTiles(wide: Buffer): Buffer[] {
   // Re-decode by drawing onto 3 canvases. (Caller renders at width = 3*height.)
+  const { createCanvas, Image } = canvasMod();
   const img = new Image();
   img.src = wide;
   const tile = img.height;
