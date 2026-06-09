@@ -94316,10 +94316,35 @@ async function watchPublishedPost(mediaId) {
     return { ok: false, note: `watcher error: ${String(e).slice(0, 120)}` };
   }
 }
+async function storyIsLive(pubId) {
+  try {
+    const r = await composioExecute({ toolkit: "instagram", endpoint: "/me/stories?fields=id,media_type,timestamp&limit=25", method: "GET" });
+    const arr = parseJson(r)?.["data"];
+    const ok = Array.isArray(arr) && arr.some((m) => String(m["id"]) === String(pubId));
+    return { ok, raw: r.slice(0, 600) };
+  } catch (e) {
+    return { ok: false, raw: `stories check error: ${String(e).slice(0, 200)}` };
+  }
+}
 async function publishStory(imageUrl) {
+  const debug = {};
   const r1 = await composioExecute({ toolkit: "instagram", endpoint: "/me/media", method: "POST", arguments: { image_url: imageUrl, media_type: "STORIES" } });
+  debug["container"] = r1.slice(0, 500);
   const cid = parseJson(r1)?.["data"]?.["id"];
-  if (!cid) throw new Error(`story container failed: ${r1.slice(0, 160)}`);
+  if (!cid) return { id: null, verified: false, debug };
+  debug["cid"] = cid;
+  let status = "";
+  for (let a = 0; a < 8; a++) {
+    const rs = await composioExecute({ toolkit: "instagram", endpoint: `/${cid}?fields=status_code,status`, method: "GET" });
+    status = parseJson(rs)?.["data"]?.["status_code"] ?? "";
+    if (/FINISHED/i.test(status)) break;
+    if (/ERROR|EXPIRED/i.test(status)) {
+      debug["statusPoll"] = rs.slice(0, 400);
+      break;
+    }
+    await new Promise((r) => setTimeout(r, 3e3));
+  }
+  debug["status_code"] = status || "(none returned)";
   let pubId;
   let last = "";
   for (let a = 0; a < 4 && !pubId; a++) {
@@ -94328,8 +94353,12 @@ async function publishStory(imageUrl) {
     last = r2;
     pubId = parseJson(r2)?.["data"]?.["id"];
   }
-  if (!pubId) throw new Error(`story publish failed: ${last.slice(0, 160)}`);
-  return pubId;
+  debug["publish"] = last.slice(0, 500);
+  if (!pubId) return { id: null, verified: false, debug };
+  debug["pubId"] = pubId;
+  const live = await storyIsLive(pubId);
+  debug["meStories"] = live.raw;
+  return { id: pubId, verified: live.ok, debug };
 }
 async function runStoryCycle(opts = {}) {
   const dry = !!opts.dryRun;
@@ -94362,9 +94391,20 @@ async function runStoryCycle(opts = {}) {
   }
   const url2 = await hostTile(frame, 90);
   if (dry) return { posted: false, reason: `story dry-run ok (rendered, hosted, verified \u2014 not published) \xB7 ${verify.brightPct}% bright`, tiles: [url2], caption: fullCaption, verify };
-  const id = await publishStory(url2);
-  const watch = await watchPublishedPost(id).catch(() => null);
-  return { posted: true, reason: "published story", tiles: [url2], caption: fullCaption, permalinks: [id], chapter: w.chapter, step: w.step, verify, watch };
+  const result = await publishStory(url2);
+  if (!result.verified) {
+    logger.error({ debug: result.debug, id: result.id }, "world: story did NOT verify live in /me/stories \u2014 not claiming success");
+    return {
+      posted: false,
+      reason: result.id ? `story publish returned id ${result.id} but it is NOT live in /me/stories (account/permission/media-type likely unsupported)` : "story container or publish failed (no id returned)",
+      tiles: [url2],
+      caption: fullCaption,
+      verify,
+      debug: result.debug
+    };
+  }
+  const watch = await watchPublishedPost(result.id ?? void 0).catch(() => null);
+  return { posted: true, reason: "published story (verified live in /me/stories)", tiles: [url2], caption: fullCaption, permalinks: [result.id], chapter: w.chapter, step: w.step, verify, watch, debug: result.debug };
 }
 function buildIntroCaption(a) {
   return [
