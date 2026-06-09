@@ -322,6 +322,7 @@ export interface CycleResult {
   step?: number;
   verify?: unknown;
   watch?: unknown;
+  debug?: unknown;
 }
 
 /**
@@ -404,19 +405,60 @@ async function watchPublishedPost(mediaId?: string): Promise<{ ok: boolean; url?
   } catch (e) { return { ok: false, note: `watcher error: ${String(e).slice(0, 120)}` }; }
 }
 
-/** Publish ONE Instagram STORY (vertical 1080×1920). media_type=STORIES, no caption. */
-async function publishStory(imageUrl: string): Promise<string> {
+/** Confirm a published story id is ACTUALLY live by listing the account's active
+ * stories (GET /me/stories). The returned media id alone is not proof — IG can hand
+ * back an id for a story that never appears. This is the source of truth. */
+async function storyIsLive(pubId: string): Promise<{ ok: boolean; raw: string }> {
+  try {
+    const r = await composioExecute({ toolkit: "instagram", endpoint: "/me/stories?fields=id,media_type,timestamp&limit=25", method: "GET" });
+    const arr = (parseJson(r)?.["data"]) as Array<Record<string, unknown>> | undefined;
+    const ok = Array.isArray(arr) && arr.some((m) => String(m["id"]) === String(pubId));
+    return { ok, raw: r.slice(0, 600) };
+  } catch (e) { return { ok: false, raw: `stories check error: ${String(e).slice(0, 200)}` }; }
+}
+
+/**
+ * Publish ONE Instagram STORY (vertical 1080×1920), media_type=STORIES, no caption.
+ * Follows IG's real container flow — create → poll status_code until FINISHED →
+ * publish → VERIFY it's live in /me/stories. Returns structured evidence; never
+ * claims success on a phantom id. Raw IG bodies are captured in `debug`.
+ */
+async function publishStory(imageUrl: string): Promise<{ id: string | null; verified: boolean; debug: Record<string, unknown> }> {
+  const debug: Record<string, unknown> = {};
+  // 1) create the STORIES container
   const r1 = await composioExecute({ toolkit: "instagram", endpoint: "/me/media", method: "POST", arguments: { image_url: imageUrl, media_type: "STORIES" } });
+  debug["container"] = r1.slice(0, 500);
   const cid = ((parseJson(r1)?.["data"] as Record<string, unknown>)?.["id"]) as string | undefined;
-  if (!cid) throw new Error(`story container failed: ${r1.slice(0, 160)}`);
+  if (!cid) return { id: null, verified: false, debug };
+  debug["cid"] = cid;
+
+  // 2) poll the container's status_code until FINISHED — IG processes async, and
+  //    publishing an unfinished container is a silent no-op (the phantom-id bug).
+  let status = "";
+  for (let a = 0; a < 8; a++) {
+    const rs = await composioExecute({ toolkit: "instagram", endpoint: `/${cid}?fields=status_code,status`, method: "GET" });
+    status = (((parseJson(rs)?.["data"] as Record<string, unknown>)?.["status_code"]) as string | undefined) ?? "";
+    if (/FINISHED/i.test(status)) break;
+    if (/ERROR|EXPIRED/i.test(status)) { debug["statusPoll"] = rs.slice(0, 400); break; }
+    await new Promise((r) => setTimeout(r, 3000));
+  }
+  debug["status_code"] = status || "(none returned)";
+
+  // 3) publish
   let pubId: string | undefined; let last = "";
   for (let a = 0; a < 4 && !pubId; a++) {
     if (a) await new Promise((r) => setTimeout(r, 3000));
     const r2 = await composioExecute({ toolkit: "instagram", endpoint: "/me/media_publish", method: "POST", arguments: { creation_id: String(cid) } });
     last = r2; pubId = ((parseJson(r2)?.["data"] as Record<string, unknown>)?.["id"]) as string | undefined;
   }
-  if (!pubId) throw new Error(`story publish failed: ${last.slice(0, 160)}`);
-  return pubId;
+  debug["publish"] = last.slice(0, 500);
+  if (!pubId) return { id: null, verified: false, debug };
+  debug["pubId"] = pubId;
+
+  // 4) VERIFY it actually went live — this is what makes "posted:true" trustworthy.
+  const live = await storyIsLive(pubId);
+  debug["meStories"] = live.raw;
+  return { id: pubId, verified: live.ok, debug };
 }
 
 /**
@@ -448,9 +490,19 @@ export async function runStoryCycle(opts: { dryRun?: boolean } = {}): Promise<Cy
 
   if (dry) return { posted: false, reason: `story dry-run ok (rendered, hosted, verified — not published) · ${verify.brightPct}% bright`, tiles: [url], caption: fullCaption, verify };
 
-  const id = await publishStory(url);
-  const watch = await watchPublishedPost(id).catch(() => null);
-  return { posted: true, reason: "published story", tiles: [url], caption: fullCaption, permalinks: [id], chapter: w.chapter, step: w.step, verify, watch };
+  const result = await publishStory(url);
+  if (!result.verified) {
+    logger.error({ debug: result.debug, id: result.id }, "world: story did NOT verify live in /me/stories — not claiming success");
+    return {
+      posted: false,
+      reason: result.id
+        ? `story publish returned id ${result.id} but it is NOT live in /me/stories (account/permission/media-type likely unsupported)`
+        : "story container or publish failed (no id returned)",
+      tiles: [url], caption: fullCaption, verify, debug: result.debug,
+    };
+  }
+  const watch = await watchPublishedPost(result.id ?? undefined).catch(() => null);
+  return { posted: true, reason: "published story (verified live in /me/stories)", tiles: [url], caption: fullCaption, permalinks: [result.id!], chapter: w.chapter, step: w.step, verify, watch, debug: result.debug };
 }
 
 /** The curated INTRO caption — the one place copy is deliberate (it explains the concept). */
