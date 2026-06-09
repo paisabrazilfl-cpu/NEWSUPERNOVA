@@ -60,6 +60,11 @@ happened — while the real `RENDER_API_KEY` sat in the vault the whole time.
 - *Enforced in code:* `http_request` auto-attaches the vault token for
   `api.github.com` and `api.render.com`, refuses to send unresolved
   `{{secret:NAME}}` placeholders, and flags any 401/403 that had no auth header.
+  `sandbox_exec` / `cloud_code_exec` also resolve `{{secret:NAME}}` in the
+  script (injected into the VM command at run time, redacted from output) — so
+  authenticated git in the sandbox works, e.g.
+  `git push https://{{secret:GITHUB_API_KEY}}@github.com/<owner>/<repo>.git`.
+  The local `code_exec` stays deliberately secret-free.
 
 ## 4. The sandbox cannot build this repo
 *(enforced via `ANTI_HALLUCINATION_DIRECTIVE`)*
