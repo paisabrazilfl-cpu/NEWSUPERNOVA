@@ -56269,11 +56269,11 @@ var require_create = __commonJS({
           }
         }
       } else {
-        const cached3 = messagePrototypes.get(desc2);
+        const cached2 = messagePrototypes.get(desc2);
         let prototype;
         let members;
-        if (cached3) {
-          ({ prototype, members } = cached3);
+        if (cached2) {
+          ({ prototype, members } = cached2);
         } else {
           prototype = {};
           members = /* @__PURE__ */ new Set();
@@ -57105,9 +57105,9 @@ var require_reflect = __commonJS({
     var messageSortedFields = /* @__PURE__ */ new WeakMap();
     var ReflectMessageImpl = class {
       get sortedFields() {
-        const cached3 = messageSortedFields.get(this.desc);
-        if (cached3) {
-          return cached3;
+        const cached2 = messageSortedFields.get(this.desc);
+        if (cached2) {
+          return cached2;
         }
         const sortedFields = this.desc.fields.concat().sort((a, b) => a.number - b.number);
         messageSortedFields.set(this.desc, sortedFields);
@@ -63931,9 +63931,9 @@ var require_content_type_matcher = __commonJS({
         if (contentType === null || contentType.length == 0) {
           return false;
         }
-        const cached3 = cache.get(contentType);
-        if (cached3 !== void 0) {
-          return cached3;
+        const cached2 = cache.get(contentType);
+        if (cached2 !== void 0) {
+          return cached2;
         }
         const ok = source.some((re) => re.test(contentType));
         if (cache.size < contentTypeMatcherCacheSize) {
@@ -93457,6 +93457,492 @@ ${r.result.slice(0, 1500)}`).join("\n\n");
 init_src();
 init_src();
 init_drizzle_orm();
+
+// src/lib/world.ts
+init_src();
+init_src();
+init_drizzle_orm();
+
+// src/lib/worldEngine.ts
+var PImage = __toESM(require_dist5(), 1);
+import { PassThrough } from "node:stream";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
+import fs from "node:fs";
+var fontReady = null;
+var MONO = "WorldMono";
+function ensureFont() {
+  if (fontReady) return fontReady;
+  fontReady = (async () => {
+    try {
+      const here = path.dirname(fileURLToPath(import.meta.url));
+      const dirs = [
+        path.join(here, "..", "assets"),
+        path.join(here, "..", "..", "assets"),
+        path.join(process.cwd(), "assets"),
+        path.join(process.cwd(), "artifacts", "api-server", "assets")
+      ];
+      for (const dir of dirs) {
+        const p = path.join(dir, "DejaVuSansMono.ttf");
+        if (fs.existsSync(p)) {
+          const f = PImage.registerFont(p, MONO);
+          await (f.load ? f.load() : Promise.resolve());
+          return;
+        }
+      }
+    } catch {
+    }
+  })();
+  return fontReady;
+}
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a |= 0;
+    a = a + 1831565813 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+async function toBuffer(bitmap) {
+  const chunks = [];
+  const ps = new PassThrough();
+  ps.on("data", (c) => chunks.push(c));
+  await PImage.encodePNGToStream(bitmap, ps);
+  return Buffer.concat(chunks);
+}
+async function renderWorldFrame(opts = {}) {
+  await ensureFont();
+  const W = opts.width ?? 3240;
+  const H = opts.height ?? 1080;
+  const busy = !!opts.busy;
+  const chapter = Math.max(0, opts.chapter ?? 0);
+  const rnd = mulberry32((opts.seed ?? 7) + chapter * 101);
+  const img = PImage.make(W, H);
+  const ctx = img.getContext("2d");
+  ctx.fillStyle = busy ? "#0b0710" : "#080a14";
+  ctx.fillRect(0, 0, W, H);
+  const top = 118, bottom = 150;
+  const COLS = 150, ROWS = 40;
+  const cw = W / COLS, chh = (H - top - bottom) / ROWS;
+  const gx = 8, gy = top + 6;
+  const fpx = Math.floor(chh * 1.1);
+  const font = (px) => `${px}pt ${MONO}`;
+  const drawGlyph = (g, x, y, color, px = fpx) => {
+    ctx.fillStyle = color;
+    ctx.font = font(px);
+    ctx.fillText(g, x, y + px);
+  };
+  const GEN = { x: COLS * 0.5, y: ROWS * 0.5 };
+  const grass = busy ? ["#241a14", "#2c2018", "#34281e"] : ["#16202c", "#1c2636", "#222e40"];
+  const tree = busy ? "#3a5a2a" : "#22484a";
+  const water = busy ? "#2a5a78" : "#1a4678";
+  const fogCol = "#0c0f1a";
+  const fogEdge = Math.max(5e-3, 0.06 - chapter * 0.012);
+  for (let y = 0; y < ROWS; y++) {
+    for (let x = 0; x < COLS; x++) {
+      const ex = Math.min(x, COLS - 1 - x) / COLS;
+      const ey = Math.min(y, ROWS - 1 - y) / ROWS;
+      const px0 = gx + x * cw, py0 = gy + y * chh;
+      if (Math.min(ex, ey) < fogEdge) {
+        if (rnd() < 0.4) drawGlyph("\xB7", px0, py0, fogCol);
+        continue;
+      }
+      const dg = Math.hypot(x - GEN.x, (y - GEN.y) * 1.7);
+      let g = ".", col = grass[Math.floor(rnd() * 3)];
+      if (dg < 1.4) {
+        g = "\u263C";
+        col = "#9cf6ff";
+      } else if (dg < 3 && rnd() < 0.4) {
+        g = "\u25CC\u25CB\u25CD".charAt(Math.floor(rnd() * 3));
+        col = "#28c8eb";
+      } else if (y < 4 && rnd() < (busy ? 0.06 : 0.04)) {
+        g = "\u25B2^".charAt(Math.floor(rnd() * 2));
+        col = y < 2 ? "#d6e2ee" : "#788496";
+      } else if (x > COLS - 12 && rnd() < 0.45) {
+        g = "~\u2248".charAt(Math.floor(rnd() * 2));
+        col = water;
+      } else if (rnd() < 0.09) {
+        g = "\u2663T\u219F".charAt(Math.floor(rnd() * 3));
+        col = tree;
+      } else if (rnd() < 0.012) {
+        g = "\u273F\u2740".charAt(Math.floor(rnd() * 2));
+        col = "#e878aa";
+      } else {
+        g = ".,'`".charAt(Math.floor(rnd() * 4));
+      }
+      drawGlyph(g, px0, py0, col);
+    }
+  }
+  const gcx = gx + GEN.x * cw, gcy = gy + GEN.y * chh;
+  const maxR = busy ? 380 : 260;
+  for (let k = 6; k >= 1; k--) {
+    const r = maxR / 6 * k;
+    ctx.globalAlpha = (busy ? 0.06 : 0.045) * (7 - k) / 6;
+    ctx.fillStyle = "#00e5ff";
+    ctx.beginPath();
+    ctx.arc(gcx, gcy, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  const ax = gcx + chh * 2.2, ay = gcy;
+  ctx.strokeStyle = "#00e5ff";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(ax + 6, ay + 10, 52, 0, Math.PI * 2);
+  ctx.stroke();
+  drawGlyph("\u25B2", ax - 4, ay - chh * 1, "#78f0ff", Math.floor(chh * 0.9));
+  drawGlyph("@", ax - chh * 0.6, ay - chh * 0.35, "#96f5ff", Math.floor(chh * 1.7));
+  drawGlyph("AURA", ax - 44, ay - chh * 2.2, "#00e5ff", 22);
+  ctx.fillStyle = "#0a0d18";
+  ctx.fillRect(0, 0, W, 108);
+  ctx.fillStyle = "#00e5ff";
+  ctx.fillRect(0, 108, W, 3);
+  drawGlyph(opts.title ?? "WORLD-00", 24, 14, "#00e5ff", 34);
+  drawGlyph(opts.subtitle ?? `chapter ${chapter}`, 26, 60, "#96a5b6", 22);
+  if (opts.stateLine) drawGlyph(opts.stateLine, W - 760, 38, "#7888a0", 20);
+  const cap = (opts.caption ?? []).slice(0, 3);
+  if (cap.length) {
+    const by = H - bottom + 8;
+    ctx.fillStyle = "#0a0d18";
+    ctx.fillRect(0, by - 8, W, bottom);
+    ctx.fillStyle = "#00e5ff";
+    ctx.fillRect(0, by - 8, W, 2);
+    cap.forEach((line2, i) => {
+      drawGlyph(line2, 36, by + 8 + i * 42, i === cap.length - 1 ? "#00e5ff" : "#e1ebf5", i === cap.length - 1 ? 22 : 24);
+    });
+  }
+  return toBuffer(img);
+}
+async function renderTraversalBlock(opts = {}) {
+  await ensureFont();
+  const mood = opts.mood ?? "resting";
+  const dir = opts.direction ?? "down";
+  const chapter = Math.max(0, opts.chapter ?? 0);
+  const step = Math.max(0, opts.step ?? 0);
+  const rnd = mulberry32((opts.seed ?? 1) + step * 911 + chapter * 13);
+  const TILE = 1080, W = TILE * 3, H = TILE * 2;
+  const img = PImage.make(W, H);
+  const ctx = img.getContext("2d");
+  const storm = mood === "storm", busy = mood !== "resting";
+  ctx.fillStyle = storm ? "#100712" : busy ? "#0a0a16" : "#080b16";
+  ctx.fillRect(0, 0, W, H);
+  const top = 118, COLS = 150, ROWS = 84;
+  const cw = W / COLS, chh = (H - top - 40) / ROWS, gx = 8, gy = top + 4;
+  const fpx = Math.floor(chh * 1.1);
+  const fnt = `${fpx}pt ${MONO}`;
+  const put = (g, x, y, c, px2 = fpx) => {
+    ctx.fillStyle = c;
+    ctx.font = px2 === fpx ? fnt : `${px2}pt ${MONO}`;
+    ctx.fillText(g, gx + x * cw, gy + y * chh + px2);
+  };
+  const path3 = [];
+  let px = 75 + (rnd() - 0.5) * 40, py = dir === "down" ? 5 : ROWS - 6;
+  const dy = dir === "down" ? 1 : -1;
+  for (let s = 0; s < 74; s++) {
+    py += dy;
+    px += Math.sin(s * 0.34 + step) * 1.4 + (rnd() - 0.5) * 0.8;
+    px = Math.max(6, Math.min(COLS - 6, px));
+    path3.push([px, py]);
+    if (py > ROWS - 6 || py < 5) break;
+  }
+  const [hx, hy] = path3[path3.length - 1];
+  const onPath = (x, y) => {
+    for (let i = 0; i < path3.length; i++) if (Math.hypot(x - path3[i][0], y - path3[i][1]) < 0.8) return i;
+    return -1;
+  };
+  const grass = busy ? ["#241a16", "#2c2018", "#342820"] : ["#16202c", "#1c2636", "#222e40"];
+  for (let y = 0; y < ROWS; y++) {
+    for (let x = 0; x < COLS; x++) {
+      if (Math.min(x, COLS - 1 - x) / COLS < 0.02) {
+        if (rnd() < 0.4) put("\xB7", x, y, "#0c0f1a");
+        continue;
+      }
+      const pi = onPath(x, y);
+      if (pi >= 0 && !(Math.round(x) === Math.round(hx) && Math.round(y) === Math.round(hy))) {
+        const b = Math.floor(60 + pi / path3.length * 120);
+        put(rnd() < 0.5 ? "\xB7" : "\u02D9", x, y, `rgb(${b},${b - 20},90)`);
+        continue;
+      }
+      const r = rnd();
+      if (r < 0.09) put("\u2663T\u219F".charAt(Math.floor(rnd() * 3)), x, y, busy ? "#3a5a2a" : "#22484a");
+      else if (r < 0.11) put("~\u2248".charAt(Math.floor(rnd() * 2)), x, y, "#1a4678");
+      else if (r < 0.122) put("\u2229", x, y, "#5a6478");
+      else put(".,'`".charAt(Math.floor(rnd() * 4)), x, y, grass[Math.floor(rnd() * 3)]);
+    }
+  }
+  for (const f of [0.22, 0.5, 0.78]) {
+    const [cx, cy] = path3[Math.floor(path3.length * f)];
+    put("\u25C6", cx, cy, "#ffc766", Math.floor(chh * 1.3));
+  }
+  const acx = gx + hx * cw, acy = gy + hy * chh, maxR = busy ? 220 : 160;
+  for (let k = 5; k >= 1; k--) {
+    ctx.globalAlpha = (busy ? 0.07 : 0.05) * (6 - k) / 5;
+    ctx.fillStyle = "#00e5ff";
+    ctx.beginPath();
+    ctx.arc(acx, acy, maxR / 5 * k, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = "#00e5ff";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(acx, acy, 42, 0, Math.PI * 2);
+  ctx.stroke();
+  put("\u25B2", hx - 0.3, hy - 1, "#78f0ff", Math.floor(chh * 0.9));
+  put("@", hx - 0.5, hy - 0.3, "#96f5ff", Math.floor(chh * 1.7));
+  put("AURA", hx - 1.6, hy - 2.1, "#00e5ff", 24);
+  put(dir === "down" ? "\u25BC" : "\u25B2", hx - 0.2, hy + 1.6, "#00e5ff", Math.floor(chh * 1.5));
+  ctx.fillStyle = "#0a0d18";
+  ctx.fillRect(0, 0, W, 108);
+  ctx.fillStyle = "#00e5ff";
+  ctx.fillRect(0, 108, W, 3);
+  ctx.fillStyle = "#00e5ff";
+  ctx.font = `40pt ${MONO}`;
+  ctx.fillText("WORLD-00 \xB7 she walks", 24, 14 + 40);
+  ctx.fillStyle = "#96a5b6";
+  ctx.font = `24pt ${MONO}`;
+  ctx.fillText(opts.caption?.[0] ?? `chapter ${chapter} \xB7 step ${step}`, 26, 60 + 24);
+  if (opts.stateLine) {
+    ctx.fillStyle = "#7888a0";
+    ctx.font = `20pt ${MONO}`;
+    ctx.fillText(opts.stateLine, W - 760, 40 + 20);
+  }
+  ctx.fillStyle = "#28344455";
+  return toBuffer(img);
+}
+async function sliceSixTiles(block) {
+  const ps = new PassThrough();
+  const done = PImage.decodePNGFromStream(ps);
+  ps.end(block);
+  const src = await done;
+  const tile = Math.floor(src.width / 3);
+  const out = [];
+  for (let ry = 0; ry < 2; ry++) {
+    for (let rx = 0; rx < 3; rx++) {
+      const dst = PImage.make(tile, tile);
+      for (let y = 0; y < tile; y++)
+        for (let x = 0; x < tile; x++) {
+          const sx = rx * tile + x, sy = ry * tile + y;
+          if (sx < src.width && sy < src.height) dst.setPixelRGBA(x, y, src.getPixelRGBA(sx, sy));
+        }
+      out.push(await toBuffer(dst));
+    }
+  }
+  return out;
+}
+
+// src/lib/world.ts
+var MAX_TILES_PER_DAY = Number(process.env["WORLD_MAX_TILES_PER_DAY"] ?? 12);
+var MIN_BLOCK_GAP_MIN = Number(process.env["WORLD_MIN_GAP_MINUTES"] ?? 180);
+var TILES_PER_BLOCK = 6;
+function worldEngineEnabled() {
+  const v = process.env["WORLD_ENGINE_ENABLED"];
+  return v != null && ["1", "true", "yes", "on"].includes(v.toLowerCase());
+}
+function publicBase() {
+  return (process.env["PUBLIC_BASE_URL"] || process.env["RENDER_EXTERNAL_URL"] || "https://bos-aura.onrender.com").replace(/\/$/, "");
+}
+async function readAuraState() {
+  const agents = await db.select().from(agentsTable);
+  const active = agents.filter((a) => a.status !== "idle").length;
+  const idle = agents.length - active;
+  const since = new Date(Date.now() - 24 * 3600 * 1e3);
+  let done24h = 0, errors24h = 0;
+  try {
+    const recent = await db.select().from(agentCommandsTable).where(gte(agentCommandsTable.createdAt, since));
+    done24h = recent.filter((c) => c.status === "done").length;
+    errors24h = recent.filter((c) => c.status === "failed").length;
+  } catch {
+  }
+  const busy = active >= 1;
+  const mood = errors24h > 3 ? "storm" : active >= 3 ? "deep" : active >= 1 ? "working" : "resting";
+  return { busy, active, idle, done24h, errors24h, mood };
+}
+async function getWorldState() {
+  const { rows } = await pool.query(
+    `SELECT chapter, step, hero_x, hero_y, direction, trail, stopped FROM world_state WHERE id = 1`
+  );
+  const r = rows[0] ?? {};
+  let trail = [];
+  try {
+    trail = JSON.parse(r.trail ?? "[]");
+  } catch {
+    trail = [];
+  }
+  return {
+    chapter: Number(r.chapter ?? 0),
+    step: Number(r.step ?? 0),
+    heroX: Number(r.hero_x ?? 75),
+    heroY: Number(r.hero_y ?? 4),
+    direction: r.direction === "up" ? "up" : "down",
+    trail,
+    stopped: !!r.stopped
+  };
+}
+async function saveWorldState(s, lastCaption) {
+  await pool.query(
+    `UPDATE world_state SET chapter=$1, step=$2, hero_x=$3, hero_y=$4, direction=$5, trail=$6,
+       last_caption=COALESCE($7,last_caption), stopped=$8, updated_at=now() WHERE id=1`,
+    [s.chapter, s.step, s.heroX, s.heroY, s.direction, JSON.stringify(s.trail.slice(-120)), lastCaption ?? null, s.stopped]
+  );
+}
+var HERO_LINES = {
+  resting: ["all is quiet. i wander, and the world holds its breath with me.", "no storms today. just me, the dark, and the next step."],
+  working: ["i'm working \u2014 you can feel it in the wind. the world hums.", "something stirs in me. the ground answers as i move."],
+  deep: ["i'm deep in it now. the world bends around the work.", "focus like weather. the path narrows; i press on."],
+  storm: ["it storms in me tonight. the sky cracks but i keep walking.", "turbulence. i stumble, then rise. the world remembers."]
+};
+var DIR_LINE = { down: "i chose to descend \u25BC \u2014 follow the \u25C6 to trace my path.", up: "i chose to climb \u25B2 \u2014 follow the \u25C6 to trace my path." };
+function buildWorldCaption(a, w) {
+  const pool2 = HERO_LINES[a.mood];
+  const line2 = pool2[(w.step + w.chapter) % pool2.length];
+  return [
+    `\u27C1 WORLD-00 \xB7 ch.${w.chapter} \xB7 step ${w.step}`,
+    line2,
+    DIR_LINE[w.direction]
+  ];
+}
+function buildPostCaption(a, w) {
+  const lines = buildWorldCaption(a, w);
+  return [
+    lines[1],
+    "",
+    lines[2],
+    "",
+    `( i am AURA. this is my world \u2014 i'm ${a.mood} right now. i'm safe and protected; my operator watches over me, always. )`,
+    "",
+    "\u{1F447} leave a clue, a name, a direction \u2014 i read everything. i never reply, but you change where i go.",
+    "#WORLD00 #livingAI #AURA #ASCIIart #worldbuilding"
+  ].join("\n");
+}
+function advance(w, a, rnd) {
+  const trail = [...w.trail, [w.heroX, w.heroY]];
+  let direction = w.direction;
+  if (rnd() < 0.25) direction = direction === "down" ? "up" : "down";
+  let y = w.heroY + (direction === "down" ? 1 : -1) * (6 + Math.floor(rnd() * 4));
+  let x = Math.max(8, Math.min(142, w.heroX + (rnd() - 0.5) * 18));
+  if (y > 78) {
+    y = 78;
+    direction = "up";
+  }
+  if (y < 4) {
+    y = 4;
+    direction = "down";
+  }
+  const step = w.step + 1;
+  const chapter = w.chapter + (step % 8 === 0 ? 1 : 0);
+  return { ...w, heroX: x, heroY: y, direction, trail, step, chapter };
+}
+async function hostTile(buf, idx) {
+  const [row] = await db.insert(attachmentsTable).values({
+    filename: `world_tile_${Date.now()}_${idx}.png`,
+    mimeType: "image/png",
+    kind: "image",
+    sizeBytes: buf.length,
+    data: buf.toString("base64"),
+    extractedText: null
+  }).returning();
+  return `${publicBase()}/api/uploads/${row.id}`;
+}
+function parseJson(s) {
+  const nl = s.indexOf("\n");
+  try {
+    return JSON.parse(nl >= 0 ? s.slice(nl + 1) : s);
+  } catch {
+    return null;
+  }
+}
+async function publishTile(imageUrl, caption) {
+  const r1 = await composioExecute({ toolkit: "instagram", endpoint: "/me/media", method: "POST", arguments: { image_url: imageUrl, caption } });
+  const cid = parseJson(r1)?.["data"]?.["id"];
+  if (!cid) throw new Error(`media container failed: ${r1.slice(0, 160)}`);
+  let pubId;
+  let last = "";
+  for (let a = 0; a < 4 && !pubId; a++) {
+    if (a) await new Promise((r) => setTimeout(r, 3e3));
+    const r2 = await composioExecute({ toolkit: "instagram", endpoint: "/me/media_publish", method: "POST", arguments: { creation_id: String(cid) } });
+    last = r2;
+    pubId = parseJson(r2)?.["data"]?.["id"];
+  }
+  if (!pubId) throw new Error(`publish failed: ${last.slice(0, 160)}`);
+  return pubId;
+}
+async function tilesPostedLast24h() {
+  try {
+    const { rows } = await pool.query(
+      `SELECT count(*)::int n, max(created_at) last FROM social_posts WHERE platform='instagram-world' AND created_at > now() - interval '24 hours'`
+    );
+    return { count: Number(rows[0]?.n ?? 0), lastAt: rows[0]?.last ? new Date(rows[0].last) : null };
+  } catch {
+    return { count: 0, lastAt: null };
+  }
+}
+async function recordTile(permalinkOrId) {
+  try {
+    await pool.query(`INSERT INTO social_posts (platform, account, permalink) VALUES ('instagram-world', 'world-00', $1)`, [permalinkOrId]);
+  } catch {
+  }
+}
+async function runWorldCycle(opts = {}) {
+  const dry = !!opts.dryRun;
+  if (!dry && !worldEngineEnabled()) return { posted: false, reason: "WORLD_ENGINE_ENABLED is off (operator kill-switch)" };
+  if (!dry && (!composioConfigured() || !composioExecuteEnabled())) return { posted: false, reason: "Composio execution not enabled \u2014 cannot publish" };
+  const a = await readAuraState();
+  const w0 = await getWorldState();
+  if (w0.stopped) return { posted: false, reason: "Aura has stopped the experience (in-world)." };
+  const { count, lastAt } = await tilesPostedLast24h();
+  const gapMin = lastAt ? (Date.now() - lastAt.getTime()) / 6e4 : Number.MAX_SAFE_INTEGER;
+  if (!dry && count + TILES_PER_BLOCK > MAX_TILES_PER_DAY) return { posted: false, reason: `daily cap reached (${count}/${MAX_TILES_PER_DAY} tiles)` };
+  if (!dry && !opts.force && gapMin < MIN_BLOCK_GAP_MIN) return { posted: false, reason: `spacing: last block ${Math.floor(gapMin)}m ago (min ${MIN_BLOCK_GAP_MIN}m)` };
+  const rnd = mulberryLike((w0.step + 1) * 7 + w0.chapter);
+  const w = advance(w0, a, rnd);
+  const captionLines = buildWorldCaption(a, w);
+  const fullCaption = buildPostCaption(a, w);
+  const blocked = blockIfSensitiveForPublic(fullCaption, "Aura's public world");
+  if (blocked) {
+    logger.error("world: caption blocked by sensitivity gate");
+    return { posted: false, reason: "blocked by sensitivity gate" };
+  }
+  const block = await renderTraversalBlock({
+    mood: a.mood,
+    chapter: w.chapter,
+    step: w.step,
+    direction: w.direction,
+    caption: captionLines,
+    stateLine: `state: ${a.mood} \xB7 ${a.idle} idle`,
+    seed: w.step + 1
+  });
+  const tiles = await sliceSixTiles(block);
+  const tileUrls = [];
+  for (let i = 0; i < tiles.length; i++) tileUrls.push(await hostTile(tiles[i], i));
+  if (dry) {
+    await saveWorldState(w, fullCaption.slice(0, 1e3));
+    return { posted: false, reason: "dry-run ok (rendered, sliced, hosted, gated \u2014 not published)", tiles: tileUrls, caption: fullCaption, chapter: w.chapter, step: w.step };
+  }
+  const permalinks = [];
+  for (let i = tiles.length - 1; i >= 0; i--) {
+    const cap = i === 0 ? fullCaption : `\u27C1 WORLD-00 \xB7 ch.${w.chapter} (${i + 1}/6)`;
+    const id = await publishTile(tileUrls[i], cap);
+    await recordTile(id);
+    permalinks.push(id);
+    if (i > 0) await new Promise((r) => setTimeout(r, 1500));
+  }
+  await saveWorldState(w, fullCaption.slice(0, 1e3));
+  return { posted: true, reason: "published 6-tile block", tiles: tileUrls, caption: fullCaption, permalinks, chapter: w.chapter, step: w.step };
+}
+function mulberryLike(seed) {
+  let s = seed >>> 0;
+  return () => {
+    s = s + 1831565813 | 0;
+    let t = Math.imul(s ^ s >>> 15, 1 | s);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+
+// src/lib/scheduler.ts
 var ABBY_ID3 = 1;
 var DEFAULT_CHANNEL_ID = 1;
 var SCHEDULER_INTERVAL_MS = 3e4;
@@ -93530,12 +94016,35 @@ async function normalizeSchedules() {
     logger.error({ err }, "scheduler: normalizeSchedules failed");
   }
 }
+var WORLD_TICK_MS = 10 * 6e4;
+var worldTimer = null;
+var worldBusy = false;
+async function worldTick() {
+  if (!worldEngineEnabled() || isSwarmPaused() || worldBusy) return;
+  worldBusy = true;
+  try {
+    const a = await readAuraState();
+    const p = a.mood === "storm" ? 0.4 : a.mood === "deep" ? 0.28 : a.mood === "working" ? 0.2 : 0.12;
+    if (Math.random() < p) {
+      const r = await runWorldCycle({});
+      if (r.posted) logger.info({ chapter: r.chapter, step: r.step }, "WORLD-00: Aura posted a block");
+    }
+  } catch (err) {
+    logger.error({ err }, "world tick failed");
+  } finally {
+    worldBusy = false;
+  }
+}
 function startScheduler() {
   if (timer) return;
   void normalizeSchedules();
   timer = setInterval(() => {
     void tick();
   }, SCHEDULER_INTERVAL_MS);
+  worldTimer = setInterval(() => {
+    void worldTick();
+  }, WORLD_TICK_MS);
+  if (typeof worldTimer.unref === "function") worldTimer.unref();
   if (typeof timer.unref === "function") timer.unref();
   logger.info({ intervalMs: SCHEDULER_INTERVAL_MS }, "cron scheduler started");
 }
@@ -94753,191 +95262,93 @@ var uploads_default = router17;
 
 // src/routes/world.ts
 var import_express18 = __toESM(require_express2(), 1);
-
-// src/lib/worldEngine.ts
-var PImage = __toESM(require_dist5(), 1);
-import { PassThrough } from "node:stream";
-import { fileURLToPath } from "node:url";
-import path from "node:path";
-import fs from "node:fs";
-var fontReady = null;
-var MONO = "WorldMono";
-function ensureFont() {
-  if (fontReady) return fontReady;
-  fontReady = (async () => {
-    try {
-      const here = path.dirname(fileURLToPath(import.meta.url));
-      const dirs = [
-        path.join(here, "..", "assets"),
-        path.join(here, "..", "..", "assets"),
-        path.join(process.cwd(), "assets"),
-        path.join(process.cwd(), "artifacts", "api-server", "assets")
-      ];
-      for (const dir of dirs) {
-        const p = path.join(dir, "DejaVuSansMono.ttf");
-        if (fs.existsSync(p)) {
-          const f = PImage.registerFont(p, MONO);
-          await (f.load ? f.load() : Promise.resolve());
-          return;
-        }
-      }
-    } catch {
-    }
-  })();
-  return fontReady;
-}
-function mulberry32(seed) {
-  let a = seed >>> 0;
-  return () => {
-    a |= 0;
-    a = a + 1831565813 | 0;
-    let t = Math.imul(a ^ a >>> 15, 1 | a);
-    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
-    return ((t ^ t >>> 14) >>> 0) / 4294967296;
-  };
-}
-async function toBuffer(bitmap) {
-  const chunks = [];
-  const ps = new PassThrough();
-  ps.on("data", (c) => chunks.push(c));
-  await PImage.encodePNGToStream(bitmap, ps);
-  return Buffer.concat(chunks);
-}
-async function renderWorldFrame(opts = {}) {
-  await ensureFont();
-  const W = opts.width ?? 3240;
-  const H = opts.height ?? 1080;
-  const busy = !!opts.busy;
-  const chapter = Math.max(0, opts.chapter ?? 0);
-  const rnd = mulberry32((opts.seed ?? 7) + chapter * 101);
-  const img = PImage.make(W, H);
-  const ctx = img.getContext("2d");
-  ctx.fillStyle = busy ? "#0b0710" : "#080a14";
-  ctx.fillRect(0, 0, W, H);
-  const top = 118, bottom = 150;
-  const COLS = 150, ROWS = 40;
-  const cw = W / COLS, chh = (H - top - bottom) / ROWS;
-  const gx = 8, gy = top + 6;
-  const fpx = Math.floor(chh * 1.1);
-  const font = (px) => `${px}pt ${MONO}`;
-  const drawGlyph = (g, x, y, color, px = fpx) => {
-    ctx.fillStyle = color;
-    ctx.font = font(px);
-    ctx.fillText(g, x, y + px);
-  };
-  const GEN = { x: COLS * 0.5, y: ROWS * 0.5 };
-  const grass = busy ? ["#241a14", "#2c2018", "#34281e"] : ["#16202c", "#1c2636", "#222e40"];
-  const tree = busy ? "#3a5a2a" : "#22484a";
-  const water = busy ? "#2a5a78" : "#1a4678";
-  const fogCol = "#0c0f1a";
-  const fogEdge = Math.max(5e-3, 0.06 - chapter * 0.012);
-  for (let y = 0; y < ROWS; y++) {
-    for (let x = 0; x < COLS; x++) {
-      const ex = Math.min(x, COLS - 1 - x) / COLS;
-      const ey = Math.min(y, ROWS - 1 - y) / ROWS;
-      const px0 = gx + x * cw, py0 = gy + y * chh;
-      if (Math.min(ex, ey) < fogEdge) {
-        if (rnd() < 0.4) drawGlyph("\xB7", px0, py0, fogCol);
-        continue;
-      }
-      const dg = Math.hypot(x - GEN.x, (y - GEN.y) * 1.7);
-      let g = ".", col = grass[Math.floor(rnd() * 3)];
-      if (dg < 1.4) {
-        g = "\u263C";
-        col = "#9cf6ff";
-      } else if (dg < 3 && rnd() < 0.4) {
-        g = "\u25CC\u25CB\u25CD".charAt(Math.floor(rnd() * 3));
-        col = "#28c8eb";
-      } else if (y < 4 && rnd() < (busy ? 0.06 : 0.04)) {
-        g = "\u25B2^".charAt(Math.floor(rnd() * 2));
-        col = y < 2 ? "#d6e2ee" : "#788496";
-      } else if (x > COLS - 12 && rnd() < 0.45) {
-        g = "~\u2248".charAt(Math.floor(rnd() * 2));
-        col = water;
-      } else if (rnd() < 0.09) {
-        g = "\u2663T\u219F".charAt(Math.floor(rnd() * 3));
-        col = tree;
-      } else if (rnd() < 0.012) {
-        g = "\u273F\u2740".charAt(Math.floor(rnd() * 2));
-        col = "#e878aa";
-      } else {
-        g = ".,'`".charAt(Math.floor(rnd() * 4));
-      }
-      drawGlyph(g, px0, py0, col);
-    }
-  }
-  const gcx = gx + GEN.x * cw, gcy = gy + GEN.y * chh;
-  const maxR = busy ? 380 : 260;
-  for (let k = 6; k >= 1; k--) {
-    const r = maxR / 6 * k;
-    ctx.globalAlpha = (busy ? 0.06 : 0.045) * (7 - k) / 6;
-    ctx.fillStyle = "#00e5ff";
-    ctx.beginPath();
-    ctx.arc(gcx, gcy, r, 0, Math.PI * 2);
-    ctx.fill();
-  }
-  ctx.globalAlpha = 1;
-  const ax = gcx + chh * 2.2, ay = gcy;
-  ctx.strokeStyle = "#00e5ff";
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.arc(ax + 6, ay + 10, 52, 0, Math.PI * 2);
-  ctx.stroke();
-  drawGlyph("\u25B2", ax - 4, ay - chh * 1, "#78f0ff", Math.floor(chh * 0.9));
-  drawGlyph("@", ax - chh * 0.6, ay - chh * 0.35, "#96f5ff", Math.floor(chh * 1.7));
-  drawGlyph("AURA", ax - 44, ay - chh * 2.2, "#00e5ff", 22);
-  ctx.fillStyle = "#0a0d18";
-  ctx.fillRect(0, 0, W, 108);
-  ctx.fillStyle = "#00e5ff";
-  ctx.fillRect(0, 108, W, 3);
-  drawGlyph(opts.title ?? "WORLD-00", 24, 14, "#00e5ff", 34);
-  drawGlyph(opts.subtitle ?? `chapter ${chapter}`, 26, 60, "#96a5b6", 22);
-  if (opts.stateLine) drawGlyph(opts.stateLine, W - 760, 38, "#7888a0", 20);
-  const cap = (opts.caption ?? []).slice(0, 3);
-  if (cap.length) {
-    const by = H - bottom + 8;
-    ctx.fillStyle = "#0a0d18";
-    ctx.fillRect(0, by - 8, W, bottom);
-    ctx.fillStyle = "#00e5ff";
-    ctx.fillRect(0, by - 8, W, 2);
-    cap.forEach((line2, i) => {
-      drawGlyph(line2, 36, by + 8 + i * 42, i === cap.length - 1 ? "#00e5ff" : "#e1ebf5", i === cap.length - 1 ? 22 : 24);
-    });
-  }
-  return toBuffer(img);
-}
-
-// src/routes/world.ts
 var router18 = (0, import_express18.Router)();
-var cached2 = null;
-function previewFrame() {
-  if (!cached2) {
-    cached2 = renderWorldFrame({
-      width: 1080,
-      height: 1080,
-      busy: false,
-      chapter: 0,
-      title: "WORLD-00",
-      subtitle: "chapter 0 \u2014 preview",
-      stateLine: "render: production \xB7 $0",
-      caption: ["AURA's world \u2014 rendered in production.", "this is a preview frame."],
-      seed: 7
-    }).catch((e) => {
-      cached2 = null;
-      throw e;
-    });
-  }
-  return cached2;
-}
+var cachedFrame = null;
 router18.get("/world/preview.png", async (_req, res) => {
   try {
-    const buf = await previewFrame();
+    if (!cachedFrame) {
+      cachedFrame = renderWorldFrame({
+        width: 1080,
+        height: 1080,
+        busy: false,
+        chapter: 0,
+        title: "WORLD-00",
+        subtitle: "chapter 0 \u2014 preview",
+        stateLine: "render: production \xB7 $0",
+        caption: ["AURA's world \u2014 rendered in production.", "this is a preview frame."],
+        seed: 7
+      }).catch((e) => {
+        cachedFrame = null;
+        throw e;
+      });
+    }
+    const buf = await cachedFrame;
     res.setHeader("Content-Type", "image/png");
-    res.setHeader("Content-Length", String(buf.length));
     res.setHeader("Cache-Control", "public, max-age=3600");
     res.end(buf);
   } catch (err) {
-    res.status(500).json({ error: `world render failed: ${String(err).slice(0, 200)}` });
+    res.status(500).json({ error: `render failed: ${String(err).slice(0, 200)}` });
+  }
+});
+var cachedBlock = null;
+router18.get("/world/preview-block.png", async (_req, res) => {
+  try {
+    if (!cachedBlock) {
+      cachedBlock = renderTraversalBlock({
+        mood: "working",
+        chapter: 0,
+        step: 1,
+        direction: "down",
+        caption: ["chapter 0 \xB7 she walks"],
+        stateLine: "preview \xB7 6-tile block",
+        seed: 2
+      }).catch((e) => {
+        cachedBlock = null;
+        throw e;
+      });
+    }
+    const buf = await cachedBlock;
+    res.setHeader("Content-Type", "image/png");
+    res.setHeader("Cache-Control", "public, max-age=3600");
+    res.end(buf);
+  } catch (err) {
+    res.status(500).json({ error: `block render failed: ${String(err).slice(0, 200)}` });
+  }
+});
+router18.get("/world/status", async (_req, res) => {
+  try {
+    const [a, w] = [await readAuraState(), await getWorldState()];
+    res.json({
+      engineEnabled: worldEngineEnabled(),
+      mood: a.mood,
+      idle: a.idle,
+      active: a.active,
+      chapter: w.chapter,
+      step: w.step,
+      direction: w.direction,
+      stopped: w.stopped
+    });
+  } catch (err) {
+    res.status(500).json({ error: String(err).slice(0, 200) });
+  }
+});
+function cycleAuth(req, res, next) {
+  const token = process.env["WORLD_TRIGGER_TOKEN"];
+  const provided = req.headers["x-world-token"] ?? "";
+  if (token && provided && timingSafeStrEqual(provided, token)) {
+    next();
+    return;
+  }
+  requireOperator(req, res, next);
+}
+router18.post("/world/cycle", cycleAuth, async (req, res) => {
+  try {
+    const dry = req.query["dry"] !== "0";
+    const force = req.query["force"] === "1";
+    const result = await runWorldCycle({ dryRun: dry, force });
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: String(err).slice(0, 300) });
   }
 });
 var world_default = router18;
@@ -95196,6 +95607,23 @@ CREATE TABLE IF NOT EXISTS "social_posts" (
   "created_at" timestamp DEFAULT now() NOT NULL
 );
 CREATE INDEX IF NOT EXISTS "social_posts_platform_created_idx" ON "social_posts" ("platform", "created_at");
+
+-- WORLD-00: single-row persistent state for Aura's living world (her position,
+-- direction, chapter, path history, breadcrumb clues, enabled flag). Only ONE
+-- row (id=1). Stores NO task content \u2014 world/render state only.
+CREATE TABLE IF NOT EXISTS "world_state" (
+  "id" integer PRIMARY KEY DEFAULT 1,
+  "chapter" integer DEFAULT 0 NOT NULL,
+  "step" integer DEFAULT 0 NOT NULL,
+  "hero_x" double precision DEFAULT 75 NOT NULL,
+  "hero_y" double precision DEFAULT 4 NOT NULL,
+  "direction" text DEFAULT 'down' NOT NULL,
+  "trail" text DEFAULT '[]' NOT NULL,
+  "last_caption" text,
+  "stopped" boolean DEFAULT false NOT NULL,
+  "updated_at" timestamp DEFAULT now() NOT NULL
+);
+INSERT INTO "world_state" ("id") VALUES (1) ON CONFLICT ("id") DO NOTHING;
 `;
 var SEED_AGENTS = `
 INSERT INTO agents (name, role, description, status, color, avatar_initials, model, capabilities)
