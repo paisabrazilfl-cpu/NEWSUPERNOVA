@@ -27,9 +27,7 @@ import { logger } from "./lib/logger";
 import {
   AGENT_PERSONAS,
   ABBY_ID,
-  OPENROUTER_BASE,
   resolveModel,
-  openrouterHeaders,
   buddyConfigured,
   buddyComplete,
   ANTI_HALLUCINATION_DIRECTIVE,
@@ -49,7 +47,7 @@ import {
   sanitizeForStorage,
   type ToolContext,
 } from "./tools";
-import { sendInngestEvent, traceLlmRun } from "./lib/integrations";
+import { sendInngestEvent, traceLlmRun, chatRequestFor } from "./lib/integrations";
 import { groundingProof } from "./lib/grounding";
 
 type Agent = typeof agentsTable.$inferSelect;
@@ -148,11 +146,13 @@ async function completeChat(model: string, system: string, user: string, maxToke
   const startedAt = new Date();
   let r: Response;
   try {
-    r = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+    const llmReq = chatRequestFor(model);
+    r = await fetch(llmReq.url, {
       method: "POST",
-      headers: openrouterHeaders(),
+      headers: llmReq.headers,
       body: JSON.stringify({
-        model,
+        ...llmReq.bodyExtras,
+        model: llmReq.model,
         messages: [
           { role: "system", content: system },
           { role: "user", content: user },
@@ -224,23 +224,24 @@ async function completeChatTurn(
   messages: ChatMessage[],
   tools: Array<Record<string, unknown>>,
 ): Promise<AssistantMessage> {
-  const body: Record<string, unknown> = { model, messages, stream: false, max_tokens: 8000 };
+  const llmReq = chatRequestFor(model);
+  const body: Record<string, unknown> = { ...llmReq.bodyExtras, model: llmReq.model, messages, stream: false, max_tokens: 8000 };
   if (tools.length) {
     body["tools"] = tools;
     body["tool_choice"] = "auto";
   }
-  let r = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+  let r = await fetch(llmReq.url, {
     method: "POST",
-    headers: openrouterHeaders(),
+    headers: llmReq.headers,
     body: JSON.stringify(body),
   });
   if (!r.ok && tools.length) {
     // Some providers reject function-calling — retry once without tools.
     delete body["tools"];
     delete body["tool_choice"];
-    r = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+    r = await fetch(llmReq.url, {
       method: "POST",
-      headers: openrouterHeaders(),
+      headers: llmReq.headers,
       body: JSON.stringify(body),
     });
   }

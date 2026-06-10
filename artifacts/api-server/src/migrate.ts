@@ -186,13 +186,28 @@ INSERT INTO "world_state" ("id") VALUES (1) ON CONFLICT ("id") DO NOTHING;
 const SEED_AGENTS = `
 INSERT INTO agents (name, role, description, status, color, avatar_initials, model, capabilities)
 VALUES
-  ('ABBY',   'Orchestrator',  'Master orchestrator and directive router',       'idle', '#00e5ff', 'AB', 'x-ai/grok-4.3',         ARRAY['orchestration','planning','routing']),
-  ('CLAW-1', 'Code Executor', 'Code generation and execution specialist',       'idle', '#bf00ff', 'C1', 'qwen/qwen3.7-plus',      ARRAY['code','execution','debugging']),
-  ('CLAW-2', 'Browser Agent', 'Web browsing and scraping via Steel',            'idle', '#0066ff', 'C2', 'x-ai/grok-build-0.1',   ARRAY['browser','scraping','research']),
-  ('CLAW-3', 'Memory & RAG',  'Long-term memory and retrieval',                 'idle', '#00cc88', 'C3', 'qwen/qwen3.7-max',       ARRAY['memory','rag','search']),
-  ('CLAW-4', 'API Connector', 'External API integration and automation',        'idle', '#ff6b00', 'C4', 'x-ai/grok-4.20',         ARRAY['api','integration','automation']),
-  ('MR.NICE','Social Agent',  'Social media and communications specialist',     'idle', '#ff2d78', 'MN', 'qwen/qwen3.6-plus',      ARRAY['social','communications','engagement'])
+  ('ABBY',   'Orchestrator',  'Master orchestrator and directive router',       'idle', '#00e5ff', 'AB', 'nvidia/nemotron-3-ultra-550b-a55b',  ARRAY['orchestration','planning','routing']),
+  ('CLAW-1', 'Code Executor', 'Code generation and execution specialist',       'idle', '#bf00ff', 'C1', 'qwen/qwen3.5-397b-a17b',             ARRAY['code','execution','debugging']),
+  ('CLAW-2', 'Browser Agent', 'Web browsing and scraping via Steel',            'idle', '#0066ff', 'C2', 'deepseek-ai/deepseek-v4-flash',      ARRAY['browser','scraping','research']),
+  ('CLAW-3', 'Memory & RAG',  'Long-term memory and retrieval',                 'idle', '#00cc88', 'C3', 'qwen/qwen3.5-122b-a10b',             ARRAY['memory','rag','search']),
+  ('CLAW-4', 'API Connector', 'External API integration and automation',        'idle', '#ff6b00', 'C4', 'nvidia/nemotron-3-super-120b-a12b',  ARRAY['api','integration','automation']),
+  ('MR.NICE','Social Agent',  'Social media and communications specialist',     'idle', '#ff2d78', 'MN', 'qwen/qwen3.5-122b-a10b',             ARRAY['social','communications','engagement'])
 `;
+
+// 2026-06-10 NVIDIA NIM migration: upgrade each agent's LEGACY default model to
+// its NIM replacement (live-verified on integrate.api.nvidia.com — completion,
+// tool calling, and JSON mode all pass). Matched on the old model id, so any
+// custom model an operator picked in the UI is left untouched. Runtime routing
+// falls back to the legacy OpenRouter model when NVIDIA_API_KEY is unset, so
+// this upgrade can never strand an agent on an unreachable model.
+const AGENT_MODEL_UPGRADES: Array<[oldModel: string, newModel: string]> = [
+  ["x-ai/grok-4.3",        "nvidia/nemotron-3-ultra-550b-a55b"],
+  ["qwen/qwen3.7-plus",    "qwen/qwen3.5-397b-a17b"],
+  ["x-ai/grok-build-0.1",  "deepseek-ai/deepseek-v4-flash"],
+  ["qwen/qwen3.7-max",     "qwen/qwen3.5-122b-a10b"],
+  ["x-ai/grok-4.20",       "nvidia/nemotron-3-super-120b-a12b"],
+  ["qwen/qwen3.6-plus",    "qwen/qwen3.5-122b-a10b"],
+];
 
 const SEED_CHANNELS = `
 INSERT INTO channels (name, type, description)
@@ -235,6 +250,11 @@ export async function runMigrations(): Promise<void> {
     // Idempotently sync each agent's real tool capabilities.
     for (const [id, caps] of Object.entries(AGENT_CAPABILITIES)) {
       await client.query("UPDATE agents SET capabilities = $1 WHERE id = $2", [caps, Number(id)]);
+    }
+
+    // Idempotently upgrade legacy default models to their NIM replacements.
+    for (const [oldModel, newModel] of AGENT_MODEL_UPGRADES) {
+      await client.query("UPDATE agents SET model = $2 WHERE model = $1", [oldModel, newModel]);
     }
   } catch (err) {
     logger.error({ err }, "Migration failed — continuing anyway");

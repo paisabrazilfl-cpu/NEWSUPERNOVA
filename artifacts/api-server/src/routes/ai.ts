@@ -2,7 +2,7 @@ import { Router } from "express";
 import { db } from "@workspace/db";
 import { agentsTable, messagesTable, attachmentsTable } from "@workspace/db";
 import { eq, and, inArray, desc } from "drizzle-orm";
-import { llmBaseUrl, heliconeHeaders, integrationStatus } from "../lib/integrations";
+import { llmBaseUrl, heliconeHeaders, integrationStatus, chatRequestFor } from "../lib/integrations";
 import { listSecretNames } from "../lib/vault";
 import { buildCapabilityCard, getToolNamesForAgent } from "../tools";
 import { orchestrateGoal } from "../orchestrator";
@@ -245,15 +245,18 @@ export function requestsConnectedAccountAction(message: string): boolean {
 const CHAT_HISTORY_LIMIT = 16;
 
 export const ABBY_ID = 1;
-export const ABBY_DEFAULT_MODEL = "x-ai/grok-4.3";
+export const ABBY_DEFAULT_MODEL = "nvidia/nemotron-3-ultra-550b-a55b";
 
-// ABBY must ALWAYS run on a Grok (x-ai/) model — it carries the persona best.
-// Any non-Grok model (from the DB or a request override) is forced back to Grok.
+// ABBY must run on an orchestrator-grade model: NVIDIA Nemotron (agentic
+// reasoning / planning / tool calling, 1M context) or a Grok (x-ai/) model.
+// Anything else (from the DB or a request override) is forced back to the
+// default. When NVIDIA_API_KEY is absent, chatRequestFor() transparently
+// remaps the Nemotron id to Grok at request time — never a dead model.
 export function resolveModel(agentId: number, agentModel: string | null | undefined, override: unknown): string {
   const candidate = (typeof override === "string" && override.trim())
     ? override
     : (agentModel ?? ABBY_DEFAULT_MODEL);
-  if (agentId === ABBY_ID && !candidate.startsWith("x-ai/")) {
+  if (agentId === ABBY_ID && !candidate.startsWith("x-ai/") && !candidate.startsWith("nvidia/nemotron")) {
     return ABBY_DEFAULT_MODEL;
   }
   return candidate;
@@ -305,7 +308,19 @@ export function openrouterHeaders() {
   };
 }
 
-// List available OpenRouter models (filtered to interesting ones)
+// NVIDIA NIM models the swarm can run (not in OpenRouter's catalog, so they
+// are appended to /ai/models manually). Live-verified against
+// integrate.api.nvidia.com on 2026-06-10: completion + tools + json mode.
+const NIM_FEATURED_MODELS = [
+  { id: "nvidia/nemotron-3-ultra-550b-a55b", name: "NVIDIA Nemotron 3 Ultra 550B (NIM)", context_length: 1000000 },
+  { id: "nvidia/nemotron-3-super-120b-a12b", name: "NVIDIA Nemotron 3 Super 120B (NIM)", context_length: 1000000 },
+  { id: "deepseek-ai/deepseek-v4-flash", name: "DeepSeek V4 Flash (NIM)", context_length: 1000000 },
+  { id: "qwen/qwen3.5-397b-a17b", name: "Qwen 3.5 397B MoE (NIM)", context_length: 262144 },
+  { id: "qwen/qwen3.5-122b-a10b", name: "Qwen 3.5 122B MoE (NIM)", context_length: 262144 },
+  { id: "mistralai/mistral-medium-3.5-128b", name: "Mistral Medium 3.5 128B (NIM)", context_length: 131072 },
+];
+
+// List available models: OpenRouter catalog (filtered) + NVIDIA NIM models.
 router.get("/ai/models", async (req, res) => {
   try {
     const r = await fetch(`${OPENROUTER_BASE}/models`, { headers: openrouterHeaders() });
@@ -328,7 +343,7 @@ router.get("/ai/models", async (req, res) => {
       "mistral/mistral-large",
     ];
     const models = (data.data ?? []).filter(m => featured.includes(m.id));
-    res.json({ models });
+    res.json({ models: [...NIM_FEATURED_MODELS, ...models] });
   } catch (err) {
     req.log.error({ err }, "Failed to fetch OpenRouter models");
     res.status(500).json({ error: "Failed to fetch models" });
@@ -612,11 +627,13 @@ router.post("/ai/chat", async (req, res) => {
         "If the request needs real or current information you don't already have, prefer dispatch=true. " +
         "ALSO dispatch=true whenever the request asks you to PRODUCE or SAVE a downloadable file/artifact (deck, report, PDF, CSV, document, code file), run code, fill/submit a form, or do any multi-step build — those need tools (save_artifact, code, web) that only the CLAWs have, so answering inline cannot actually create a downloadable file. Only answer inline (dispatch=false) for pure conversation or a quick factual answer that needs no tool and no saved file. " +
         "The `reply` must be ABBY's actual answer to the operator AS ABBY — never describe this router, the classification, or that you are deciding anything; the operator must never see routing internals.";
-      const decRes = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+      const decReq = chatRequestFor(model);
+      const decRes = await fetch(decReq.url, {
         method: "POST",
-        headers: openrouterHeaders(),
+        headers: decReq.headers,
         body: JSON.stringify({
-          model,
+          ...decReq.bodyExtras,
+          model: decReq.model,
           messages: [{ role: "system", content: decisionSystem }, ...history],
           stream: false,
           max_tokens: 800,
@@ -676,11 +693,13 @@ router.post("/ai/chat", async (req, res) => {
   }
 
   try {
-    const orRes = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+    const chatReq = chatRequestFor(model);
+    const orRes = await fetch(chatReq.url, {
       method: "POST",
-      headers: openrouterHeaders(),
+      headers: chatReq.headers,
       body: JSON.stringify({
-        model,
+        ...chatReq.bodyExtras,
+        model: chatReq.model,
         stream: true,
         messages: chatMessages,
         max_tokens: 700,
@@ -783,10 +802,11 @@ router.post("/ai/complete", async (req, res) => {
   ];
 
   try {
-    const r = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+    const compReq = chatRequestFor(model);
+    const r = await fetch(compReq.url, {
       method: "POST",
-      headers: openrouterHeaders(),
-      body: JSON.stringify({ model, messages, max_tokens: 512 }),
+      headers: compReq.headers,
+      body: JSON.stringify({ ...compReq.bodyExtras, model: compReq.model, messages, max_tokens: 512 }),
     });
     if (!r.ok) {
       // Fall back to Buddy on provider failure (e.g. 402 out of credits).

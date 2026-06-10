@@ -56,6 +56,115 @@ export function heliconeHeaders(extra?: Record<string, string>): Record<string, 
   };
 }
 
+// ─── NVIDIA NIM (build.nvidia.com) ───────────────────────────────────────────
+// OpenAI-compatible chat endpoint for NVIDIA-hosted models (Nemotron, DeepSeek,
+// Qwen 3.5, Mistral NIM builds, …). Activated by NVIDIA_API_KEY — store it in
+// the vault (loadVaultIntoEnv puts it in process.env at boot) or set it as an
+// env var. When the key is absent, every NIM model id transparently falls back
+// to its legacy OpenRouter equivalent so the swarm NEVER loses function.
+
+const NVIDIA_NIM_BASE = "https://integrate.api.nvidia.com/v1";
+
+export function nimConfigured(): boolean {
+  return !!process.env["NVIDIA_API_KEY"];
+}
+
+// Model-id prefixes served by NVIDIA NIM rather than OpenRouter. Note the
+// deliberate asymmetry with OpenRouter naming: NIM uses `mistralai/` + `meta/`,
+// OpenRouter uses `mistral/` + `meta-llama/`; NIM Qwen ids are `qwen/qwen3.5-*`
+// while the legacy OpenRouter Qwens are `qwen/qwen3.6-*` / `qwen/qwen3.7-*`.
+const NIM_PREFIXES = [
+  "nvidia/",
+  "deepseek-ai/",
+  "mistralai/",
+  "z-ai/",
+  "moonshotai/",
+  "minimaxai/",
+  "stepfun-ai/",
+  "qwen/qwen3.5-",
+];
+
+export function isNimModel(model: string): boolean {
+  return NIM_PREFIXES.some((p) => model.startsWith(p));
+}
+
+// Legacy OpenRouter equivalent for each NIM model the swarm uses. Consulted
+// only when NVIDIA_API_KEY is missing, so a fresh deploy without the key keeps
+// every agent fully functional on its previous provider.
+export const NIM_MODEL_FALLBACKS: Record<string, string> = {
+  "nvidia/nemotron-3-ultra-550b-a55b": "x-ai/grok-4.3",
+  "nvidia/nemotron-3-super-120b-a12b": "x-ai/grok-4.20",
+  "deepseek-ai/deepseek-v4-flash": "x-ai/grok-build-0.1",
+  "deepseek-ai/deepseek-v4-pro": "qwen/qwen3.7-max",
+  "qwen/qwen3.5-397b-a17b": "qwen/qwen3.7-plus",
+  "qwen/qwen3.5-122b-a10b": "qwen/qwen3.6-plus",
+  "mistralai/mistral-medium-3.5-128b": "mistral/mistral-large",
+  "z-ai/glm-5.1": "x-ai/grok-4.3",
+};
+const NIM_GENERIC_FALLBACK = "x-ai/grok-4.3";
+
+export interface LlmChatRequest {
+  url: string;
+  headers: Record<string, string>;
+  /** The model id to put in the request body (may be remapped for fallback). */
+  model: string;
+  provider: "nvidia-nim" | "openrouter";
+  /**
+   * Provider-specific body defaults (sampling, template kwargs). Spread these
+   * FIRST in the request body so call-site values win on key collisions.
+   */
+  bodyExtras: Record<string, unknown>;
+}
+
+/**
+ * Resolve the chat-completions endpoint, auth headers, and effective model id
+ * for a given model. NIM models route to integrate.api.nvidia.com when
+ * NVIDIA_API_KEY is set, and silently remap to their OpenRouter fallback when
+ * it is not. Throws only when the chosen provider's key is missing entirely.
+ */
+export function chatRequestFor(model: string): LlmChatRequest {
+  if (isNimModel(model) && nimConfigured()) {
+    const key = process.env["NVIDIA_API_KEY"]!;
+    const bodyExtras: Record<string, unknown> = {
+      // Verified live 2026-06-10: qwen/qwen3.5-* 500s without explicit
+      // sampling params, and Nemotron's default thinking budget can exceed the
+      // swarm's patience — so default thinking off (NIM_ENABLE_THINKING=on to
+      // re-enable) and set NVIDIA-recommended sampling.
+      temperature: 0.6,
+      top_p: 0.95,
+    };
+    if (model.startsWith("nvidia/nemotron")) {
+      const thinking = (process.env["NIM_ENABLE_THINKING"] ?? "off").toLowerCase() === "on";
+      bodyExtras["chat_template_kwargs"] = { enable_thinking: thinking };
+    }
+    return {
+      url: `${NVIDIA_NIM_BASE}/chat/completions`,
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      model,
+      provider: "nvidia-nim",
+      bodyExtras,
+    };
+  }
+  const effectiveModel = isNimModel(model)
+    ? (NIM_MODEL_FALLBACKS[model] ?? NIM_GENERIC_FALLBACK)
+    : model;
+  const orKey = process.env["OPENROUTER_API_KEY"];
+  if (!orKey) throw new Error("OPENROUTER_API_KEY is not set");
+  return {
+    url: `${llmBaseUrl()}/chat/completions`,
+    headers: {
+      Authorization: `Bearer ${orKey}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": "https://openclaw.abbyclaw.io",
+      "X-Title": "OPENCLAW OMEGA",
+      ...heliconeHeaders(),
+    },
+    model: effectiveModel,
+    provider: "openrouter",
+    bodyExtras: {},
+  };
+}
+
 // ─── Tavily web search ───────────────────────────────────────────────────────
 
 interface SearchHit {
@@ -585,6 +694,7 @@ export function integrationStatus(): IntegrationStatus[] {
   const has = (k: string) => !!process.env[k];
   return [
     { key: "openrouter", name: "OpenRouter", category: "llm", envVar: "OPENROUTER_API_KEY", configured: has("OPENROUTER_API_KEY") },
+    { key: "nvidia-nim", name: "NVIDIA NIM", category: "llm", envVar: "NVIDIA_API_KEY", configured: has("NVIDIA_API_KEY") },
     { key: "neurobuddy", name: "Buddy AI (NeuroBuddy)", category: "llm", envVar: "NEUROBUDDY_API_KEY", configured: has("NEUROBUDDY_API_KEY") },
     { key: "helicone", name: "Helicone", category: "observability", envVar: "HELICONE_API_KEY", configured: has("HELICONE_API_KEY") },
     { key: "langsmith", name: "LangSmith (LangChain)", category: "observability", envVar: "LANGSMITH_API_KEY", configured: langsmithEnabled() },
