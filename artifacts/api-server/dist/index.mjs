@@ -54322,13 +54322,25 @@ function heliconeHeaders(extra) {
 function nimConfigured() {
   return !!process.env["NVIDIA_API_KEY"];
 }
+function nimHealthy() {
+  return Date.now() >= nimDisabledUntil;
+}
+function reportNimHttpFailure(status) {
+  if (status === 401 || status === 403) {
+    nimDisabledUntil = Date.now() + NIM_AUTH_COOLDOWN_MS;
+    logger.error(
+      { status, cooldownMinutes: NIM_AUTH_COOLDOWN_MS / 6e4 },
+      "NVIDIA NIM rejected the API key \u2014 falling back to OpenRouter for all models. Fix/rotate NVIDIA_API_KEY on the server."
+    );
+  }
+}
 function isNimModel(model) {
   return NIM_PREFIXES.some((p) => model.startsWith(p));
 }
 function chatRequestFor(model) {
   const upgraded = LEGACY_TO_NIM[model];
   if (upgraded) model = upgraded;
-  if (isNimModel(model) && nimConfigured()) {
+  if (isNimModel(model) && nimConfigured() && nimHealthy()) {
     const key = process.env["NVIDIA_API_KEY"];
     const bodyExtras = {
       // Verified live 2026-06-10: qwen/qwen3.5-* 500s without explicit
@@ -54366,6 +54378,24 @@ function chatRequestFor(model) {
     provider: "openrouter",
     bodyExtras: {}
   };
+}
+async function llmFetch(model, payload) {
+  let req = chatRequestFor(model);
+  let r = await fetch(req.url, {
+    method: "POST",
+    headers: req.headers,
+    body: JSON.stringify({ ...req.bodyExtras, model: req.model, ...payload })
+  });
+  if (!r.ok && req.provider === "nvidia-nim" && (r.status === 401 || r.status === 403)) {
+    reportNimHttpFailure(r.status);
+    req = chatRequestFor(model);
+    r = await fetch(req.url, {
+      method: "POST",
+      headers: req.headers,
+      body: JSON.stringify({ ...req.bodyExtras, model: req.model, ...payload })
+    });
+  }
+  return { r, req };
 }
 function formatHits(provider, query, hits) {
   if (!hits.length) return `no web results for "${query}" (via ${provider}).`;
@@ -54749,7 +54779,7 @@ function integrationStatus() {
     { key: "buddy", name: "Buddy AI (fallback LLM)", category: "llm", envVar: "BUDDY_API_KEY", configured: has("BUDDY_API_KEY") && has("BUDDY_BASE_URL") }
   ];
 }
-var OPENROUTER_DIRECT, OPENROUTER_VIA_HELICONE, NVIDIA_NIM_BASE, NIM_PREFIXES, NIM_MODEL_FALLBACKS, NIM_GENERIC_FALLBACK, LEGACY_TO_NIM, E2B_PKG, E2B_TIMEOUT_MS;
+var OPENROUTER_DIRECT, OPENROUTER_VIA_HELICONE, NVIDIA_NIM_BASE, NIM_AUTH_COOLDOWN_MS, nimDisabledUntil, NIM_PREFIXES, NIM_MODEL_FALLBACKS, NIM_GENERIC_FALLBACK, LEGACY_TO_NIM, E2B_PKG, E2B_TIMEOUT_MS;
 var init_integrations = __esm({
   "src/lib/integrations.ts"() {
     "use strict";
@@ -54757,6 +54787,8 @@ var init_integrations = __esm({
     OPENROUTER_DIRECT = "https://openrouter.ai/api/v1";
     OPENROUTER_VIA_HELICONE = "https://openrouter.helicone.ai/api/v1";
     NVIDIA_NIM_BASE = "https://integrate.api.nvidia.com/v1";
+    NIM_AUTH_COOLDOWN_MS = 10 * 6e4;
+    nimDisabledUntil = 0;
     NIM_PREFIXES = [
       "nvidia/",
       "deepseek-ai/",
@@ -87548,13 +87580,7 @@ function buildPostCaption(a, w, voice) {
 async function llmOnce(system, user, maxTokens = 160) {
   const model = process.env["WORLD_VOICE_MODEL"] ?? "x-ai/grok-4.3";
   try {
-    const llmReq = chatRequestFor(model);
-    const r = await fetch(llmReq.url, {
-      method: "POST",
-      headers: llmReq.headers,
-      body: JSON.stringify({ ...llmReq.bodyExtras, model: llmReq.model, messages: [{ role: "system", content: system }, { role: "user", content: user }], max_tokens: maxTokens, temperature: 0.95 }),
-      signal: AbortSignal.timeout(2e4)
-    });
+    const { r } = await llmFetch(model, { messages: [{ role: "system", content: system }, { role: "user", content: user }], max_tokens: maxTokens, temperature: 0.95 });
     if (r.ok) {
       const d = await r.json();
       const t = d.choices?.[0]?.message?.content?.trim();
@@ -94346,18 +94372,11 @@ PUBLIC-POST SAFEGUARD (critical): a public post must be built ONLY from content 
     }
     try {
       const decisionSystem = `You are the router for ABBY, orchestrator of an autonomous agent swarm that can search the web, browse sites, scrape pages, run code, call APIs, use long-term memory, generate images and downloadable files, AND act on the operator's OWN connected accounts \u2014 social platforms via their official APIs (Instagram, Facebook, X, LinkedIn, TikTok, YouTube, \u2026) and SaaS apps via Composio (Gmail, Slack, GitHub, Notion, Google Calendar, Sheets, \u2026). Classify the operator's latest message: is it an ACTIONABLE TASK that needs the swarm (anything requiring live/current data, web search, browsing, scraping, finding/pricing/looking things up online, code execution, multi-step research, OR checking/acting on the operator's own connected account) \u2014 or just CONVERSATION you can answer yourself (greetings, opinions, explanations, questions about you/the system)? CRITICAL: if the operator asks about or wants an action on THEIR OWN connected service \u2014 e.g. 'check my Instagram messages', 'any new emails?', 'post to my LinkedIn', 'what's on my calendar' \u2014 that is ACTIONABLE: dispatch=true with a goal telling the swarm to use the official API / Composio for that account. NEVER answer 'I don't have access to your personal account' \u2014 the swarm acts through the operator's connected integrations, and if an account isn't connected the CLAW reports that honestly. Respond with ONLY minified JSON, no markdown and no prose: {"dispatch": true|false, "goal": "<self-contained instruction for the swarm; required if dispatch=true>", "reply": "<your conversational answer; required if dispatch=false>"}. If the request needs real or current information you don't already have, prefer dispatch=true. ALSO dispatch=true whenever the request asks you to PRODUCE or SAVE a downloadable file/artifact (deck, report, PDF, CSV, document, code file), run code, fill/submit a form, or do any multi-step build \u2014 those need tools (save_artifact, code, web) that only the CLAWs have, so answering inline cannot actually create a downloadable file. Only answer inline (dispatch=false) for pure conversation or a quick factual answer that needs no tool and no saved file. The \`reply\` must be ABBY's actual answer to the operator AS ABBY \u2014 never describe this router, the classification, or that you are deciding anything; the operator must never see routing internals.`;
-      const decReq = chatRequestFor(model);
-      const decRes = await fetch(decReq.url, {
-        method: "POST",
-        headers: decReq.headers,
-        body: JSON.stringify({
-          ...decReq.bodyExtras,
-          model: decReq.model,
-          messages: [{ role: "system", content: decisionSystem }, ...history],
-          stream: false,
-          max_tokens: 800,
-          response_format: { type: "json_object" }
-        })
+      const { r: decRes } = await llmFetch(model, {
+        messages: [{ role: "system", content: decisionSystem }, ...history],
+        stream: false,
+        max_tokens: 800,
+        response_format: { type: "json_object" }
       });
       if (decRes.ok) {
         const data = await decRes.json();
@@ -94404,17 +94423,10 @@ The agents are starting now; their work and results will stream into this channe
     }
   }
   try {
-    const chatReq = chatRequestFor(model);
-    const orRes = await fetch(chatReq.url, {
-      method: "POST",
-      headers: chatReq.headers,
-      body: JSON.stringify({
-        ...chatReq.bodyExtras,
-        model: chatReq.model,
-        stream: true,
-        messages: chatMessages,
-        max_tokens: 700
-      })
+    const { r: orRes } = await llmFetch(model, {
+      stream: true,
+      messages: chatMessages,
+      max_tokens: 700
     });
     if (!orRes.ok) {
       const errText = await orRes.text();
@@ -94499,12 +94511,7 @@ router7.post("/ai/complete", async (req, res) => {
     { role: "user", content: message }
   ];
   try {
-    const compReq = chatRequestFor(model);
-    const r = await fetch(compReq.url, {
-      method: "POST",
-      headers: compReq.headers,
-      body: JSON.stringify({ ...compReq.bodyExtras, model: compReq.model, messages, max_tokens: 512 })
-    });
+    const { r } = await llmFetch(model, { messages, max_tokens: 512 });
     if (!r.ok) {
       if (buddyConfigured()) {
         try {
@@ -94604,21 +94611,14 @@ async function completeChat(model, system, user, maxTokens = 800) {
   const startedAt = /* @__PURE__ */ new Date();
   let r;
   try {
-    const llmReq = chatRequestFor(model);
-    r = await fetch(llmReq.url, {
-      method: "POST",
-      headers: llmReq.headers,
-      body: JSON.stringify({
-        ...llmReq.bodyExtras,
-        model: llmReq.model,
-        messages: [
-          { role: "system", content: system },
-          { role: "user", content: user }
-        ],
-        stream: false,
-        max_tokens: maxTokens
-      })
-    });
+    ({ r } = await llmFetch(model, {
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user }
+      ],
+      stream: false,
+      max_tokens: maxTokens
+    }));
   } catch (err) {
     traceLlmRun({ name: "completeChat", model, input: { system, user }, output: null, startedAt, error: String(err) });
     throw err;
@@ -94680,25 +94680,16 @@ async function completeChat(model, system, user, maxTokens = 800) {
   return out;
 }
 async function completeChatTurn(model, messages, tools) {
-  const llmReq = chatRequestFor(model);
-  const body = { ...llmReq.bodyExtras, model: llmReq.model, messages, stream: false, max_tokens: 8e3 };
+  const payload = { messages, stream: false, max_tokens: 8e3 };
   if (tools.length) {
-    body["tools"] = tools;
-    body["tool_choice"] = "auto";
+    payload["tools"] = tools;
+    payload["tool_choice"] = "auto";
   }
-  let r = await fetch(llmReq.url, {
-    method: "POST",
-    headers: llmReq.headers,
-    body: JSON.stringify(body)
-  });
+  let { r, req: llmReq } = await llmFetch(model, payload);
   if (!r.ok && tools.length) {
-    delete body["tools"];
-    delete body["tool_choice"];
-    r = await fetch(llmReq.url, {
-      method: "POST",
-      headers: llmReq.headers,
-      body: JSON.stringify(body)
-    });
+    delete payload["tools"];
+    delete payload["tool_choice"];
+    ({ r, req: llmReq } = await llmFetch(model, payload));
   }
   if (!r.ok) {
     const errText = (await r.text()).slice(0, 200);
@@ -96058,13 +96049,7 @@ router11.post("/external/v1/chat/completions", async (req, res) => {
     res.status(404).json({ error: `Agent '${model}' not found` });
     return;
   }
-  let llmReq;
-  try {
-    llmReq = chatRequestFor(agent.model ?? ABBY_DEFAULT_MODEL);
-  } catch (e) {
-    res.status(500).json({ error: `LLM provider not configured: ${String(e)}` });
-    return;
-  }
+  const agentModel = agent.model ?? ABBY_DEFAULT_MODEL;
   const systemPrompt = (AGENT_PERSONAS2[agentId] ?? `You are ${agent.name}, an AI agent in the ABBY CLAW swarm.`) + ANTI_HALLUCINATION_DIRECTIVE;
   const orMessages = [{ role: "system", content: systemPrompt }, ...messages];
   if (stream) {
@@ -96083,11 +96068,7 @@ router11.post("/external/v1/chat/completions", async (req, res) => {
 `);
     };
     try {
-      const orRes = await fetch(llmReq.url, {
-        method: "POST",
-        headers: llmReq.headers,
-        body: JSON.stringify({ ...llmReq.bodyExtras, model: llmReq.model, stream: true, messages: orMessages, max_tokens })
-      });
+      const { r: orRes } = await llmFetch(agentModel, { stream: true, messages: orMessages, max_tokens });
       if (!orRes.ok) {
         const errText = await orRes.text();
         sendSSE({ error: errText.slice(0, 300) });
@@ -96133,11 +96114,7 @@ router11.post("/external/v1/chat/completions", async (req, res) => {
     return;
   }
   try {
-    const orRes = await fetch(llmReq.url, {
-      method: "POST",
-      headers: llmReq.headers,
-      body: JSON.stringify({ ...llmReq.bodyExtras, model: llmReq.model, messages: orMessages, max_tokens })
-    });
+    const { r: orRes } = await llmFetch(agentModel, { messages: orMessages, max_tokens });
     const data = await orRes.json();
     const content = data.choices?.[0]?.message?.content ?? "";
     res.json({
