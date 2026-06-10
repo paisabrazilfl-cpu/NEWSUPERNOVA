@@ -14,6 +14,7 @@ import { and, eq, lte, isNotNull } from "drizzle-orm";
 import { logger } from "./logger";
 import { executeAgentCommand, orchestrateGoal } from "../orchestrator";
 import { isSwarmPaused } from "../routes/swarm";
+import { requestsConnectedAccountAction } from "../routes/ai";
 import { computeNextRun } from "./cron";
 import { worldEngineEnabled, readAuraState, runStoryCycle, runArtTriptych } from "./world";
 
@@ -23,6 +24,10 @@ export { computeNextRun } from "./cron";
 type CronJob = typeof cronJobsTable.$inferSelect;
 
 const ABBY_ID = 1;
+// WIRE — the API/Composio connector agent. Holds the Composio tools (Instagram,
+// Gmail, …) plus web_search + image_generate, so a connected-account goal runs
+// end-to-end on ONE capable agent.
+const COMPOSIO_AGENT_ID = 5;
 const DEFAULT_CHANNEL_ID = 1;
 const SCHEDULER_INTERVAL_MS = 30_000;
 
@@ -41,10 +46,23 @@ export async function runCronJob(job: CronJob, channelId = DEFAULT_CHANNEL_ID): 
 
   try {
     if (job.agentId === ABBY_ID) {
-      await orchestrateGoal({ goal: job.task, channelId, priority: "normal" });
+      // A scheduled "post to my Instagram / act on my connected account" goal must
+      // run on a SINGLE Composio-capable agent (WIRE) — the same routing the chat
+      // path uses (forceAgentId). Without this, ABBY fans the goal out across CLAWs
+      // and the slices land on agents that don't hold the Composio/Instagram tools,
+      // so the post never reaches Instagram. Also pass the job's stored payload as
+      // source material (previously dropped on the ABBY path).
+      const connectedAccount = requestsConnectedAccountAction(job.task);
+      await orchestrateGoal({
+        goal: job.task,
+        channelId,
+        priority: "normal",
+        sourceContext: job.payload ?? null,
+        ...(connectedAccount ? { forceAgentId: COMPOSIO_AGENT_ID } : {}),
+      });
       await db
         .update(cronJobsTable)
-        .set({ lastResult: "orchestrated" })
+        .set({ lastResult: connectedAccount ? "orchestrated → WIRE (connected-account action)" : "orchestrated" })
         .where(eq(cronJobsTable.id, job.id));
       return;
     }
