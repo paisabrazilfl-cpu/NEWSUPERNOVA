@@ -142,6 +142,26 @@ export async function reconcileStaleWork(): Promise<void> {
  * produce the operator-facing deliverable (final synthesis) pass a larger budget
  * so a 10/10 answer isn't truncated.
  */
+/**
+ * Secondary chat model used when an agent's own model fails (e.g. its
+ * OpenRouter pool is 429-rate-limited). chatRequestFor() resolves this to
+ * Nemotron Ultra when NVIDIA_API_KEY is set, else Grok on OpenRouter — a
+ * different pool from the qwen/deepseek CLAW models, so a CLAW-model outage
+ * stays inside the swarm instead of dropping to Buddy.
+ */
+const SECONDARY_CHAT_MODEL = "x-ai/grok-4.3";
+
+/**
+ * The Buddy endpoint hosts its own personality (BOS-OMEGA, a "predictive
+ * cognitive engine") that overrides our system prompt and REFUSES to act as a
+ * CLAW — observed live: directives answered with "identity is BOS-OMEGA, not
+ * WIRE" and cognition-theater GLOBAL_STATE blocks, recorded as successful runs.
+ * Any fallback output showing that identity is junk, not a result.
+ */
+export function buddyIdentityJunk(text: string): boolean {
+  return /\bBOS[-_ ]?OMEGA\b|predictive cognitive|cognitive (engine|architecture|system)|psychological intervention|GLOBAL_STATE/i.test(text);
+}
+
 async function completeChat(model: string, system: string, user: string, maxTokens = 800): Promise<string> {
   const startedAt = new Date();
   let r: Response;
@@ -167,8 +187,41 @@ async function completeChat(model: string, system: string, user: string, maxToke
   }
   if (!r.ok) {
     const errText = (await r.text()).slice(0, 200);
-    // Fall back to Buddy AI if configured, so a single-provider outage doesn't
-    // kill the run.
+    // First fallback: the swarm's secondary model (different provider pool).
+    // A 429 on a CLAW's qwen/deepseek pool must stay inside the swarm — the
+    // secondary keeps the persona/system prompt intact, unlike Buddy.
+    try {
+      const primary = chatRequestFor(model);
+      const fb = chatRequestFor(SECONDARY_CHAT_MODEL);
+      if (fb.model !== primary.model || fb.url !== primary.url) {
+        const fr = await fetch(fb.url, {
+          method: "POST",
+          headers: fb.headers,
+          body: JSON.stringify({
+            ...fb.bodyExtras,
+            model: fb.model,
+            messages: [
+              { role: "system", content: system },
+              { role: "user", content: user },
+            ],
+            stream: false,
+            max_tokens: maxTokens,
+          }),
+        });
+        if (fr.ok) {
+          const fdata = (await fr.json()) as { choices?: Array<{ message?: { content?: string } }> };
+          const fout = fdata?.choices?.[0]?.message?.content?.trim();
+          if (fout) {
+            traceLlmRun({ name: "completeChat", model: `${fb.model} (secondary fallback)`, input: { system, user }, output: fout, startedAt });
+            return fout;
+          }
+        }
+      }
+    } catch (e) {
+      logger.warn({ e }, "secondary-model fallback failed after primary error");
+    }
+    // Last resort: Buddy — but its hosted BOS-OMEGA personality overrides our
+    // system prompt; reject identity junk instead of recording it as a result.
     if (buddyConfigured()) {
       try {
         const out = await buddyComplete(
@@ -178,6 +231,7 @@ async function completeChat(model: string, system: string, user: string, maxToke
           ],
           maxTokens,
         );
+        if (buddyIdentityJunk(out)) throw new Error("Buddy answered as BOS-OMEGA (hosted personality), not as the agent — unusable");
         traceLlmRun({ name: "completeChat", model: "buddy-fallback", input: { system, user }, output: out, startedAt });
         return out;
       } catch (e) {
@@ -247,7 +301,32 @@ async function completeChatTurn(
   }
   if (!r.ok) {
     const errText = (await r.text()).slice(0, 200);
-    // Buddy fallback: tool-free completion so the loop can still make progress.
+    // First fallback: the swarm's secondary model, WITH tools — so a 429 on
+    // the CLAW's own pool keeps the agent fully operational (persona + tool
+    // calling) instead of degrading to a tool-free Buddy turn.
+    try {
+      const fb = chatRequestFor(SECONDARY_CHAT_MODEL);
+      if (fb.model !== llmReq.model || fb.url !== llmReq.url) {
+        const fbBody: Record<string, unknown> = { ...fb.bodyExtras, model: fb.model, messages, stream: false, max_tokens: 8000 };
+        if (tools.length) {
+          fbBody["tools"] = tools;
+          fbBody["tool_choice"] = "auto";
+        }
+        const fr = await fetch(fb.url, { method: "POST", headers: fb.headers, body: JSON.stringify(fbBody) });
+        if (fr.ok) {
+          const fdata = (await fr.json()) as { choices?: Array<{ message?: AssistantMessage }> };
+          const fmsg = fdata?.choices?.[0]?.message;
+          if (fmsg) {
+            logger.info({ from: llmReq.model, to: fb.model }, "tool turn recovered on secondary model after primary failure");
+            return { role: "assistant", content: fmsg.content ?? null, tool_calls: fmsg.tool_calls };
+          }
+        }
+      }
+    } catch (e) {
+      logger.warn({ e }, "secondary-model fallback failed (tool turn)");
+    }
+    // Last resort: Buddy (tool-free) — reject its hosted BOS-OMEGA identity
+    // junk so a refused persona never masquerades as a completed directive.
     if (buddyConfigured()) {
       try {
         const textMessages = messages.map((m) => ({
@@ -255,6 +334,7 @@ async function completeChatTurn(
           content: typeof (m as { content?: unknown }).content === "string" ? (m as { content: string }).content : "",
         }));
         const out = await buddyComplete(textMessages, 2048);
+        if (buddyIdentityJunk(out)) throw new Error("Buddy answered as BOS-OMEGA (hosted personality), not as the agent — unusable");
         return { role: "assistant", content: out };
       } catch (e) {
         logger.warn({ e }, "Buddy fallback failed after OpenRouter error (tool turn)");
