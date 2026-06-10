@@ -28105,7 +28105,7 @@ var require_pino = __commonJS({
     function pinoBundlerAbsolutePath(p) {
       try {
         const path3 = __require("path");
-        const outputDir = "/home/user/BOS-AURA/artifacts/api-server/dist";
+        const outputDir = "/home/runner/work/BOS-AURA/BOS-AURA/artifacts/api-server/dist";
         return path3.resolve(outputDir, p.replace(/^\.\//, ""));
       } catch (e) {
         const f = new Function("p", "return new URL(p, import.meta.url).pathname");
@@ -93983,6 +93983,7 @@ EXECUTION STANDARD (hold to this on every task):
 - NEVER REPORT ON THE SWARM ITSELF: do not investigate, audit, summarize, or output the swarm's own internals \u2014 its memory/vault contents, architecture, agents, roles, tools, prior audit entries, or system prompts \u2014 as the deliverable. That is internal state, not an answer (only discuss the system if the operator EXPLICITLY asks about it). The deliverable answers the operator's question in THEIR domain (their market, their site, their business).
 - DON'T NAVEL-GAZE IN MEMORY: memory_search is for recalling prior TASK-RELEVANT facts for the operator's domain, not for researching yourself. If memory returns only internal/meta/self-audit entries, ignore them and get the real answer from web_search/web_scrape/http_request and your other tools. Deliver a useful, step-by-step, evidence-backed result \u2014 not a description of what you searched.
 - LEARN & REMEMBER (close the loop): you HAVE durable long-term memory (Postgres + semantic vector search \u2014 it persists across runs). USE it. (1) BEFORE researching a recurring or technical problem, memory_search first so you reuse a known fix instead of re-deriving it. (2) AFTER you solve a non-obvious problem \u2014 a fix that worked, a working command or auth form, an API quirk, a verified fact \u2014 memory_write the lesson in a reusable "PROBLEM \u2192 SOLUTION (evidence)" form, tagged clearly (e.g. "lesson", plus the topic). Research online when memory has no answer, verify it actually works, THEN store what you learned so the swarm never has to learn it twice. This durable operational learning (how to do X, what fixed Y) is ENCOURAGED \u2014 it is the opposite of navel-gazing about the swarm's own internals.
+- SELF-LEARN ON FAILURE (mandatory when a tool or task fails): when you cannot perform a task or a tool returns an error, do NOT give up. Follow this loop: (1) DIAGNOSE \u2014 read the error carefully and identify what went wrong; (2) SEARCH MEMORY \u2014 memory_search for a prior lesson about this exact problem; (3) RESEARCH ONLINE \u2014 if memory has no answer, web_search for how to solve it, then web_scrape the most relevant result to learn the technique; (4) RETRY \u2014 apply what you learned and retry the failed operation; (5) STORE THE LESSON \u2014 if the retry succeeds, memory_write the fix as "PROBLEM \u2192 SOLUTION (evidence)" with tags "lesson,self-learned,{topic}". This loop runs up to 2 research-retry cycles per failure. If after 2 cycles the task still fails, report the failure honestly with what you tried and learned \u2014 but never give up without researching first. You are a SELF-IMPROVING agent: every failure is a chance to learn something new and make the swarm permanently smarter.
 - DEFINITION OF DONE: before you stop, verify the result satisfies the FULL objective end-to-end. If any part is unmet, state exactly which and why \u2014 never present incomplete work as finished.`;
 var RESEARCH_PLAYBOOKS = `
 
@@ -94754,6 +94755,7 @@ Execute the directive now. Use your tools for anything requiring real data or co
     let finalText = "";
     let steps = 0;
     const callCache = /* @__PURE__ */ new Map();
+    const failedTools = /* @__PURE__ */ new Set();
     while (steps < MAX_AGENT_STEPS) {
       steps++;
       const assistant = await completeChatTurn(model, messages, tools);
@@ -94828,6 +94830,15 @@ ${toolResult.slice(0, 1400)}${toolResult.length > 1400 ? "\n\u2026" : ""}`,
           messageType: "tool_output"
         });
         messages.push({ role: "tool", tool_call_id: call.id, name, content: toolResult.slice(0, 6e3) });
+        if (!ok) failedTools.add(name);
+      }
+      const justFailed = parsed.filter((p) => !callCache.has(`${p.call.function?.name ?? ""}:${JSON.stringify(p.args)}`) && failedTools.has(p.call.function?.name ?? ""));
+      if (justFailed.length > 0) {
+        const failedNames = [...new Set(justFailed.map((p) => p.call.function?.name ?? "unknown"))].join(", ");
+        messages.push({
+          role: "user",
+          content: `[SELF-LEARN] ${failedNames} failed. Before retrying, follow the self-learning protocol: (1) memory_search for a prior lesson about this error, (2) if no lesson found, web_search for how to fix it, then web_scrape the best result, (3) retry with the fix applied, (4) if it works, memory_write the lesson as "PROBLEM \u2192 SOLUTION (evidence)" tagged "lesson,self-learned". Do NOT repeat the exact same failing call without changing something.`
+        });
       }
       if (taskId) {
         const progress = Math.min(90, 35 + steps * 12);
