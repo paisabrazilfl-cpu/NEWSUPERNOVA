@@ -20,6 +20,7 @@ import {
   requestsDownloadableArtifact,
   requestsImage,
   requestsConnectedAccountAction,
+  buildLiveReachCard,
 } from "./ai";
 
 describe("requestsDownloadableArtifact — deterministic dispatch for downloads", () => {
@@ -175,6 +176,29 @@ describe("specialist personas — clean of mythology", () => {
       assertNoMythology(persona!);
     });
   }
+});
+
+describe("buildLiveReachCard — every agent sees its tools + live integrations", () => {
+  it("lists the agent's tools and splits integrations into ONLINE/OFFLINE", () => {
+    process.env["TAVILY_API_KEY"] = "tvly-test";
+    delete process.env["FIRECRAWL_API_KEY"];
+    const card = buildLiveReachCard(ABBY_ID);
+    expect(card).toContain("LIVE REACH");
+    expect(card).toContain("Tools available to you:");
+    expect(card).toContain("Integrations ONLINE:");
+    expect(card).toContain("Integrations OFFLINE");
+    expect(card).toMatch(/Integrations ONLINE:[^\n]*Tavily/);
+    expect(card).toMatch(/OFFLINE[^\n]*Firecrawl/);
+    delete process.env["TAVILY_API_KEY"];
+  });
+
+  it("is wired into the orchestrator's CLAW and planning prompts (source-level contract)", async () => {
+    const fs = await import("node:fs");
+    const src = fs.readFileSync(new URL("../orchestrator.ts", import.meta.url), "utf8");
+    // CLAW execution prompt and ABBY's planning prompt must both carry LIVE REACH.
+    expect(src).toMatch(/const system = persona \+ toolGuide \+ buildLiveReachCard\(agent\.id\)/);
+    expect(src).toMatch(/planSystem = [^;]*buildLiveReachCard\(ABBY_ID\)/);
+  });
 });
 
 describe("EXECUTION_DOCTRINE — the 10/10 worker standard", () => {
