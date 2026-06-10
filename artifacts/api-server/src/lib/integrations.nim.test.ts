@@ -5,7 +5,7 @@
  * equivalents when it is not (zero loss of function on a key-less deploy).
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { isNimModel, nimConfigured, chatRequestFor, NIM_MODEL_FALLBACKS, reportNimHttpFailure, resetNimHealth, nimHealthy, nimKeyPool, advanceNimKey, llmFetch } from "./integrations";
+import { isNimModel, nimConfigured, chatRequestFor, NIM_MODEL_FALLBACKS, reportNimHttpFailure, resetNimHealth, nimHealthy, nimKeyPool, advanceNimKey, llmFetch, modelStalled } from "./integrations";
 
 const ENV_KEYS = ["NVIDIA_API_KEY", "NVIDIA_API_KEY_2", "OPENROUTER_API_KEY", "HELICONE_API_KEY", "NIM_ENABLE_THINKING", "LLM_TIMEOUT_MS"] as const;
 const saved: Record<string, string | undefined> = {};
@@ -242,5 +242,44 @@ describe("llmFetch — rotation, breaker, and stall failover", () => {
     expect(r.status).toBe(200);
     expect(req.model).toBe("moonshotai/kimi-k2.6");
     expect(models).toEqual(["nvidia/nemotron-3-ultra-550b-a55b", "moonshotai/kimi-k2.6"]);
+  });
+
+  it("stall breaker: after one stall, later calls skip the sick model and go straight to the fast model", async () => {
+    process.env["NVIDIA_API_KEY"] = "nvapi-a";
+    process.env["LLM_TIMEOUT_MS"] = "50";
+    const models: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as { model: string };
+      models.push(body.model);
+      if (body.model.startsWith("nvidia/")) {
+        return new Promise<Response>((_resolve, reject) => {
+          (init.signal as AbortSignal).addEventListener("abort", () => reject(new Error("AbortError")));
+        });
+      }
+      return jsonResponse(200, { ok: true });
+    }));
+    // First call pays the timeout once and marks the model as stalling.
+    await llmFetch("nvidia/nemotron-3-ultra-550b-a55b", { messages: [] });
+    expect(modelStalled("nvidia/nemotron-3-ultra-550b-a55b")).toBe(true);
+    // Second call must NOT touch the sick model at all.
+    const { r, req } = await llmFetch("nvidia/nemotron-3-ultra-550b-a55b", { messages: [] });
+    expect(r.status).toBe(200);
+    expect(req.model).toBe("moonshotai/kimi-k2.6");
+    expect(models).toEqual([
+      "nvidia/nemotron-3-ultra-550b-a55b", "moonshotai/kimi-k2.6", // first call: stall + failover
+      "moonshotai/kimi-k2.6",                                       // second call: direct
+    ]);
+  });
+
+  it("a 5xx also marks the model stalled, and resetNimHealth clears the mark", async () => {
+    process.env["NVIDIA_API_KEY"] = "nvapi-a";
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as { model: string };
+      return body.model.startsWith("nvidia/") ? jsonResponse(504) : jsonResponse(200, { ok: true });
+    }));
+    await llmFetch("nvidia/nemotron-3-ultra-550b-a55b", { messages: [] });
+    expect(modelStalled("nvidia/nemotron-3-ultra-550b-a55b")).toBe(true);
+    resetNimHealth(); // stands in for the 5-minute cooldown elapsing
+    expect(modelStalled("nvidia/nemotron-3-ultra-550b-a55b")).toBe(false);
   });
 });

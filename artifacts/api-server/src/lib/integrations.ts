@@ -130,10 +130,33 @@ export function reportNimHttpFailure(status: number): void {
   }
 }
 
-/** Test hook + key-rotation hook: reset the breaker and key cursor. */
+/** Test hook + key-rotation hook: reset the breaker, key cursor, and stall marks. */
 export function resetNimHealth(): void {
   nimDisabledUntil = 0;
   nimKeyIndex = 0;
+  modelStallUntil.clear();
+}
+
+// ─── NIM model stall breaker ─────────────────────────────────────────────────
+// Observed live 2026-06-10 (evening): nemotron-3-ultra-550b produced NO
+// response for 120s+ on a minimal direct request — NVIDIA-side overload, while
+// other NIM models answered in ~2s. Without this breaker every agent turn
+// pays the full timeout before failing over. With it, the first stall marks
+// the model and subsequent calls route straight to NIM_FAST_MODEL until the
+// cooldown expires, then the original model is re-probed.
+const MODEL_STALL_COOLDOWN_MS = 5 * 60_000;
+const modelStallUntil = new Map<string, number>();
+
+export function modelStalled(model: string): boolean {
+  return (modelStallUntil.get(model) ?? 0) > Date.now();
+}
+
+export function reportModelStall(model: string): void {
+  modelStallUntil.set(model, Date.now() + MODEL_STALL_COOLDOWN_MS);
+  logger.warn(
+    { model, cooldownMinutes: MODEL_STALL_COOLDOWN_MS / 60_000 },
+    "NIM model is stalling/5xxing — routing its traffic to the fast NIM model for the cooldown.",
+  );
 }
 
 // Model-id prefixes served by NVIDIA NIM rather than OpenRouter. Note the
@@ -260,7 +283,7 @@ const NIM_FAST_MODEL = "moonshotai/kimi-k2.6";
 // are NOT subject to this budget (the timer is cleared once headers arrive).
 function llmTimeoutMs(): number {
   const v = Number(process.env["LLM_TIMEOUT_MS"]);
-  return Number.isFinite(v) && v > 0 ? v : 90_000;
+  return Number.isFinite(v) && v > 0 ? v : 60_000;
 }
 
 async function timedFetch(req: LlmChatRequest, payload: Record<string, unknown>): Promise<Response> {
@@ -298,6 +321,11 @@ export async function llmFetch(
   payload: Record<string, unknown>,
 ): Promise<{ r: Response; req: LlmChatRequest }> {
   let req = chatRequestFor(model);
+  // Stall breaker: a model that recently produced no response within the time
+  // budget routes straight to the fast NIM model — don't re-pay the timeout.
+  if (req.provider === "nvidia-nim" && req.model !== NIM_FAST_MODEL && modelStalled(req.model)) {
+    req = chatRequestFor(NIM_FAST_MODEL);
+  }
   let r: Response;
   try {
     r = await timedFetch(req, payload);
@@ -306,6 +334,7 @@ export async function llmFetch(
     // NIM stalled (no headers within the budget) or the connection died —
     // retry once on the fast NIM model instead of hanging the agent turn.
     logger.warn({ model: req.model, err: String(err) }, "NIM request stalled/failed before responding — retrying on the fast NIM model.");
+    reportModelStall(req.model);
     req = chatRequestFor(NIM_FAST_MODEL);
     r = await timedFetch(req, payload);
   }
@@ -334,6 +363,7 @@ export async function llmFetch(
   // NIM-side 5xx (Nemotron 504s under load — observed live) → fast NIM model.
   if (!r.ok && req.provider === "nvidia-nim" && r.status >= 500 && req.model !== NIM_FAST_MODEL) {
     logger.warn({ model: req.model, status: r.status }, "NIM answered 5xx — retrying on the fast NIM model.");
+    reportModelStall(req.model);
     req = chatRequestFor(NIM_FAST_MODEL);
     r = await timedFetch(req, payload);
   }
