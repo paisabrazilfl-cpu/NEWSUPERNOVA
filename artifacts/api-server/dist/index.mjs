@@ -54600,9 +54600,16 @@ async function composioExecute(input) {
       signal: ctrl.signal
     });
     const text2 = await r.text();
+    if (!r.ok) {
+      logger.warn(
+        { status: r.status, toolkit: input.toolkit, endpoint: input.endpoint, action: input.action, body: text2.slice(0, 400) },
+        "composioExecute: non-2xx response from Composio/upstream"
+      );
+    }
     return `Composio \u2192 HTTP ${r.status} ${r.statusText}
 ${cleanComposioBody(text2)}`;
   } catch (err) {
+    logger.error({ err, toolkit: input.toolkit, endpoint: input.endpoint }, "composioExecute: fetch failed");
     return `error: Composio call failed: ${String(err).slice(0, 300)}`;
   } finally {
     clearTimeout(timer2);
@@ -89123,8 +89130,20 @@ The operator connects apps in Settings \u2192 Connect Apps (Composio).`;
           required: ["image_url"]
         },
         run: async (args) => {
-          if (!composioConfigured()) return "error: Composio is not configured (set COMPOSIO_API_KEY).";
-          if (!composioExecuteEnabled()) return "error: Composio execution is disabled (operator must set ALLOW_COMPOSIO_EXECUTE=true).";
+          if (!composioConfigured()) return "error: Composio is not configured (set COMPOSIO_API_KEY). The operator must add this in Settings \u2192 Environment Variables.";
+          if (!composioExecuteEnabled()) return "error: Composio execution is disabled (operator must set ALLOW_COMPOSIO_EXECUTE=true in Environment Variables).";
+          try {
+            const conns = await composioListConnections();
+            const ig = conns.find((c) => c.toolkit.toLowerCase() === "instagram");
+            if (!ig) {
+              return "error: Instagram is NOT connected in Composio. The operator must connect their Instagram account in Settings \u2192 Connect Apps (Composio) before posts can be published. No connected Instagram account was found.";
+            }
+            if (!/ACTIVE|CONNECTED|ENABLED/i.test(ig.status)) {
+              return `error: Instagram connection exists but is ${ig.status} (not ACTIVE). The operator must re-connect their Instagram account in Settings \u2192 Connect Apps. Connection id: ${ig.id}`;
+            }
+          } catch (e) {
+            logger.warn({ err: e }, "instagram_post: pre-flight connection check failed (proceeding anyway)");
+          }
           const imageUrl = String(args["image_url"] ?? "").trim();
           const caption = args["caption"] != null ? String(args["caption"]) : "";
           const blocked = blockIfSensitiveForPublic(caption, "your public Instagram");
@@ -89145,8 +89164,11 @@ The operator connects apps in Settings \u2192 Connect Apps (Composio).`;
           const dataId = (j) => j?.["data"]?.["id"];
           const r1 = await composioExecute({ toolkit: "instagram", endpoint: "/me/media", method: "POST", arguments: { image_url: imageUrl, caption } });
           const creationId = dataId(pick2(r1));
-          if (!creationId) return `error: Instagram did not create the media container.
+          if (!creationId) {
+            logger.error({ imageUrl: imageUrl.slice(0, 100), response: r1.slice(0, 400) }, "instagram_post: media container creation failed");
+            return `error: Instagram did not create the media container.
 ${r1.slice(0, 600)}`;
+          }
           let publishedId;
           let last = "";
           for (let attempt = 0; attempt < 4 && !publishedId; attempt++) {
@@ -89155,8 +89177,11 @@ ${r1.slice(0, 600)}`;
             last = r2;
             publishedId = dataId(pick2(r2));
           }
-          if (!publishedId) return `error: Instagram container ${creationId} was created but publish failed.
+          if (!publishedId) {
+            logger.error({ creationId, lastResponse: last.slice(0, 400) }, "instagram_post: publish failed after 4 attempts");
+            return `error: Instagram container ${creationId} was created but publish failed after 4 retries.
 ${last.slice(0, 600)}`;
+          }
           const r3 = await composioExecute({ toolkit: "instagram", endpoint: `/${publishedId}?fields=permalink`, method: "GET" });
           const permalink = pick2(r3)?.["data"]?.["permalink"];
           await recordPost("instagram", "", permalink ?? String(publishedId));
