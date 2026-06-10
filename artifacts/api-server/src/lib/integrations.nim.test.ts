@@ -271,6 +271,21 @@ describe("llmFetch — rotation, breaker, and stall failover", () => {
     ]);
   });
 
+  it("backs off and retries once when every pooled key is rate-limited (429), instead of surfacing it", async () => {
+    process.env["NVIDIA_API_KEY"] = "nvapi-only";
+    process.env["NIM_429_BACKOFF_MS"] = "10";
+    let calls = 0;
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      calls++;
+      return calls === 1 ? jsonResponse(429) : jsonResponse(200, { ok: true });
+    }));
+    const { r, req } = await llmFetch("z-ai/glm-5.1", { messages: [] });
+    expect(r.status).toBe(200);
+    expect(req.provider).toBe("nvidia-nim");
+    expect(calls).toBe(2);
+    delete process.env["NIM_429_BACKOFF_MS"];
+  });
+
   it("a 5xx also marks the model stalled, and resetNimHealth clears the mark", async () => {
     process.env["NVIDIA_API_KEY"] = "nvapi-a";
     vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
