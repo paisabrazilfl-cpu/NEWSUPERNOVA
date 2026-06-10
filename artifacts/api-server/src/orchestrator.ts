@@ -99,12 +99,13 @@ note the 401 was an unauthenticated call. Give ONE evidence-based DIRECT ANSWER.
 
 /**
  * Max autonomous reasoning/tool steps per CLAW directive. Bounded for cost, but
- * set high enough for genuine deep research inside a single directive (broad
- * search → several scrapes → cross-checking multiple independent sources →
- * synthesis) so the exhaustive standard in EXECUTION_DOCTRINE is actually
- * reachable rather than truncated mid-investigation.
+ * set high enough that RELENTLESS PERSISTENCE in EXECUTION_DOCTRINE is real:
+ * deep research (broad search → several scrapes → cross-checking sources →
+ * synthesis) PLUS multiple self-learn research-retry cycles and alternate-tool
+ * attempts must all fit before the budget truncates a mission. Operator-tunable
+ * via MAX_AGENT_STEPS without a redeploy.
  */
-const MAX_AGENT_STEPS = 10;
+const MAX_AGENT_STEPS = Number(process.env["MAX_AGENT_STEPS"]) > 0 ? Number(process.env["MAX_AGENT_STEPS"]) : 24;
 
 /**
  * Crash/restart recovery. Execution is in-process and fire-and-forget, so a
