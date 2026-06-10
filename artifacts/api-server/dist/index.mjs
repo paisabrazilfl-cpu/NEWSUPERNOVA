@@ -95017,14 +95017,22 @@ init_cron();
 init_world();
 init_cron();
 var ABBY_ID3 = 1;
+var COMPOSIO_AGENT_ID = 5;
 var DEFAULT_CHANNEL_ID = 1;
 var SCHEDULER_INTERVAL_MS = 3e4;
 async function runCronJob(job, channelId = DEFAULT_CHANNEL_ID) {
   await db.update(cronJobsTable).set({ lastRunAt: /* @__PURE__ */ new Date(), runCount: job.runCount + 1, nextRunAt: computeNextRun(job.schedule) }).where(eq(cronJobsTable.id, job.id)).catch((err) => logger.error({ err, jobId: job.id }, "scheduler: bookkeeping update failed"));
   try {
     if (job.agentId === ABBY_ID3) {
-      await orchestrateGoal({ goal: job.task, channelId, priority: "normal" });
-      await db.update(cronJobsTable).set({ lastResult: "orchestrated" }).where(eq(cronJobsTable.id, job.id));
+      const connectedAccount = requestsConnectedAccountAction(job.task);
+      await orchestrateGoal({
+        goal: job.task,
+        channelId,
+        priority: "normal",
+        sourceContext: job.payload ?? null,
+        ...connectedAccount ? { forceAgentId: COMPOSIO_AGENT_ID } : {}
+      });
+      await db.update(cronJobsTable).set({ lastResult: connectedAccount ? "orchestrated \u2192 WIRE (connected-account action)" : "orchestrated" }).where(eq(cronJobsTable.id, job.id));
       return;
     }
     const [agent] = await db.select().from(agentsTable).where(eq(agentsTable.id, job.agentId));
