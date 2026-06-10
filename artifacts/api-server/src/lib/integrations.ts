@@ -69,6 +69,37 @@ export function nimConfigured(): boolean {
   return !!process.env["NVIDIA_API_KEY"];
 }
 
+// ─── NIM auth circuit-breaker ────────────────────────────────────────────────
+// Observed live 2026-06-10: NVIDIA_API_KEY was set on the server but REJECTED
+// by integrate.api.nvidia.com (403 "Authorization failed" — a revoked/typo'd
+// key). Because a configured key routes EVERY swarm model through NIM
+// (including the fallbacks), one bad key killed all LLM calls. The breaker
+// marks NIM unhealthy on 401/403 so chatRequestFor() transparently reroutes to
+// OpenRouter, and llmFetch() retries the failed call immediately. NIM is
+// re-probed after the cooldown so a fixed key recovers without a restart.
+const NIM_AUTH_COOLDOWN_MS = 10 * 60_000;
+let nimDisabledUntil = 0;
+
+export function nimHealthy(): boolean {
+  return Date.now() >= nimDisabledUntil;
+}
+
+/** Report a NIM HTTP failure. Only auth failures (401/403) trip the breaker. */
+export function reportNimHttpFailure(status: number): void {
+  if (status === 401 || status === 403) {
+    nimDisabledUntil = Date.now() + NIM_AUTH_COOLDOWN_MS;
+    logger.error(
+      { status, cooldownMinutes: NIM_AUTH_COOLDOWN_MS / 60_000 },
+      "NVIDIA NIM rejected the API key — falling back to OpenRouter for all models. Fix/rotate NVIDIA_API_KEY on the server.",
+    );
+  }
+}
+
+/** Test hook: reset the breaker so unit tests are order-independent. */
+export function resetNimHealth(): void {
+  nimDisabledUntil = 0;
+}
+
 // Model-id prefixes served by NVIDIA NIM rather than OpenRouter. Note the
 // deliberate asymmetry with OpenRouter naming: NIM uses `mistralai/` + `meta/`,
 // OpenRouter uses `mistral/` + `meta-llama/`; NIM Qwen ids are `qwen/qwen3.5-*`
@@ -139,7 +170,7 @@ export function chatRequestFor(model: string): LlmChatRequest {
   const upgraded = LEGACY_TO_NIM[model];
   if (upgraded) model = upgraded;
 
-  if (isNimModel(model) && nimConfigured()) {
+  if (isNimModel(model) && nimConfigured() && nimHealthy()) {
     const key = process.env["NVIDIA_API_KEY"]!;
     const bodyExtras: Record<string, unknown> = {
       // Verified live 2026-06-10: qwen/qwen3.5-* 500s without explicit
@@ -179,6 +210,36 @@ export function chatRequestFor(model: string): LlmChatRequest {
     provider: "openrouter",
     bodyExtras: {},
   };
+}
+
+/**
+ * Provider-aware chat-completions fetch with the NIM auth circuit-breaker
+ * built in: resolves the request via chatRequestFor(), and when NVIDIA NIM
+ * rejects the key (401/403) it trips the breaker and IMMEDIATELY retries the
+ * same payload on the OpenRouter fallback — so one bad NVIDIA_API_KEY can
+ * never take the swarm down. `payload` is the call-specific body (messages,
+ * tools, stream, max_tokens, …); bodyExtras are spread first so payload wins.
+ */
+export async function llmFetch(
+  model: string,
+  payload: Record<string, unknown>,
+): Promise<{ r: Response; req: LlmChatRequest }> {
+  let req = chatRequestFor(model);
+  let r = await fetch(req.url, {
+    method: "POST",
+    headers: req.headers,
+    body: JSON.stringify({ ...req.bodyExtras, model: req.model, ...payload }),
+  });
+  if (!r.ok && req.provider === "nvidia-nim" && (r.status === 401 || r.status === 403)) {
+    reportNimHttpFailure(r.status);
+    req = chatRequestFor(model); // breaker tripped → resolves to OpenRouter now
+    r = await fetch(req.url, {
+      method: "POST",
+      headers: req.headers,
+      body: JSON.stringify({ ...req.bodyExtras, model: req.model, ...payload }),
+    });
+  }
+  return { r, req };
 }
 
 // ─── Tavily web search ───────────────────────────────────────────────────────

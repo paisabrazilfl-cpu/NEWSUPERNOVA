@@ -10,7 +10,7 @@ import { db, pool } from "@workspace/db";
 import { agentsTable, agentCommandsTable, attachmentsTable } from "@workspace/db";
 import { gte } from "drizzle-orm";
 import { logger } from "./logger";
-import { composioConfigured, composioExecuteEnabled, composioExecute, chatRequestFor } from "./integrations";
+import { composioConfigured, composioExecuteEnabled, composioExecute, llmFetch } from "./integrations";
 import { blockIfSensitiveForPublic } from "./safety";
 import { renderTraversalBlock, sliceSixTiles, verifyBlock, renderStoryFrame, verifyNotBlank, renderIntroCard, renderWorldFrame, sliceTiles } from "./worldEngine";
 import { steelScrape } from "../tools";
@@ -185,14 +185,9 @@ export function buildPostCaption(a: AuraState, w: WorldState, voice?: string[] |
 async function llmOnce(system: string, user: string, maxTokens = 160): Promise<string | null> {
   const model = process.env["WORLD_VOICE_MODEL"] ?? "x-ai/grok-4.3";
   try {
-    // chatRequestFor throws when no provider key is configured — fall to Buddy.
-    const llmReq = chatRequestFor(model);
-    const r = await fetch(llmReq.url, {
-      method: "POST",
-      headers: llmReq.headers,
-      body: JSON.stringify({ ...llmReq.bodyExtras, model: llmReq.model, messages: [{ role: "system", content: system }, { role: "user", content: user }], max_tokens: maxTokens, temperature: 0.95 }),
-      signal: AbortSignal.timeout(20000),
-    });
+    // llmFetch throws when no provider key is configured — fall to Buddy. It
+    // also carries the NIM auth circuit-breaker (bad NVIDIA key → OpenRouter).
+    const { r } = await llmFetch(model, { messages: [{ role: "system", content: system }, { role: "user", content: user }], max_tokens: maxTokens, temperature: 0.95 });
     if (r.ok) { const d = (await r.json()) as { choices?: Array<{ message?: { content?: string } }> }; const t = d.choices?.[0]?.message?.content?.trim(); if (t) return t; }
   } catch { /* fall through to Buddy */ }
   const bKey = process.env["BUDDY_API_KEY"], bBase = process.env["BUDDY_BASE_URL"];

@@ -20,7 +20,7 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import { db } from "@workspace/db";
 import { agentsTable, messagesTable, channelsTable } from "@workspace/db";
 import { eq, desc } from "drizzle-orm";
-import { chatRequestFor } from "../lib/integrations";
+import { llmFetch } from "../lib/integrations";
 import { timingSafeStrEqual } from "../lib/auth";
 import { ANTI_HALLUCINATION_DIRECTIVE, ABBY_DEFAULT_MODEL } from "./ai";
 
@@ -149,12 +149,8 @@ router.post("/external/v1/chat/completions", async (req, res) => {
   if (!agent) { res.status(404).json({ error: `Agent '${model}' not found` }); return; }
 
   // Provider routing (NVIDIA NIM vs OpenRouter) + fallback model remapping.
-  let llmReq: ReturnType<typeof chatRequestFor>;
-  try {
-    llmReq = chatRequestFor(agent.model ?? ABBY_DEFAULT_MODEL);
-  } catch (e) {
-    res.status(500).json({ error: `LLM provider not configured: ${String(e)}` }); return;
-  }
+  // llmFetch (used below) also carries the NIM auth circuit-breaker.
+  const agentModel = agent.model ?? ABBY_DEFAULT_MODEL;
 
   const systemPrompt = (AGENT_PERSONAS[agentId] ?? `You are ${agent.name}, an AI agent in the ABBY CLAW swarm.`) + ANTI_HALLUCINATION_DIRECTIVE;
   const orMessages = [{ role: "system", content: systemPrompt }, ...messages];
@@ -173,11 +169,7 @@ router.post("/external/v1/chat/completions", async (req, res) => {
     };
 
     try {
-      const orRes = await fetch(llmReq.url, {
-        method: "POST",
-        headers: llmReq.headers,
-        body: JSON.stringify({ ...llmReq.bodyExtras, model: llmReq.model, stream: true, messages: orMessages, max_tokens }),
-      });
+      const { r: orRes } = await llmFetch(agentModel, { stream: true, messages: orMessages, max_tokens });
 
       if (!orRes.ok) {
         const errText = await orRes.text();
@@ -219,11 +211,7 @@ router.post("/external/v1/chat/completions", async (req, res) => {
 
   // ── Non-streaming response ───────────────────────────────────────────────
   try {
-    const orRes = await fetch(llmReq.url, {
-      method: "POST",
-      headers: llmReq.headers,
-      body: JSON.stringify({ ...llmReq.bodyExtras, model: llmReq.model, messages: orMessages, max_tokens }),
-    });
+    const { r: orRes } = await llmFetch(agentModel, { messages: orMessages, max_tokens });
     const data = await orRes.json() as {
       choices?: { message?: { content?: string } }[];
       usage?: object;

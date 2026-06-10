@@ -2,7 +2,7 @@ import { Router } from "express";
 import { db } from "@workspace/db";
 import { agentsTable, messagesTable, attachmentsTable } from "@workspace/db";
 import { eq, and, inArray, desc } from "drizzle-orm";
-import { llmBaseUrl, heliconeHeaders, integrationStatus, chatRequestFor } from "../lib/integrations";
+import { llmBaseUrl, heliconeHeaders, integrationStatus, llmFetch } from "../lib/integrations";
 import { listSecretNames } from "../lib/vault";
 import { buildCapabilityCard, getToolNamesForAgent } from "../tools";
 import { orchestrateGoal } from "../orchestrator";
@@ -628,18 +628,11 @@ router.post("/ai/chat", async (req, res) => {
         "If the request needs real or current information you don't already have, prefer dispatch=true. " +
         "ALSO dispatch=true whenever the request asks you to PRODUCE or SAVE a downloadable file/artifact (deck, report, PDF, CSV, document, code file), run code, fill/submit a form, or do any multi-step build — those need tools (save_artifact, code, web) that only the CLAWs have, so answering inline cannot actually create a downloadable file. Only answer inline (dispatch=false) for pure conversation or a quick factual answer that needs no tool and no saved file. " +
         "The `reply` must be ABBY's actual answer to the operator AS ABBY — never describe this router, the classification, or that you are deciding anything; the operator must never see routing internals.";
-      const decReq = chatRequestFor(model);
-      const decRes = await fetch(decReq.url, {
-        method: "POST",
-        headers: decReq.headers,
-        body: JSON.stringify({
-          ...decReq.bodyExtras,
-          model: decReq.model,
-          messages: [{ role: "system", content: decisionSystem }, ...history],
-          stream: false,
-          max_tokens: 800,
-          response_format: { type: "json_object" },
-        }),
+      const { r: decRes } = await llmFetch(model, {
+        messages: [{ role: "system", content: decisionSystem }, ...history],
+        stream: false,
+        max_tokens: 800,
+        response_format: { type: "json_object" },
       });
       if (decRes.ok) {
         const data = (await decRes.json()) as { choices?: Array<{ message?: { content?: string | null } }> };
@@ -694,17 +687,10 @@ router.post("/ai/chat", async (req, res) => {
   }
 
   try {
-    const chatReq = chatRequestFor(model);
-    const orRes = await fetch(chatReq.url, {
-      method: "POST",
-      headers: chatReq.headers,
-      body: JSON.stringify({
-        ...chatReq.bodyExtras,
-        model: chatReq.model,
-        stream: true,
-        messages: chatMessages,
-        max_tokens: 700,
-      }),
+    const { r: orRes } = await llmFetch(model, {
+      stream: true,
+      messages: chatMessages,
+      max_tokens: 700,
     });
 
     if (!orRes.ok) {
@@ -803,12 +789,7 @@ router.post("/ai/complete", async (req, res) => {
   ];
 
   try {
-    const compReq = chatRequestFor(model);
-    const r = await fetch(compReq.url, {
-      method: "POST",
-      headers: compReq.headers,
-      body: JSON.stringify({ ...compReq.bodyExtras, model: compReq.model, messages, max_tokens: 512 }),
-    });
+    const { r } = await llmFetch(model, { messages, max_tokens: 512 });
     if (!r.ok) {
       // Fall back to Buddy on provider failure (e.g. 402 out of credits).
       if (buddyConfigured()) {
