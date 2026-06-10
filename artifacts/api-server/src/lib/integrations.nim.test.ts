@@ -5,7 +5,7 @@
  * equivalents when it is not (zero loss of function on a key-less deploy).
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { isNimModel, nimConfigured, chatRequestFor, NIM_MODEL_FALLBACKS, reportNimHttpFailure, resetNimHealth, nimHealthy, nimKeyPool, advanceNimKey, llmFetch, modelStalled } from "./integrations";
+import { isNimModel, nimConfigured, chatRequestFor, openRouterRequestFor, NIM_MODEL_FALLBACKS, reportNimHttpFailure, resetNimHealth, nimHealthy, nimDegraded, reportNimDegraded, nimKeyPool, advanceNimKey, llmFetch, modelStalled } from "./integrations";
 
 const ENV_KEYS = ["NVIDIA_API_KEY", "NVIDIA_API_KEY_2", "OPENROUTER_API_KEY", "HELICONE_API_KEY", "NIM_ENABLE_THINKING", "LLM_TIMEOUT_MS"] as const;
 const saved: Record<string, string | undefined> = {};
@@ -79,27 +79,19 @@ describe("chatRequestFor", () => {
     expect(unknown.model).toBe("x-ai/grok-4.3");
   });
 
-  it("auto-upgrades legacy DB model ids to NIM at request time (self-healing)", () => {
+  it("NEVER hijacks fallback/OpenRouter ids back into NIM (the 2026-06-10 outage)", () => {
     process.env["NVIDIA_API_KEY"] = "nvapi-test";
-    // DB still says qwen/qwen3.7-plus but runtime upgrades to qwen/qwen3.5-397b-a17b
-    const r = chatRequestFor("qwen/qwen3.7-plus");
-    expect(r.provider).toBe("nvidia-nim");
-    expect(r.model).toBe("qwen/qwen3.5-397b-a17b");
-    // Same for all legacy models
-    const r2 = chatRequestFor("x-ai/grok-4.3");
-    expect(r2.provider).toBe("nvidia-nim");
-    expect(r2.model).toBe("nvidia/nemotron-3-ultra-550b-a55b");
-  });
-
-  it("auto-upgrades legacy models to NIM fallbacks when NVIDIA key is absent", () => {
     process.env["OPENROUTER_API_KEY"] = "or-test";
-    // DB has old qwen/qwen3.7-plus → upgrades to NIM id → falls back to OpenRouter
-    // equivalent (which may be different from the original if the fallback map differs)
-    const r = chatRequestFor("qwen/qwen3.7-plus");
-    expect(r.provider).toBe("openrouter");
-    // The legacy model gets upgraded to NIM, then NIM falls back — the round-trip
-    // should land on the same legacy model (fallback map is self-consistent)
-    expect(r.model).toBe("qwen/qwen3.7-plus");
+    // x-ai/grok-4.3 is the escape-hatch model. The old request-time legacy→NIM
+    // upgrade rewrote it to nemotron-ultra-on-NIM, so when NIM was throttled
+    // with a VALID key the "fallback" landed on the same drowning provider and
+    // the swarm had no working model at all. Fallback targets must resolve to
+    // their real provider, always.
+    for (const legacy of Object.values(NIM_MODEL_FALLBACKS)) {
+      const r = chatRequestFor(legacy);
+      expect(r.provider, `${legacy} must stay on OpenRouter`).toBe("openrouter");
+      expect(r.model).toBe(legacy);
+    }
   });
 
   it("passes non-NIM, non-legacy models through to OpenRouter unchanged", () => {
@@ -145,6 +137,38 @@ describe("NIM auth circuit-breaker — a bad NVIDIA key can never take the swarm
     expect(chatRequestFor("deepseek-ai/deepseek-v4-flash").provider).toBe("openrouter");
     resetNimHealth(); // stands in for the 10-minute cooldown elapsing
     expect(chatRequestFor("deepseek-ai/deepseek-v4-flash").provider).toBe("nvidia-nim");
+  });
+});
+
+describe("NIM degraded breaker — a VALID key that is throttled/overloaded can't take the swarm down", () => {
+  it("degraded NIM routes every NIM model straight to its OpenRouter fallback", () => {
+    process.env["NVIDIA_API_KEY"] = "nvapi-valid-but-throttled";
+    process.env["OPENROUTER_API_KEY"] = "or-test";
+    expect(chatRequestFor("nvidia/nemotron-3-ultra-550b-a55b").provider).toBe("nvidia-nim");
+    reportNimDegraded("test: 429 on every pooled key");
+    expect(nimDegraded()).toBe(true);
+    expect(nimHealthy()).toBe(true); // auth breaker untouched — the key IS valid
+    const r = chatRequestFor("nvidia/nemotron-3-ultra-550b-a55b");
+    expect(r.provider).toBe("openrouter");
+    expect(r.model).toBe(NIM_MODEL_FALLBACKS["nvidia/nemotron-3-ultra-550b-a55b"]);
+  });
+
+  it("resetNimHealth clears the degraded mark (cooldown expiry / key rotation)", () => {
+    process.env["NVIDIA_API_KEY"] = "nvapi-x";
+    reportNimDegraded("test");
+    expect(nimDegraded()).toBe(true);
+    resetNimHealth();
+    expect(nimDegraded()).toBe(false);
+    expect(chatRequestFor("z-ai/glm-5.1").provider).toBe("nvidia-nim");
+  });
+
+  it("openRouterRequestFor is an unconditional escape — never NIM, even when NIM is configured+healthy", () => {
+    process.env["NVIDIA_API_KEY"] = "nvapi-healthy";
+    process.env["OPENROUTER_API_KEY"] = "or-test";
+    const r = openRouterRequestFor("nvidia/nemotron-3-ultra-550b-a55b");
+    expect(r.provider).toBe("openrouter");
+    expect(r.url).toContain("openrouter");
+    expect(r.model).toBe(NIM_MODEL_FALLBACKS["nvidia/nemotron-3-ultra-550b-a55b"]);
   });
 });
 
@@ -288,6 +312,7 @@ describe("llmFetch — rotation, breaker, and stall failover", () => {
 
   it("a 5xx also marks the model stalled, and resetNimHealth clears the mark", async () => {
     process.env["NVIDIA_API_KEY"] = "nvapi-a";
+    process.env["OPENROUTER_API_KEY"] = "or-test";
     vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
       const body = JSON.parse(String(init.body)) as { model: string };
       return body.model.startsWith("nvidia/") ? jsonResponse(504) : jsonResponse(200, { ok: true });
@@ -296,5 +321,26 @@ describe("llmFetch — rotation, breaker, and stall failover", () => {
     expect(modelStalled("nvidia/nemotron-3-ultra-550b-a55b")).toBe(true);
     resetNimHealth(); // stands in for the 5-minute cooldown elapsing
     expect(modelStalled("nvidia/nemotron-3-ultra-550b-a55b")).toBe(false);
+  });
+
+  it("FINAL ESCAPE: NIM 429 on every key + backoff retry → call is served by OpenRouter and NIM marked degraded (the 2026-06-10 outage)", async () => {
+    process.env["NVIDIA_API_KEY"] = "nvapi-valid-but-throttled";
+    process.env["OPENROUTER_API_KEY"] = "or-test";
+    process.env["NIM_429_BACKOFF_MS"] = "5";
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      urls.push(String(url));
+      return String(url).includes("nvidia.com") ? jsonResponse(429) : jsonResponse(200, { ok: true });
+    }));
+    const { r, req } = await llmFetch("nvidia/nemotron-3-ultra-550b-a55b", { messages: [] });
+    // The call SUCCEEDS via OpenRouter instead of surfacing the 429.
+    expect(r.status).toBe(200);
+    expect(req.provider).toBe("openrouter");
+    expect(req.model).toBe(NIM_MODEL_FALLBACKS["nvidia/nemotron-3-ultra-550b-a55b"]);
+    expect(urls.some((u) => u.includes("openrouter"))).toBe(true);
+    // NIM is marked degraded so the NEXT call skips the gauntlet entirely.
+    expect(nimDegraded()).toBe(true);
+    expect(chatRequestFor("qwen/qwen3.5-397b-a17b").provider).toBe("openrouter");
+    delete process.env["NIM_429_BACKOFF_MS"];
   });
 });

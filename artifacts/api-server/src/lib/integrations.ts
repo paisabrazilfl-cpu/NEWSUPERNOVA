@@ -133,8 +133,37 @@ export function reportNimHttpFailure(status: number): void {
 /** Test hook + key-rotation hook: reset the breaker, key cursor, and stall marks. */
 export function resetNimHealth(): void {
   nimDisabledUntil = 0;
+  nimDegradedUntil = 0;
   nimKeyIndex = 0;
   modelStallUntil.clear();
+}
+
+// ─── NIM degraded breaker (throttle/overload) ───────────────────────────────
+// Observed live 2026-06-10 (night): the NVIDIA key was VALID, so the auth
+// breaker never tripped — but nemotron-3-ultra stalled (25s+, zero bytes) AND
+// the fast failover model answered 429 on every pooled key. With NIM healthy-
+// but-drowning, every agent turn paid the full stall/rotation/backoff gauntlet
+// (minutes per LLM call) and still failed — the whole system looked dead.
+// This breaker marks NIM "degraded" when the full gauntlet fails with
+// throttle/overload (429/5xx/stall), so for a short cooldown every NIM model
+// routes STRAIGHT to its OpenRouter fallback — instant turns, no stacked
+// timeouts — then NIM is re-probed.
+function nimDegradedCooldownMs(): number {
+  const v = Number(process.env["NIM_DEGRADED_COOLDOWN_MS"]);
+  return Number.isFinite(v) && v > 0 ? v : 120_000;
+}
+let nimDegradedUntil = 0;
+
+export function nimDegraded(): boolean {
+  return Date.now() < nimDegradedUntil;
+}
+
+export function reportNimDegraded(reason: string): void {
+  nimDegradedUntil = Date.now() + nimDegradedCooldownMs();
+  logger.error(
+    { reason, cooldownMs: nimDegradedCooldownMs() },
+    "NVIDIA NIM is throttled/overloaded on every pooled key — routing ALL NIM models to their OpenRouter fallbacks for the cooldown.",
+  );
 }
 
 // ─── NIM model stall breaker ─────────────────────────────────────────────────
@@ -193,14 +222,14 @@ export const NIM_MODEL_FALLBACKS: Record<string, string> = {
 };
 const NIM_GENERIC_FALLBACK = "x-ai/grok-4.3";
 
-// Reverse map: legacy OpenRouter model → its NIM replacement. Built from
-// NIM_MODEL_FALLBACKS so the two can never drift. When the DB still has a legacy
-// model id (e.g. the boot migration hasn't run yet after a zero-downtime deploy),
-// chatRequestFor() auto-upgrades it at request time — self-healing, no restart.
-const LEGACY_TO_NIM: Record<string, string> = {};
-for (const [nim, legacy] of Object.entries(NIM_MODEL_FALLBACKS)) {
-  if (!LEGACY_TO_NIM[legacy]) LEGACY_TO_NIM[legacy] = nim;
-}
+// NOTE deliberately NO reverse legacy→NIM upgrade at request time. There used
+// to be one (built from NIM_MODEL_FALLBACKS) and it broke the safety net live
+// on 2026-06-10: every fallback target (x-ai/grok-4.3 & co.) got "upgraded"
+// straight back into the SAME overloaded NIM model it was escaping from, so
+// the OpenRouter fallback was unreachable whenever NIM was configured —
+// healthy-but-throttled NIM left the swarm with no working model at all.
+// Stale legacy ids in the DB are handled once at boot (AGENT_MODEL_UPGRADES in
+// migrate.ts); fallback ids must always resolve to their REAL provider.
 
 export interface LlmChatRequest {
   url: string;
@@ -222,14 +251,7 @@ export interface LlmChatRequest {
  * it is not. Throws only when the chosen provider's key is missing entirely.
  */
 export function chatRequestFor(model: string): LlmChatRequest {
-  // Auto-upgrade legacy model ids that the DB migration hasn't rewritten yet.
-  // e.g. "qwen/qwen3.7-plus" → "qwen/qwen3.5-397b-a17b" so the request routes
-  // through NIM (or its correct OpenRouter fallback) instead of hitting a
-  // rate-limited / deprecated upstream.
-  const upgraded = LEGACY_TO_NIM[model];
-  if (upgraded) model = upgraded;
-
-  if (isNimModel(model) && nimConfigured() && nimHealthy()) {
+  if (isNimModel(model) && nimConfigured() && nimHealthy() && !nimDegraded()) {
     const key = currentNimKey()!;
     const bodyExtras: Record<string, unknown> = {
       // Verified live 2026-06-10: qwen/qwen3.5-* 500s without explicit
@@ -251,6 +273,16 @@ export function chatRequestFor(model: string): LlmChatRequest {
       bodyExtras,
     };
   }
+  return openRouterRequestFor(model);
+}
+
+/**
+ * Build the OpenRouter request for a model UNCONDITIONALLY (NIM ids map to
+ * their legacy OpenRouter equivalent). This is the guaranteed escape hatch —
+ * it never routes back into NIM, so llmFetch can always reach a different
+ * provider when NIM is throttled/overloaded with a perfectly valid key.
+ */
+export function openRouterRequestFor(model: string): LlmChatRequest {
   const effectiveModel = isNimModel(model)
     ? (NIM_MODEL_FALLBACKS[model] ?? NIM_GENERIC_FALLBACK)
     : model;
@@ -336,7 +368,17 @@ export async function llmFetch(
     logger.warn({ model: req.model, err: String(err) }, "NIM request stalled/failed before responding — retrying on the fast NIM model.");
     reportModelStall(req.model);
     req = chatRequestFor(NIM_FAST_MODEL);
-    r = await timedFetch(req, payload);
+    try {
+      r = await timedFetch(req, payload);
+    } catch (err2) {
+      // The FAST model stalled too — NIM is drowning across the board. Mark it
+      // degraded and take the guaranteed OpenRouter escape instead of throwing
+      // (observed live 2026-06-10: ultra stalled AND kimi 429'd → total outage).
+      logger.warn({ err: String(err2) }, "Fast NIM model also stalled — escaping to OpenRouter.");
+      reportNimDegraded("stall on primary and fast NIM models");
+      req = openRouterRequestFor(model);
+      r = await timedFetch(req, payload);
+    }
   }
 
   // Rotate through the key pool on auth/rate-limit answers.
@@ -375,6 +417,19 @@ export async function llmFetch(
     logger.warn({ model: req.model, status: r.status }, "NIM answered 5xx — retrying on the fast NIM model.");
     reportModelStall(req.model);
     req = chatRequestFor(NIM_FAST_MODEL);
+    r = await timedFetch(req, payload);
+  }
+
+  // FINAL ESCAPE — the whole NIM gauntlet (key rotation, backoff, fast-model
+  // retry) failed and the key is VALID (429/5xx, not auth). Without this the
+  // call surfaced the failure and — because a healthy-but-throttled NIM still
+  // captured every model id — the swarm had no working provider at all
+  // (observed live 2026-06-10 as ABBY/the whole system unresponsive). Mark NIM
+  // degraded so the next calls skip the gauntlet entirely, and serve THIS call
+  // from OpenRouter.
+  if (!r.ok && req.provider === "nvidia-nim") {
+    reportNimDegraded(`HTTP ${r.status} after key rotation, backoff, and fast-model retry`);
+    req = openRouterRequestFor(model);
     r = await timedFetch(req, payload);
   }
 
