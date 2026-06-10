@@ -54319,8 +54319,30 @@ function heliconeHeaders(extra) {
     ...extra
   };
 }
+function nimKeyPool() {
+  const keys = [];
+  const main = process.env["NVIDIA_API_KEY"];
+  if (main) keys.push(...main.split(/[\s,]+/).filter(Boolean));
+  for (let i = 2; i <= 9; i++) {
+    const extra = process.env[`NVIDIA_API_KEY_${i}`];
+    if (extra) keys.push(...extra.split(/[\s,]+/).filter(Boolean));
+  }
+  return [...new Set(keys)];
+}
+function currentNimKey() {
+  const pool2 = nimKeyPool();
+  if (pool2.length === 0) return void 0;
+  return pool2[nimKeyIndex % pool2.length];
+}
+function advanceNimKey() {
+  const pool2 = nimKeyPool();
+  if (pool2.length <= 1) return false;
+  nimKeyIndex = (nimKeyIndex + 1) % pool2.length;
+  logger.warn({ keyOrdinal: nimKeyIndex % pool2.length + 1, poolSize: pool2.length }, "Rotated to the next NVIDIA NIM key in the pool.");
+  return true;
+}
 function nimConfigured() {
-  return !!process.env["NVIDIA_API_KEY"];
+  return nimKeyPool().length > 0;
 }
 function nimHealthy() {
   return Date.now() >= nimDisabledUntil;
@@ -54336,6 +54358,7 @@ function reportNimHttpFailure(status) {
 }
 function resetNimHealth() {
   nimDisabledUntil = 0;
+  nimKeyIndex = 0;
 }
 function isNimModel(model) {
   return NIM_PREFIXES.some((p) => model.startsWith(p));
@@ -54344,7 +54367,7 @@ function chatRequestFor(model) {
   const upgraded = LEGACY_TO_NIM[model];
   if (upgraded) model = upgraded;
   if (isNimModel(model) && nimConfigured() && nimHealthy()) {
-    const key = process.env["NVIDIA_API_KEY"];
+    const key = currentNimKey();
     const bodyExtras = {
       // Verified live 2026-06-10: qwen/qwen3.5-* 500s without explicit
       // sampling params, and Nemotron's default thinking budget can exceed the
@@ -54382,21 +54405,52 @@ function chatRequestFor(model) {
     bodyExtras: {}
   };
 }
+function llmTimeoutMs() {
+  const v = Number(process.env["LLM_TIMEOUT_MS"]);
+  return Number.isFinite(v) && v > 0 ? v : 9e4;
+}
+async function timedFetch(req, payload) {
+  const ac = new AbortController();
+  const timer2 = setTimeout(() => ac.abort(), llmTimeoutMs());
+  try {
+    return await fetch(req.url, {
+      method: "POST",
+      headers: req.headers,
+      body: JSON.stringify({ ...req.bodyExtras, model: req.model, ...payload }),
+      signal: ac.signal
+    });
+  } finally {
+    clearTimeout(timer2);
+  }
+}
 async function llmFetch(model, payload) {
   let req = chatRequestFor(model);
-  let r = await fetch(req.url, {
-    method: "POST",
-    headers: req.headers,
-    body: JSON.stringify({ ...req.bodyExtras, model: req.model, ...payload })
-  });
+  let r;
+  try {
+    r = await timedFetch(req, payload);
+  } catch (err) {
+    if (req.provider !== "nvidia-nim") throw err;
+    logger.warn({ model: req.model, err: String(err) }, "NIM request stalled/failed before responding \u2014 retrying on the fast NIM model.");
+    req = chatRequestFor(NIM_FAST_MODEL);
+    r = await timedFetch(req, payload);
+  }
+  let rotations = 0;
+  const maxRotations = Math.max(0, nimKeyPool().length - 1);
+  while (!r.ok && req.provider === "nvidia-nim" && (r.status === 401 || r.status === 403 || r.status === 429) && rotations < maxRotations) {
+    advanceNimKey();
+    rotations++;
+    req = chatRequestFor(model);
+    r = await timedFetch(req, payload);
+  }
   if (!r.ok && req.provider === "nvidia-nim" && (r.status === 401 || r.status === 403)) {
     reportNimHttpFailure(r.status);
     req = chatRequestFor(model);
-    r = await fetch(req.url, {
-      method: "POST",
-      headers: req.headers,
-      body: JSON.stringify({ ...req.bodyExtras, model: req.model, ...payload })
-    });
+    r = await timedFetch(req, payload);
+  }
+  if (!r.ok && req.provider === "nvidia-nim" && r.status >= 500 && req.model !== NIM_FAST_MODEL) {
+    logger.warn({ model: req.model, status: r.status }, "NIM answered 5xx \u2014 retrying on the fast NIM model.");
+    req = chatRequestFor(NIM_FAST_MODEL);
+    r = await timedFetch(req, payload);
   }
   return { r, req };
 }
@@ -54782,7 +54836,7 @@ function integrationStatus() {
     { key: "buddy", name: "Buddy AI (fallback LLM)", category: "llm", envVar: "BUDDY_API_KEY", configured: has("BUDDY_API_KEY") && has("BUDDY_BASE_URL") }
   ];
 }
-var OPENROUTER_DIRECT, OPENROUTER_VIA_HELICONE, NVIDIA_NIM_BASE, NIM_AUTH_COOLDOWN_MS, nimDisabledUntil, NIM_PREFIXES, NIM_MODEL_FALLBACKS, NIM_GENERIC_FALLBACK, LEGACY_TO_NIM, E2B_PKG, E2B_TIMEOUT_MS;
+var OPENROUTER_DIRECT, OPENROUTER_VIA_HELICONE, NVIDIA_NIM_BASE, nimKeyIndex, NIM_AUTH_COOLDOWN_MS, nimDisabledUntil, NIM_PREFIXES, NIM_MODEL_FALLBACKS, NIM_GENERIC_FALLBACK, LEGACY_TO_NIM, NIM_FAST_MODEL, E2B_PKG, E2B_TIMEOUT_MS;
 var init_integrations = __esm({
   "src/lib/integrations.ts"() {
     "use strict";
@@ -54790,6 +54844,7 @@ var init_integrations = __esm({
     OPENROUTER_DIRECT = "https://openrouter.ai/api/v1";
     OPENROUTER_VIA_HELICONE = "https://openrouter.helicone.ai/api/v1";
     NVIDIA_NIM_BASE = "https://integrate.api.nvidia.com/v1";
+    nimKeyIndex = 0;
     NIM_AUTH_COOLDOWN_MS = 10 * 6e4;
     nimDisabledUntil = 0;
     NIM_PREFIXES = [
@@ -54817,6 +54872,7 @@ var init_integrations = __esm({
     for (const [nim, legacy] of Object.entries(NIM_MODEL_FALLBACKS)) {
       if (!LEGACY_TO_NIM[legacy]) LEGACY_TO_NIM[legacy] = nim;
     }
+    NIM_FAST_MODEL = "moonshotai/kimi-k2.6";
     E2B_PKG = "@e2b/code-interpreter";
     E2B_TIMEOUT_MS = 3e4;
   }
