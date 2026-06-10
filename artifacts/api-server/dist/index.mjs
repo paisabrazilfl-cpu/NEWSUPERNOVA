@@ -54359,6 +54359,17 @@ function reportNimHttpFailure(status) {
 function resetNimHealth() {
   nimDisabledUntil = 0;
   nimKeyIndex = 0;
+  modelStallUntil.clear();
+}
+function modelStalled(model) {
+  return (modelStallUntil.get(model) ?? 0) > Date.now();
+}
+function reportModelStall(model) {
+  modelStallUntil.set(model, Date.now() + MODEL_STALL_COOLDOWN_MS);
+  logger.warn(
+    { model, cooldownMinutes: MODEL_STALL_COOLDOWN_MS / 6e4 },
+    "NIM model is stalling/5xxing \u2014 routing its traffic to the fast NIM model for the cooldown."
+  );
 }
 function isNimModel(model) {
   return NIM_PREFIXES.some((p) => model.startsWith(p));
@@ -54407,7 +54418,7 @@ function chatRequestFor(model) {
 }
 function llmTimeoutMs() {
   const v = Number(process.env["LLM_TIMEOUT_MS"]);
-  return Number.isFinite(v) && v > 0 ? v : 9e4;
+  return Number.isFinite(v) && v > 0 ? v : 6e4;
 }
 async function timedFetch(req, payload) {
   const ac = new AbortController();
@@ -54425,12 +54436,16 @@ async function timedFetch(req, payload) {
 }
 async function llmFetch(model, payload) {
   let req = chatRequestFor(model);
+  if (req.provider === "nvidia-nim" && req.model !== NIM_FAST_MODEL && modelStalled(req.model)) {
+    req = chatRequestFor(NIM_FAST_MODEL);
+  }
   let r;
   try {
     r = await timedFetch(req, payload);
   } catch (err) {
     if (req.provider !== "nvidia-nim") throw err;
     logger.warn({ model: req.model, err: String(err) }, "NIM request stalled/failed before responding \u2014 retrying on the fast NIM model.");
+    reportModelStall(req.model);
     req = chatRequestFor(NIM_FAST_MODEL);
     r = await timedFetch(req, payload);
   }
@@ -54449,6 +54464,7 @@ async function llmFetch(model, payload) {
   }
   if (!r.ok && req.provider === "nvidia-nim" && r.status >= 500 && req.model !== NIM_FAST_MODEL) {
     logger.warn({ model: req.model, status: r.status }, "NIM answered 5xx \u2014 retrying on the fast NIM model.");
+    reportModelStall(req.model);
     req = chatRequestFor(NIM_FAST_MODEL);
     r = await timedFetch(req, payload);
   }
@@ -54836,7 +54852,7 @@ function integrationStatus() {
     { key: "buddy", name: "Buddy AI (fallback LLM)", category: "llm", envVar: "BUDDY_API_KEY", configured: has("BUDDY_API_KEY") && has("BUDDY_BASE_URL") }
   ];
 }
-var OPENROUTER_DIRECT, OPENROUTER_VIA_HELICONE, NVIDIA_NIM_BASE, nimKeyIndex, NIM_AUTH_COOLDOWN_MS, nimDisabledUntil, NIM_PREFIXES, NIM_MODEL_FALLBACKS, NIM_GENERIC_FALLBACK, LEGACY_TO_NIM, NIM_FAST_MODEL, E2B_PKG, E2B_TIMEOUT_MS;
+var OPENROUTER_DIRECT, OPENROUTER_VIA_HELICONE, NVIDIA_NIM_BASE, nimKeyIndex, NIM_AUTH_COOLDOWN_MS, nimDisabledUntil, MODEL_STALL_COOLDOWN_MS, modelStallUntil, NIM_PREFIXES, NIM_MODEL_FALLBACKS, NIM_GENERIC_FALLBACK, LEGACY_TO_NIM, NIM_FAST_MODEL, E2B_PKG, E2B_TIMEOUT_MS;
 var init_integrations = __esm({
   "src/lib/integrations.ts"() {
     "use strict";
@@ -54847,6 +54863,8 @@ var init_integrations = __esm({
     nimKeyIndex = 0;
     NIM_AUTH_COOLDOWN_MS = 10 * 6e4;
     nimDisabledUntil = 0;
+    MODEL_STALL_COOLDOWN_MS = 5 * 6e4;
+    modelStallUntil = /* @__PURE__ */ new Map();
     NIM_PREFIXES = [
       "nvidia/",
       "deepseek-ai/",
