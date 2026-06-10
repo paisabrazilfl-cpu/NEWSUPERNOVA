@@ -260,6 +260,27 @@ export async function runMigrations(): Promise<void> {
     for (const [oldModel, newModel] of AGENT_MODEL_UPGRADES) {
       await client.query("UPDATE agents SET model = $2 WHERE model = $1", [oldModel, newModel]);
     }
+
+    // Idempotently seed the nightly self-learning job. Runs at 04:00, 05:00 and
+    // 06:00 UTC — i.e. 12AM, 1AM, 2AM US-Eastern (Render runs UTC) — three
+    // review cycles inside the operator's requested 12-3AM window. ABBY reviews
+    // the day's tool failures, researches unresolved ones, and memory_writes the
+    // verified lessons tagged "lesson,self-learned,nightly". The twin-teach push
+    // (lib/twinSync.ts) then forwards those verified lessons to the T800 twin.
+    // Matched on the fixed name so re-runs never create duplicates and an
+    // operator schedule edit in the UI is preserved (we only INSERT when absent).
+    const NIGHTLY_JOB_NAME = "Nightly Self-Learning Review";
+    const NIGHTLY_TASK =
+      "Run the nightly self-learning review. (1) Read today's tool failures and unresolved errors from recent agent activity. " +
+      "(2) For each recurring or unresolved failure, follow the SELF-LEARN protocol: memory_search for a prior lesson, then web_search/web_scrape for a fix if memory has none, then verify the fix actually works. " +
+      "(3) memory_write each VERIFIED lesson in reusable \"PROBLEM → SOLUTION (evidence)\" form, tagged \"lesson,self-learned,nightly\". " +
+      "Store only lessons you actually verified — never speculation. This makes the swarm permanently smarter overnight.";
+    await client.query(
+      `INSERT INTO cron_jobs (agent_id, name, schedule, task, enabled)
+       SELECT $1, $2, $3, $4, true
+       WHERE NOT EXISTS (SELECT 1 FROM cron_jobs WHERE name = $2)`,
+      [1, NIGHTLY_JOB_NAME, "0 4,5,6 * * *", NIGHTLY_TASK],
+    );
   } catch (err) {
     logger.error({ err }, "Migration failed — continuing anyway");
   } finally {
