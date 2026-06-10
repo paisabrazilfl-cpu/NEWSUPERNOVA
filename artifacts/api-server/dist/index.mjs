@@ -54462,6 +54462,12 @@ async function llmFetch(model, payload) {
     req = chatRequestFor(model);
     r = await timedFetch(req, payload);
   }
+  if (!r.ok && req.provider === "nvidia-nim" && r.status === 429) {
+    const backoffMs = Number(process.env["NIM_429_BACKOFF_MS"]) || 2500;
+    logger.warn({ model: req.model, backoffMs }, "NIM rate-limited on every pooled key \u2014 backing off and retrying once.");
+    await new Promise((resolve) => setTimeout(resolve, backoffMs));
+    r = await timedFetch(req, payload);
+  }
   if (!r.ok && req.provider === "nvidia-nim" && r.status >= 500 && req.model !== NIM_FAST_MODEL) {
     logger.warn({ model: req.model, status: r.status }, "NIM answered 5xx \u2014 retrying on the fast NIM model.");
     reportModelStall(req.model);
@@ -54469,6 +54475,9 @@ async function llmFetch(model, payload) {
     r = await timedFetch(req, payload);
   }
   return { r, req };
+}
+function providerLabel(req) {
+  return req.provider === "nvidia-nim" ? "NVIDIA NIM" : "OpenRouter";
 }
 function formatHits(provider, query, hits) {
   if (!hits.length) return `no web results for "${query}" (via ${provider}).`;
@@ -94500,16 +94509,16 @@ The agents are starting now; their work and results will stream into this channe
     }
   }
   try {
-    const { r: orRes } = await llmFetch(model, {
+    const { r: orRes, req: llmReq } = await llmFetch(model, {
       stream: true,
       messages: chatMessages,
       max_tokens: 700
     });
     if (!orRes.ok) {
       const errText = await orRes.text();
-      req.log.error({ status: orRes.status, errText }, "OpenRouter error");
-      if (await tryBuddyFallback(`openrouter ${orRes.status}`)) return;
-      const hint = orRes.status === 402 ? "OpenRouter is out of credits. Add credits, or configure BUDDY_API_KEY/BUDDY_BASE_URL for automatic fallback." : `OpenRouter error ${orRes.status}: ${errText.slice(0, 200)}`;
+      req.log.error({ status: orRes.status, provider: llmReq.provider, model: llmReq.model, errText }, "LLM provider error");
+      if (await tryBuddyFallback(`${llmReq.provider} ${orRes.status}`)) return;
+      const hint = orRes.status === 402 && llmReq.provider === "openrouter" ? "OpenRouter is out of credits. Add credits, or configure BUDDY_API_KEY/BUDDY_BASE_URL for automatic fallback." : `${providerLabel(llmReq)} error ${orRes.status} (${llmReq.model}): ${errText.slice(0, 200)}`;
       sendEvent({ error: hint });
       sendEvent({ done: true });
       res.end();
@@ -94600,7 +94609,7 @@ router7.post("/ai/complete", async (req, res) => {
         }
       }
       const errText = (await r.text()).slice(0, 200);
-      const hint = r.status === 402 ? "OpenRouter is out of credits. Add credits or configure Buddy fallback (BUDDY_API_KEY/BUDDY_BASE_URL)." : `OpenRouter error ${r.status}: ${errText}`;
+      const hint = r.status === 402 && llmReq.provider === "openrouter" ? "OpenRouter is out of credits. Add credits or configure Buddy fallback (BUDDY_API_KEY/BUDDY_BASE_URL)." : `${providerLabel(llmReq)} error ${r.status} (${llmReq.model}): ${errText}`;
       res.status(502).json({ error: hint });
       return;
     }
