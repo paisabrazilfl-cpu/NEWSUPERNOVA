@@ -516,8 +516,15 @@ export async function composioExecute(input: {
       signal: ctrl.signal,
     });
     const text = await r.text();
+    if (!r.ok) {
+      logger.warn(
+        { status: r.status, toolkit: input.toolkit, endpoint: input.endpoint, action: input.action, body: text.slice(0, 400) },
+        "composioExecute: non-2xx response from Composio/upstream",
+      );
+    }
     return `Composio → HTTP ${r.status} ${r.statusText}\n${cleanComposioBody(text)}`;
   } catch (err) {
+    logger.error({ err, toolkit: input.toolkit, endpoint: input.endpoint }, "composioExecute: fetch failed");
     return `error: Composio call failed: ${String(err).slice(0, 300)}`;
   } finally {
     clearTimeout(timer);

@@ -1308,8 +1308,23 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
       required: ["image_url"],
     },
     run: async (args) => {
-      if (!composioConfigured()) return "error: Composio is not configured (set COMPOSIO_API_KEY).";
-      if (!composioExecuteEnabled()) return "error: Composio execution is disabled (operator must set ALLOW_COMPOSIO_EXECUTE=true).";
+      if (!composioConfigured()) return "error: Composio is not configured (set COMPOSIO_API_KEY). The operator must add this in Settings → Environment Variables.";
+      if (!composioExecuteEnabled()) return "error: Composio execution is disabled (operator must set ALLOW_COMPOSIO_EXECUTE=true in Environment Variables).";
+
+      // Pre-flight: verify Instagram is actually connected before attempting the post.
+      try {
+        const conns = await composioListConnections();
+        const ig = conns.find((c) => c.toolkit.toLowerCase() === "instagram");
+        if (!ig) {
+          return "error: Instagram is NOT connected in Composio. The operator must connect their Instagram account in Settings → Connect Apps (Composio) before posts can be published. No connected Instagram account was found.";
+        }
+        if (!/ACTIVE|CONNECTED|ENABLED/i.test(ig.status)) {
+          return `error: Instagram connection exists but is ${ig.status} (not ACTIVE). The operator must re-connect their Instagram account in Settings → Connect Apps. Connection id: ${ig.id}`;
+        }
+      } catch (e) {
+        logger.warn({ err: e }, "instagram_post: pre-flight connection check failed (proceeding anyway)");
+      }
+
       const imageUrl = String(args["image_url"] ?? "").trim();
       const caption = args["caption"] != null ? String(args["caption"]) : "";
       // SAFEGUARD: never auto-publish confidential/sensitive material to a public account.
@@ -1331,7 +1346,10 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
       // Step 1 — create the media container.
       const r1 = await composioExecute({ toolkit: "instagram", endpoint: "/me/media", method: "POST", arguments: { image_url: imageUrl, caption } });
       const creationId = dataId(pick(r1));
-      if (!creationId) return `error: Instagram did not create the media container.\n${r1.slice(0, 600)}`;
+      if (!creationId) {
+        logger.error({ imageUrl: imageUrl.slice(0, 100), response: r1.slice(0, 400) }, "instagram_post: media container creation failed");
+        return `error: Instagram did not create the media container.\n${r1.slice(0, 600)}`;
+      }
 
       // Step 2 — publish it (containers can need a moment to process; retry briefly).
       let publishedId: string | undefined;
@@ -1342,7 +1360,10 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
         last = r2;
         publishedId = dataId(pick(r2));
       }
-      if (!publishedId) return `error: Instagram container ${creationId} was created but publish failed.\n${last.slice(0, 600)}`;
+      if (!publishedId) {
+        logger.error({ creationId, lastResponse: last.slice(0, 400) }, "instagram_post: publish failed after 4 attempts");
+        return `error: Instagram container ${creationId} was created but publish failed after 4 retries.\n${last.slice(0, 600)}`;
+      }
 
       // Step 3 — fetch the permalink as proof it's live.
       const r3 = await composioExecute({ toolkit: "instagram", endpoint: `/${publishedId}?fields=permalink`, method: "GET" });
