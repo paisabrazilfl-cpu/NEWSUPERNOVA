@@ -434,6 +434,9 @@ export async function executeAgentCommand(opts: {
     // (tool + exact args) call reuses its result instead of re-billing the
     // external API and re-spending tokens — a frequent, costly agent loop.
     const callCache = new Map<string, string>();
+    // Track tool failures so the self-learning nudge fires after errors,
+    // telling the CLAW to research a fix online before retrying blindly.
+    const failedTools = new Set<string>();
     while (steps < MAX_AGENT_STEPS) {
       steps++;
       const assistant = await completeChatTurn(model, messages, tools);
@@ -531,6 +534,25 @@ export async function executeAgentCommand(opts: {
         });
 
         messages.push({ role: "tool", tool_call_id: call.id, name, content: toolResult.slice(0, 6000) });
+        if (!ok) failedTools.add(name);
+      }
+
+      // Self-learning nudge: when any tool failed this iteration, remind
+      // the CLAW to research a fix (memory_search → web_search → retry)
+      // rather than retrying blindly or giving up.
+      const justFailed = parsed.filter((p) => !callCache.has(`${p.call.function?.name ?? ""}:${JSON.stringify(p.args)}`) && failedTools.has(p.call.function?.name ?? ""));
+      if (justFailed.length > 0) {
+        const failedNames = [...new Set(justFailed.map((p) => p.call.function?.name ?? "unknown"))].join(", ");
+        messages.push({
+          role: "user",
+          content:
+            `[SELF-LEARN] ${failedNames} failed. Before retrying, follow the self-learning protocol: ` +
+            `(1) memory_search for a prior lesson about this error, ` +
+            `(2) if no lesson found, web_search for how to fix it, then web_scrape the best result, ` +
+            `(3) retry with the fix applied, ` +
+            `(4) if it works, memory_write the lesson as "PROBLEM → SOLUTION (evidence)" tagged "lesson,self-learned". ` +
+            `Do NOT repeat the exact same failing call without changing something.`,
+        });
       }
 
       if (taskId) {

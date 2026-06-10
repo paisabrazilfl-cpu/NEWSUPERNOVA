@@ -251,6 +251,29 @@ describe("EXECUTION_DOCTRINE — no internal-state / navel-gazing", () => {
   });
 });
 
+describe("EXECUTION_DOCTRINE — self-learning on failure", () => {
+  it("mandates the SELF-LEARN ON FAILURE protocol", () => {
+    expect(EXECUTION_DOCTRINE).toContain("SELF-LEARN ON FAILURE");
+  });
+
+  it("encodes the diagnose → search memory → research online → retry → store loop", () => {
+    expect(EXECUTION_DOCTRINE).toContain("DIAGNOSE");
+    expect(EXECUTION_DOCTRINE).toContain("SEARCH MEMORY");
+    expect(EXECUTION_DOCTRINE).toContain("RESEARCH ONLINE");
+    expect(EXECUTION_DOCTRINE).toContain("RETRY");
+    expect(EXECUTION_DOCTRINE).toContain("STORE THE LESSON");
+  });
+
+  it("limits research-retry cycles to prevent infinite loops", () => {
+    expect(EXECUTION_DOCTRINE.toLowerCase()).toContain("2 research-retry cycles");
+  });
+
+  it("frames the agent as self-improving — failures become permanent lessons", () => {
+    expect(EXECUTION_DOCTRINE).toContain("SELF-IMPROVING");
+    expect(EXECUTION_DOCTRINE.toLowerCase()).toContain("permanently smarter");
+  });
+});
+
 describe("ANTI_HALLUCINATION_DIRECTIVE — still intact alongside the doctrine", () => {
   it("keeps the evidence-discipline guardrail", () => {
     expect(ANTI_HALLUCINATION_DIRECTIVE).toContain("EVIDENCE DISCIPLINE");
