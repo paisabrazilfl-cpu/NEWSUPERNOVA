@@ -54326,6 +54326,8 @@ function isNimModel(model) {
   return NIM_PREFIXES.some((p) => model.startsWith(p));
 }
 function chatRequestFor(model) {
+  const upgraded = LEGACY_TO_NIM[model];
+  if (upgraded) model = upgraded;
   if (isNimModel(model) && nimConfigured()) {
     const key = process.env["NVIDIA_API_KEY"];
     const bodyExtras = {
@@ -54736,7 +54738,7 @@ function integrationStatus() {
     { key: "buddy", name: "Buddy AI (fallback LLM)", category: "llm", envVar: "BUDDY_API_KEY", configured: has("BUDDY_API_KEY") && has("BUDDY_BASE_URL") }
   ];
 }
-var OPENROUTER_DIRECT, OPENROUTER_VIA_HELICONE, NVIDIA_NIM_BASE, NIM_PREFIXES, NIM_MODEL_FALLBACKS, NIM_GENERIC_FALLBACK, E2B_PKG, E2B_TIMEOUT_MS;
+var OPENROUTER_DIRECT, OPENROUTER_VIA_HELICONE, NVIDIA_NIM_BASE, NIM_PREFIXES, NIM_MODEL_FALLBACKS, NIM_GENERIC_FALLBACK, LEGACY_TO_NIM, E2B_PKG, E2B_TIMEOUT_MS;
 var init_integrations = __esm({
   "src/lib/integrations.ts"() {
     "use strict";
@@ -54765,6 +54767,10 @@ var init_integrations = __esm({
       "z-ai/glm-5.1": "x-ai/grok-4.3"
     };
     NIM_GENERIC_FALLBACK = "x-ai/grok-4.3";
+    LEGACY_TO_NIM = {};
+    for (const [nim, legacy] of Object.entries(NIM_MODEL_FALLBACKS)) {
+      if (!LEGACY_TO_NIM[legacy]) LEGACY_TO_NIM[legacy] = nim;
+    }
     E2B_PKG = "@e2b/code-interpreter";
     E2B_TIMEOUT_MS = 3e4;
   }
