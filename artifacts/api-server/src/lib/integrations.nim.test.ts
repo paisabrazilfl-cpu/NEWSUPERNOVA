@@ -4,10 +4,10 @@
  * NVIDIA_API_KEY is set, and transparently remap to their legacy OpenRouter
  * equivalents when it is not (zero loss of function on a key-less deploy).
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { isNimModel, nimConfigured, chatRequestFor, NIM_MODEL_FALLBACKS, reportNimHttpFailure, resetNimHealth, nimHealthy } from "./integrations";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { isNimModel, nimConfigured, chatRequestFor, NIM_MODEL_FALLBACKS, reportNimHttpFailure, resetNimHealth, nimHealthy, nimKeyPool, advanceNimKey, llmFetch } from "./integrations";
 
-const ENV_KEYS = ["NVIDIA_API_KEY", "OPENROUTER_API_KEY", "HELICONE_API_KEY", "NIM_ENABLE_THINKING"] as const;
+const ENV_KEYS = ["NVIDIA_API_KEY", "NVIDIA_API_KEY_2", "OPENROUTER_API_KEY", "HELICONE_API_KEY", "NIM_ENABLE_THINKING", "LLM_TIMEOUT_MS"] as const;
 const saved: Record<string, string | undefined> = {};
 
 beforeEach(() => {
@@ -145,5 +145,102 @@ describe("NIM auth circuit-breaker — a bad NVIDIA key can never take the swarm
     expect(chatRequestFor("deepseek-ai/deepseek-v4-flash").provider).toBe("openrouter");
     resetNimHealth(); // stands in for the 10-minute cooldown elapsing
     expect(chatRequestFor("deepseek-ai/deepseek-v4-flash").provider).toBe("nvidia-nim");
+  });
+});
+
+describe("NIM key pool — the operator's multiple build.nvidia.com keys are all used", () => {
+  it("parses comma/space/newline-separated keys plus NVIDIA_API_KEY_2…, deduped", () => {
+    process.env["NVIDIA_API_KEY"] = "nvapi-a, nvapi-b\nnvapi-c nvapi-a";
+    process.env["NVIDIA_API_KEY_2"] = "nvapi-d";
+    expect(nimKeyPool()).toEqual(["nvapi-a", "nvapi-b", "nvapi-c", "nvapi-d"]);
+    expect(nimConfigured()).toBe(true);
+  });
+
+  it("rotates the key used by chatRequestFor and wraps around the pool", () => {
+    process.env["NVIDIA_API_KEY"] = "nvapi-a,nvapi-b";
+    expect(chatRequestFor("z-ai/glm-5.1").headers["Authorization"]).toBe("Bearer nvapi-a");
+    expect(advanceNimKey()).toBe(true);
+    expect(chatRequestFor("z-ai/glm-5.1").headers["Authorization"]).toBe("Bearer nvapi-b");
+    expect(advanceNimKey()).toBe(true); // wraps
+    expect(chatRequestFor("z-ai/glm-5.1").headers["Authorization"]).toBe("Bearer nvapi-a");
+  });
+
+  it("reports no rotation possible with a single key", () => {
+    process.env["NVIDIA_API_KEY"] = "nvapi-only";
+    expect(advanceNimKey()).toBe(false);
+  });
+});
+
+describe("llmFetch — rotation, breaker, and stall failover", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  function jsonResponse(status: number, body: unknown = {}): Response {
+    return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+  }
+
+  it("rotates to the next pooled key on 429 and succeeds without leaving NIM", async () => {
+    process.env["NVIDIA_API_KEY"] = "nvapi-a,nvapi-b";
+    const seen: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
+      const auth = (init.headers as Record<string, string>)["Authorization"];
+      seen.push(auth);
+      return auth === "Bearer nvapi-a" ? jsonResponse(429) : jsonResponse(200, { ok: true });
+    }));
+    const { r, req } = await llmFetch("z-ai/glm-5.1", { messages: [] });
+    expect(r.status).toBe(200);
+    expect(req.provider).toBe("nvidia-nim");
+    expect(seen).toEqual(["Bearer nvapi-a", "Bearer nvapi-b"]);
+  });
+
+  it("trips the breaker to OpenRouter only after EVERY pooled key is rejected", async () => {
+    process.env["NVIDIA_API_KEY"] = "nvapi-a,nvapi-b";
+    process.env["OPENROUTER_API_KEY"] = "or-test";
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      urls.push(String(url));
+      return String(url).includes("nvidia") ? jsonResponse(403) : jsonResponse(200, { ok: true });
+    }));
+    const { r, req } = await llmFetch("z-ai/glm-5.1", { messages: [] });
+    expect(r.status).toBe(200);
+    expect(req.provider).toBe("openrouter");
+    expect(nimHealthy()).toBe(false);
+    // Two NIM attempts (one per key), then the OpenRouter fallback.
+    expect(urls.filter((u) => u.includes("nvidia"))).toHaveLength(2);
+    expect(urls.filter((u) => u.includes("openrouter"))).toHaveLength(1);
+  });
+
+  it("retries a 5xx (Nemotron 504 under load) once on the fast NIM model", async () => {
+    process.env["NVIDIA_API_KEY"] = "nvapi-a";
+    const models: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as { model: string };
+      models.push(body.model);
+      return body.model.startsWith("nvidia/") ? jsonResponse(504) : jsonResponse(200, { ok: true });
+    }));
+    const { r, req } = await llmFetch("nvidia/nemotron-3-ultra-550b-a55b", { messages: [] });
+    expect(r.status).toBe(200);
+    expect(req.provider).toBe("nvidia-nim");
+    expect(models).toEqual(["nvidia/nemotron-3-ultra-550b-a55b", "moonshotai/kimi-k2.6"]);
+  });
+
+  it("fails over to the fast NIM model when the upstream never starts responding", async () => {
+    process.env["NVIDIA_API_KEY"] = "nvapi-a";
+    process.env["LLM_TIMEOUT_MS"] = "50";
+    const models: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as { model: string };
+      models.push(body.model);
+      if (body.model.startsWith("nvidia/")) {
+        // Simulate a stalled upstream: resolve only when aborted.
+        return new Promise<Response>((_resolve, reject) => {
+          (init.signal as AbortSignal).addEventListener("abort", () => reject(new Error("AbortError")));
+        });
+      }
+      return jsonResponse(200, { ok: true });
+    }));
+    const { r, req } = await llmFetch("nvidia/nemotron-3-ultra-550b-a55b", { messages: [] });
+    expect(r.status).toBe(200);
+    expect(req.model).toBe("moonshotai/kimi-k2.6");
+    expect(models).toEqual(["nvidia/nemotron-3-ultra-550b-a55b", "moonshotai/kimi-k2.6"]);
   });
 });

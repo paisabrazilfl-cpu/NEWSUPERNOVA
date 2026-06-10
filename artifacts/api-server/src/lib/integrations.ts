@@ -65,8 +65,43 @@ export function heliconeHeaders(extra?: Record<string, string>): Record<string, 
 
 const NVIDIA_NIM_BASE = "https://integrate.api.nvidia.com/v1";
 
+// ─── NIM key pool ────────────────────────────────────────────────────────────
+// The operator holds MULTIPLE build.nvidia.com keys (one per NVIDIA project),
+// each with its own rate-limit budget. NVIDIA_API_KEY accepts them all —
+// separated by commas, spaces, or newlines — and llmFetch() rotates to the
+// next key whenever NIM answers 401/403/429, so one revoked or rate-limited
+// key never stalls the swarm. NVIDIA_API_KEY_2…_9 are also honored for
+// operators who prefer one key per vault entry.
+let nimKeyIndex = 0;
+
+export function nimKeyPool(): string[] {
+  const keys: string[] = [];
+  const main = process.env["NVIDIA_API_KEY"];
+  if (main) keys.push(...main.split(/[\s,]+/).filter(Boolean));
+  for (let i = 2; i <= 9; i++) {
+    const extra = process.env[`NVIDIA_API_KEY_${i}`];
+    if (extra) keys.push(...extra.split(/[\s,]+/).filter(Boolean));
+  }
+  return [...new Set(keys)];
+}
+
+function currentNimKey(): string | undefined {
+  const pool = nimKeyPool();
+  if (pool.length === 0) return undefined;
+  return pool[nimKeyIndex % pool.length];
+}
+
+/** Rotate to the next key in the pool. Returns false when there is no other key. */
+export function advanceNimKey(): boolean {
+  const pool = nimKeyPool();
+  if (pool.length <= 1) return false;
+  nimKeyIndex = (nimKeyIndex + 1) % pool.length;
+  logger.warn({ keyOrdinal: (nimKeyIndex % pool.length) + 1, poolSize: pool.length }, "Rotated to the next NVIDIA NIM key in the pool.");
+  return true;
+}
+
 export function nimConfigured(): boolean {
-  return !!process.env["NVIDIA_API_KEY"];
+  return nimKeyPool().length > 0;
 }
 
 // ─── NIM auth circuit-breaker ────────────────────────────────────────────────
@@ -95,9 +130,10 @@ export function reportNimHttpFailure(status: number): void {
   }
 }
 
-/** Test hook: reset the breaker so unit tests are order-independent. */
+/** Test hook + key-rotation hook: reset the breaker and key cursor. */
 export function resetNimHealth(): void {
   nimDisabledUntil = 0;
+  nimKeyIndex = 0;
 }
 
 // Model-id prefixes served by NVIDIA NIM rather than OpenRouter. Note the
@@ -171,7 +207,7 @@ export function chatRequestFor(model: string): LlmChatRequest {
   if (upgraded) model = upgraded;
 
   if (isNimModel(model) && nimConfigured() && nimHealthy()) {
-    const key = process.env["NVIDIA_API_KEY"]!;
+    const key = currentNimKey()!;
     const bodyExtras: Record<string, unknown> = {
       // Verified live 2026-06-10: qwen/qwen3.5-* 500s without explicit
       // sampling params, and Nemotron's default thinking budget can exceed the
@@ -212,33 +248,96 @@ export function chatRequestFor(model: string): LlmChatRequest {
   };
 }
 
+// A NIM model that answers in seconds (verified live 2026-06-10: ~2s for a
+// short completion while nemotron-3-ultra-550b 504'd under load). Used as the
+// same-provider retry target when the requested NIM model stalls or 5xxes —
+// the persona and tools stay intact, only the engine swaps.
+const NIM_FAST_MODEL = "moonshotai/kimi-k2.6";
+
+// Time budget for the upstream to START responding (headers received). Without
+// this, one stalled Nemotron request hangs an agent turn forever — observed
+// live 2026-06-10 as ABBY timing out instead of answering. Streaming bodies
+// are NOT subject to this budget (the timer is cleared once headers arrive).
+function llmTimeoutMs(): number {
+  const v = Number(process.env["LLM_TIMEOUT_MS"]);
+  return Number.isFinite(v) && v > 0 ? v : 90_000;
+}
+
+async function timedFetch(req: LlmChatRequest, payload: Record<string, unknown>): Promise<Response> {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), llmTimeoutMs());
+  try {
+    return await fetch(req.url, {
+      method: "POST",
+      headers: req.headers,
+      body: JSON.stringify({ ...req.bodyExtras, model: req.model, ...payload }),
+      signal: ac.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /**
- * Provider-aware chat-completions fetch with the NIM auth circuit-breaker
- * built in: resolves the request via chatRequestFor(), and when NVIDIA NIM
- * rejects the key (401/403) it trips the breaker and IMMEDIATELY retries the
- * same payload on the OpenRouter fallback — so one bad NVIDIA_API_KEY can
- * never take the swarm down. `payload` is the call-specific body (messages,
- * tools, stream, max_tokens, …); bodyExtras are spread first so payload wins.
+ * Provider-aware chat-completions fetch with the full NIM survival kit:
+ *
+ * 1. KEY ROTATION — 401/403/429 from NIM advances to the next key in the
+ *    NVIDIA_API_KEY pool and retries (each build.nvidia.com key has its own
+ *    rate-limit budget, so the pool multiplies throughput).
+ * 2. AUTH BREAKER — when EVERY pooled key is rejected, the breaker trips and
+ *    the call reroutes to OpenRouter, so bad NVIDIA keys can never down the swarm.
+ * 3. STALL/5XX FAILOVER — a NIM request that produces no response within the
+ *    time budget, or answers 5xx, retries once on NIM_FAST_MODEL (same
+ *    provider, same persona/tools, much faster engine).
+ *
+ * `payload` is the call-specific body (messages, tools, stream, max_tokens, …);
+ * bodyExtras are spread first so payload wins.
  */
 export async function llmFetch(
   model: string,
   payload: Record<string, unknown>,
 ): Promise<{ r: Response; req: LlmChatRequest }> {
   let req = chatRequestFor(model);
-  let r = await fetch(req.url, {
-    method: "POST",
-    headers: req.headers,
-    body: JSON.stringify({ ...req.bodyExtras, model: req.model, ...payload }),
-  });
+  let r: Response;
+  try {
+    r = await timedFetch(req, payload);
+  } catch (err) {
+    if (req.provider !== "nvidia-nim") throw err;
+    // NIM stalled (no headers within the budget) or the connection died —
+    // retry once on the fast NIM model instead of hanging the agent turn.
+    logger.warn({ model: req.model, err: String(err) }, "NIM request stalled/failed before responding — retrying on the fast NIM model.");
+    req = chatRequestFor(NIM_FAST_MODEL);
+    r = await timedFetch(req, payload);
+  }
+
+  // Rotate through the key pool on auth/rate-limit answers.
+  let rotations = 0;
+  const maxRotations = Math.max(0, nimKeyPool().length - 1);
+  while (
+    !r.ok && req.provider === "nvidia-nim" &&
+    (r.status === 401 || r.status === 403 || r.status === 429) &&
+    rotations < maxRotations
+  ) {
+    advanceNimKey();
+    rotations++;
+    req = chatRequestFor(model);
+    r = await timedFetch(req, payload);
+  }
+
+  // Every pooled key rejected → trip the breaker and reroute to OpenRouter.
   if (!r.ok && req.provider === "nvidia-nim" && (r.status === 401 || r.status === 403)) {
     reportNimHttpFailure(r.status);
     req = chatRequestFor(model); // breaker tripped → resolves to OpenRouter now
-    r = await fetch(req.url, {
-      method: "POST",
-      headers: req.headers,
-      body: JSON.stringify({ ...req.bodyExtras, model: req.model, ...payload }),
-    });
+    r = await timedFetch(req, payload);
   }
+
+  // NIM-side 5xx (Nemotron 504s under load — observed live) → fast NIM model.
+  if (!r.ok && req.provider === "nvidia-nim" && r.status >= 500 && req.model !== NIM_FAST_MODEL) {
+    logger.warn({ model: req.model, status: r.status }, "NIM answered 5xx — retrying on the fast NIM model.");
+    req = chatRequestFor(NIM_FAST_MODEL);
+    r = await timedFetch(req, payload);
+  }
+
   return { r, req };
 }
 
