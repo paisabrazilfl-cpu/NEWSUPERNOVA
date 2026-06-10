@@ -17,6 +17,7 @@ import {
   composioListConnections,
   composioConnect,
   composioConnectionStatus,
+  composioDeleteConnection,
 } from "../lib/integrations";
 import { requireOperator } from "../lib/auth";
 
@@ -91,6 +92,19 @@ router.get("/integrations/composio/connections/:id", requireOperator, async (req
     res.json(await composioConnectionStatus(String(req.params.id)));
   } catch (err) {
     req.log.error({ err }, "composio: connection status failed");
+    res.status(502).json({ error: String(err instanceof Error ? err.message : err) });
+  }
+});
+
+// DELETE /api/integrations/composio/connections/:id — remove a connected account
+// (e.g. an EXPIRED linkedin/slack entry) so the operator can re-connect cleanly.
+router.delete("/integrations/composio/connections/:id", requireOperator, async (req, res) => {
+  if (!guardComposio(res)) return;
+  try {
+    await composioDeleteConnection(String(req.params.id));
+    res.json({ ok: true, deleted: String(req.params.id) });
+  } catch (err) {
+    req.log.error({ err, connectionId: req.params.id }, "composio: delete connection failed");
     res.status(502).json({ error: String(err instanceof Error ? err.message : err) });
   }
 });

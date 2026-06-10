@@ -101,6 +101,17 @@ describe("requestsConnectedAccountAction — dispatch operator-account requests,
     }
   });
 
+  it("detects scheduled jobs whose NAME carries the platform but whose task does not (scheduler passes name+task)", () => {
+    // Real production bug: job "Instagram Post news" had task "Post a New post on
+    // the following topics at random, car news, world news…" — task-only detection
+    // returned false, so the job fanned out to CLAWs without Instagram tools and
+    // nothing ever reached Instagram. The scheduler now detects on `name + task`.
+    const name = "Instagram Post  news";
+    const task = "Post a New post on the following topics at random,  car news, world news, yacht news, ai news, finance and stocks news, and best stock of the day pick.";
+    expect(requestsConnectedAccountAction(task)).toBe(false); // the task alone misses
+    expect(requestsConnectedAccountAction(`${name} ${task}`)).toBe(true); // name+task catches it
+  });
+
   it("an image-post-to-IG request takes the connected-account path, not the generic artifact path", () => {
     const m = "Post to my IG right now a 2d image render of AI news";
     // both detectors fire, but the override checks connected-account FIRST/guards
