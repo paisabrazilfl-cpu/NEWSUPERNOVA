@@ -54745,6 +54745,7 @@ function integrationStatus() {
     { key: "inngest", name: "Inngest", category: "events", envVar: "INNGEST_EVENT_KEY", configured: has("INNGEST_EVENT_KEY") },
     { key: "e2b", name: "E2B", category: "sandbox", envVar: "E2B_API_KEY", configured: has("E2B_API_KEY") },
     { key: "composio", name: "Composio", category: "tools", envVar: "COMPOSIO_API_KEY", configured: has("COMPOSIO_API_KEY") },
+    { key: "image-generation", name: "Image generation (image_generate)", category: "tools", envVar: "OPENAI_API_KEY", configured: has("OPENAI_API_KEY") || has("IMAGE_API_KEY") },
     { key: "buddy", name: "Buddy AI (fallback LLM)", category: "llm", envVar: "BUDDY_API_KEY", configured: has("BUDDY_API_KEY") && has("BUDDY_BASE_URL") }
   ];
 }
@@ -88904,7 +88905,10 @@ ${stored}` : stored);
           const filename = String(args["filename"] ?? "").trim().slice(0, 255) || "artifact";
           const raw = String(args["content"] ?? "");
           if (!raw) return "error: content is required.";
-          const encoding = String(args["encoding"] ?? "utf8").toLowerCase() === "base64" ? "base64" : "utf8";
+          let encoding = String(args["encoding"] ?? "utf8").toLowerCase() === "base64" ? "base64" : "utf8";
+          if (encoding === "utf8" && /^(iVBORw0KGgo|\/9j\/|JVBERi0|UEsDB)[A-Za-z0-9+/=\s]*$/.test(raw.trim().slice(0, 100)) && /^[A-Za-z0-9+/=\s]+$/.test(raw.trim())) {
+            encoding = "base64";
+          }
           let base643;
           let bytes;
           try {
