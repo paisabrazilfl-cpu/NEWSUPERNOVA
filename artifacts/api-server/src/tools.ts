@@ -1065,7 +1065,15 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
       const filename = String(args["filename"] ?? "").trim().slice(0, 255) || "artifact";
       const raw = String(args["content"] ?? "");
       if (!raw) return "error: content is required.";
-      const encoding = String(args["encoding"] ?? "utf8").toLowerCase() === "base64" ? "base64" : "utf8";
+      let encoding = String(args["encoding"] ?? "utf8").toLowerCase() === "base64" ? "base64" : "utf8";
+      // Models routinely pass base64 binary content but forget encoding:'base64'.
+      // Stored as utf8 that double-encodes the file — the served "PNG" is base64
+      // text Instagram/browsers can't decode (observed live: attachment #476).
+      // Detect the well-known binary magic prefixes in their base64 form and
+      // auto-correct: iVBORw0KGgo=PNG, /9j/=JPEG, JVBERi0=PDF, UEsDB=ZIP/DOCX.
+      if (encoding === "utf8" && /^(iVBORw0KGgo|\/9j\/|JVBERi0|UEsDB)[A-Za-z0-9+/=\s]*$/.test(raw.trim().slice(0, 100)) && /^[A-Za-z0-9+/=\s]+$/.test(raw.trim())) {
+        encoding = "base64";
+      }
       // Normalize to base64 for storage (the attachments column stores base64).
       let base64: string;
       let bytes: number;
