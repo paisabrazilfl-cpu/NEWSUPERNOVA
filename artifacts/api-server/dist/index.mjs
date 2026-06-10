@@ -89371,9 +89371,9 @@ ${clip3(res.body, 4e3)}`;
       // CRAWLER — browser
       4: ["memory_write", "memory_search", "web_search", "tier1_sources", "web_scrape", "http_request", "calculator", "vault_list", "save_artifact", "image_generate", "send_message"],
       // VAULT — memory/RAG
-      5: ["http_request", "web_scrape", "web_search", "tier1_sources", "marketing_playbook", "code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_action", "instagram_post", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task", "save_artifact", "image_generate", "send_message"],
+      5: ["http_request", "web_scrape", "web_search", "tier1_sources", "marketing_playbook", "code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_action", "instagram_post", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task", "save_artifact", "image_generate", "render_card", "send_message"],
       // WIRE — APIs + scheduling
-      6: ["web_scrape", "web_search", "tier1_sources", "marketing_playbook", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_action", "instagram_post", "save_artifact", "image_generate", "send_message"]
+      6: ["web_scrape", "web_search", "tier1_sources", "marketing_playbook", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_action", "instagram_post", "save_artifact", "image_generate", "render_card", "send_message"]
       // MR.NICE — social
     };
     ABBY_ID = 1;
@@ -95159,7 +95159,7 @@ async function runCronJob(job, channelId = DEFAULT_CHANNEL_ID) {
       const connectedAccount = requestsConnectedAccountAction(`${job.name} ${job.task}`);
       const goal = connectedAccount && !requestsConnectedAccountAction(job.task) ? `${job.task}
 
-(Scheduled job name: "${job.name}" \u2014 honor the platform/action it names: an Instagram job means actually PUBLISH to the operator's connected Instagram via image_generate + instagram_post, not just draft the content.)` : job.task;
+(Scheduled job name: "${job.name}" \u2014 honor the platform/action it names: an Instagram job means actually PUBLISH to the operator's connected Instagram via render_card (free, preferred for news/quote/stat cards) or image_generate (photoreal only) + instagram_post, not just draft the content.)` : job.task;
       await orchestrateGoal({
         goal,
         channelId,
