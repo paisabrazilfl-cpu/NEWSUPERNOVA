@@ -27,4 +27,10 @@ describe("postLimit — daily cap + spacing (fully automated)", () => {
     expect(out!.toLowerCase()).toContain("spaced out");
     expect(out!.toLowerCase()).toContain("nothing was posted");
   });
+
+  it("cap removed (max=0 / spacing=0): never blocks, even at high counts and back-to-back", () => {
+    const last = new Date(now.getTime() - 1 * 60000); // 1 min ago
+    expect(decidePostAllowed({ countLast24h: 999, last, now, maxPerDay: 0, minSpacingMin: 0 })).toBeNull();
+    expect(decidePostAllowed({ countLast24h: 50, last, now, maxPerDay: 0, minSpacingMin: 0 })).toBeNull();
+  });
 });
