@@ -789,7 +789,7 @@ router.post("/ai/complete", async (req, res) => {
   ];
 
   try {
-    const { r } = await llmFetch(model, { messages, max_tokens: 512 });
+    const { r, req: llmReq } = await llmFetch(model, { messages, max_tokens: 512 });
     if (!r.ok) {
       // Fall back to Buddy on provider failure (e.g. 402 out of credits).
       if (buddyConfigured()) {
@@ -811,7 +811,10 @@ router.post("/ai/complete", async (req, res) => {
     }
     const data = await r.json() as { choices?: { message?: { content?: string } }[] };
     const content = data.choices?.[0]?.message?.content ?? "";
-    res.json({ content, model, agentId: resolvedAgentId });
+    // Report the engine that ACTUALLY served the request — llmFetch may have
+    // rotated keys, failed over to the fast NIM model, or reroute to OpenRouter,
+    // and the operator needs ground truth, not the requested model id.
+    res.json({ content, model: llmReq.model, provider: llmReq.provider, requestedModel: model, agentId: resolvedAgentId });
   } catch (err) {
     req.log.error({ err }, "AI complete error");
     res.status(500).json({ error: String(err) });
