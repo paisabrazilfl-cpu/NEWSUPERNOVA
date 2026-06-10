@@ -9,6 +9,7 @@ vi.mock("@workspace/db", async (importOriginal) => {
 
 import app from "../app";
 import { queueDbResults, resetDbMock } from "../test/dbMock";
+import { nimHealthy, reportNimHttpFailure, resetNimHealth } from "../lib/integrations";
 
 const ORIGINAL_ENV = { ...process.env };
 
@@ -75,6 +76,57 @@ describe("vault auth gating", () => {
     expect(res.body[0].name).toBe("OPENAI_API_KEY");
     // Encrypted material is never exposed.
     expect(res.body[0]).not.toHaveProperty("ciphertext");
+  });
+});
+
+describe("vault NVIDIA key rotation", () => {
+  afterEach(() => resetNimHealth());
+
+  it("resets the NIM breaker when NVIDIA_API_KEY is saved, so a fresh key routes immediately", async () => {
+    const cookie = await loginCookie();
+    reportNimHttpFailure(403);
+    expect(nimHealthy()).toBe(false);
+    queueDbResults([
+      {
+        id: 2,
+        name: "NVIDIA_API_KEY",
+        description: null,
+        ciphertext: "x",
+        iv: "y",
+        authTag: "z",
+        createdAt: new Date("2026-06-10T00:00:00.000Z"),
+        updatedAt: new Date("2026-06-10T00:00:00.000Z"),
+      },
+    ]);
+    const res = await request(app)
+      .put("/api/vault")
+      .set("Cookie", cookie)
+      .send({ name: "NVIDIA_API_KEY", value: "nvapi-fresh" });
+    expect(res.status).toBe(200);
+    expect(nimHealthy()).toBe(true);
+  });
+
+  it("leaves a tripped breaker alone when an unrelated secret is saved", async () => {
+    const cookie = await loginCookie();
+    reportNimHttpFailure(401);
+    queueDbResults([
+      {
+        id: 3,
+        name: "SOME_OTHER_KEY",
+        description: null,
+        ciphertext: "x",
+        iv: "y",
+        authTag: "z",
+        createdAt: new Date("2026-06-10T00:00:00.000Z"),
+        updatedAt: new Date("2026-06-10T00:00:00.000Z"),
+      },
+    ]);
+    const res = await request(app)
+      .put("/api/vault")
+      .set("Cookie", cookie)
+      .send({ name: "SOME_OTHER_KEY", value: "whatever" });
+    expect(res.status).toBe(200);
+    expect(nimHealthy()).toBe(false);
   });
 });
 
