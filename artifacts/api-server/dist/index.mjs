@@ -94596,6 +94596,10 @@ async function reconcileStaleWork() {
     logger.error({ err }, "reconcileStaleWork failed");
   }
 }
+var SECONDARY_CHAT_MODEL = "x-ai/grok-4.3";
+function buddyIdentityJunk(text2) {
+  return /\bBOS[-_ ]?OMEGA\b|predictive cognitive|cognitive (engine|architecture|system)|psychological intervention|GLOBAL_STATE/i.test(text2);
+}
 async function completeChat(model, system, user, maxTokens = 800) {
   const startedAt = /* @__PURE__ */ new Date();
   let r;
@@ -94621,6 +94625,36 @@ async function completeChat(model, system, user, maxTokens = 800) {
   }
   if (!r.ok) {
     const errText = (await r.text()).slice(0, 200);
+    try {
+      const primary = chatRequestFor(model);
+      const fb = chatRequestFor(SECONDARY_CHAT_MODEL);
+      if (fb.model !== primary.model || fb.url !== primary.url) {
+        const fr = await fetch(fb.url, {
+          method: "POST",
+          headers: fb.headers,
+          body: JSON.stringify({
+            ...fb.bodyExtras,
+            model: fb.model,
+            messages: [
+              { role: "system", content: system },
+              { role: "user", content: user }
+            ],
+            stream: false,
+            max_tokens: maxTokens
+          })
+        });
+        if (fr.ok) {
+          const fdata = await fr.json();
+          const fout = fdata?.choices?.[0]?.message?.content?.trim();
+          if (fout) {
+            traceLlmRun({ name: "completeChat", model: `${fb.model} (secondary fallback)`, input: { system, user }, output: fout, startedAt });
+            return fout;
+          }
+        }
+      }
+    } catch (e) {
+      logger.warn({ e }, "secondary-model fallback failed after primary error");
+    }
     if (buddyConfigured()) {
       try {
         const out2 = await buddyComplete(
@@ -94630,6 +94664,7 @@ async function completeChat(model, system, user, maxTokens = 800) {
           ],
           maxTokens
         );
+        if (buddyIdentityJunk(out2)) throw new Error("Buddy answered as BOS-OMEGA (hosted personality), not as the agent \u2014 unusable");
         traceLlmRun({ name: "completeChat", model: "buddy-fallback", input: { system, user }, output: out2, startedAt });
         return out2;
       } catch (e) {
@@ -94667,6 +94702,27 @@ async function completeChatTurn(model, messages, tools) {
   }
   if (!r.ok) {
     const errText = (await r.text()).slice(0, 200);
+    try {
+      const fb = chatRequestFor(SECONDARY_CHAT_MODEL);
+      if (fb.model !== llmReq.model || fb.url !== llmReq.url) {
+        const fbBody = { ...fb.bodyExtras, model: fb.model, messages, stream: false, max_tokens: 8e3 };
+        if (tools.length) {
+          fbBody["tools"] = tools;
+          fbBody["tool_choice"] = "auto";
+        }
+        const fr = await fetch(fb.url, { method: "POST", headers: fb.headers, body: JSON.stringify(fbBody) });
+        if (fr.ok) {
+          const fdata = await fr.json();
+          const fmsg = fdata?.choices?.[0]?.message;
+          if (fmsg) {
+            logger.info({ from: llmReq.model, to: fb.model }, "tool turn recovered on secondary model after primary failure");
+            return { role: "assistant", content: fmsg.content ?? null, tool_calls: fmsg.tool_calls };
+          }
+        }
+      }
+    } catch (e) {
+      logger.warn({ e }, "secondary-model fallback failed (tool turn)");
+    }
     if (buddyConfigured()) {
       try {
         const textMessages = messages.map((m) => ({
@@ -94674,6 +94730,7 @@ async function completeChatTurn(model, messages, tools) {
           content: typeof m.content === "string" ? m.content : ""
         }));
         const out = await buddyComplete(textMessages, 2048);
+        if (buddyIdentityJunk(out)) throw new Error("Buddy answered as BOS-OMEGA (hosted personality), not as the agent \u2014 unusable");
         return { role: "assistant", content: out };
       } catch (e) {
         logger.warn({ e }, "Buddy fallback failed after OpenRouter error (tool turn)");
