@@ -247,18 +247,25 @@ export function requestsConnectedAccountAction(message: string): boolean {
 const CHAT_HISTORY_LIMIT = 16;
 
 export const ABBY_ID = 1;
-export const ABBY_DEFAULT_MODEL = "nvidia/nemotron-3-ultra-550b-a55b";
+// 2026-06-10: fast models in charge. Live-measured on integrate.api.nvidia.com:
+// kimi-k2.6 answered in 0.79s and llama-3.1-8b in 0.48s while
+// nemotron-3-ultra-550b and deepseek-v4-pro produced NO response in 45-60s
+// (hung, no error — so the throttle-escape never fired and every ABBY turn
+// paid the full LLM_TIMEOUT_MS before failing over). The orchestrator now
+// defaults to the fast engine; the heavy models remain selectable per-agent.
+export const ABBY_DEFAULT_MODEL = "moonshotai/kimi-k2.6";
 
-// ABBY must run on an orchestrator-grade model: NVIDIA Nemotron (agentic
-// reasoning / planning / tool calling, 1M context) or a Grok (x-ai/) model.
+// ABBY must run on an orchestrator-grade model: Kimi K2.6 (fast NIM engine,
+// live-verified tool calling), NVIDIA Nemotron, or a Grok (x-ai/) model.
 // Anything else (from the DB or a request override) is forced back to the
 // default. When NVIDIA_API_KEY is absent, chatRequestFor() transparently
-// remaps the Nemotron id to Grok at request time — never a dead model.
+// remaps the NIM id to its OpenRouter fallback at request time — never a
+// dead model.
 export function resolveModel(agentId: number, agentModel: string | null | undefined, override: unknown): string {
   const candidate = (typeof override === "string" && override.trim())
     ? override
     : (agentModel ?? ABBY_DEFAULT_MODEL);
-  if (agentId === ABBY_ID && !candidate.startsWith("x-ai/") && !candidate.startsWith("nvidia/nemotron")) {
+  if (agentId === ABBY_ID && !candidate.startsWith("x-ai/") && !candidate.startsWith("nvidia/nemotron") && !candidate.startsWith("moonshotai/")) {
     return ABBY_DEFAULT_MODEL;
   }
   return candidate;
@@ -314,6 +321,8 @@ export function openrouterHeaders() {
 // are appended to /ai/models manually). Live-verified against
 // integrate.api.nvidia.com on 2026-06-10: completion + tools + json mode.
 const NIM_FEATURED_MODELS = [
+  { id: "moonshotai/kimi-k2.6", name: "Moonshot Kimi K2.6 (NIM, fast)", context_length: 262144 },
+  { id: "meta/llama-3.1-8b-instruct", name: "Meta Llama 3.1 8B (NIM, fast)", context_length: 131072 },
   { id: "nvidia/nemotron-3-ultra-550b-a55b", name: "NVIDIA Nemotron 3 Ultra 550B (NIM)", context_length: 1000000 },
   { id: "nvidia/nemotron-3-super-120b-a12b", name: "NVIDIA Nemotron 3 Super 120B (NIM)", context_length: 1000000 },
   { id: "deepseek-ai/deepseek-v4-flash", name: "DeepSeek V4 Flash (NIM)", context_length: 1000000 },
