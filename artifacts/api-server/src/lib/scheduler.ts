@@ -61,7 +61,7 @@ export async function runCronJob(job: CronJob, channelId = DEFAULT_CHANNEL_ID): 
       // executing agent actually publishes instead of just writing content.
       const goal =
         connectedAccount && !requestsConnectedAccountAction(job.task)
-          ? `${job.task}\n\n(Scheduled job name: "${job.name}" — honor the platform/action it names: an Instagram job means actually PUBLISH to the operator's connected Instagram via image_generate + instagram_post, not just draft the content.)`
+          ? `${job.task}\n\n(Scheduled job name: "${job.name}" — honor the platform/action it names: an Instagram job means actually PUBLISH to the operator's connected Instagram via render_card (free, preferred for news/quote/stat cards) or image_generate (photoreal only) + instagram_post, not just draft the content.)`
           : job.task;
       await orchestrateGoal({
         goal,
