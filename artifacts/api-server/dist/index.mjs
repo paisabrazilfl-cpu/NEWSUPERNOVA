@@ -54358,8 +54358,23 @@ function reportNimHttpFailure(status) {
 }
 function resetNimHealth() {
   nimDisabledUntil = 0;
+  nimDegradedUntil = 0;
   nimKeyIndex = 0;
   modelStallUntil.clear();
+}
+function nimDegradedCooldownMs() {
+  const v = Number(process.env["NIM_DEGRADED_COOLDOWN_MS"]);
+  return Number.isFinite(v) && v > 0 ? v : 12e4;
+}
+function nimDegraded() {
+  return Date.now() < nimDegradedUntil;
+}
+function reportNimDegraded(reason) {
+  nimDegradedUntil = Date.now() + nimDegradedCooldownMs();
+  logger.error(
+    { reason, cooldownMs: nimDegradedCooldownMs() },
+    "NVIDIA NIM is throttled/overloaded on every pooled key \u2014 routing ALL NIM models to their OpenRouter fallbacks for the cooldown."
+  );
 }
 function modelStalled(model) {
   return (modelStallUntil.get(model) ?? 0) > Date.now();
@@ -54375,9 +54390,7 @@ function isNimModel(model) {
   return NIM_PREFIXES.some((p) => model.startsWith(p));
 }
 function chatRequestFor(model) {
-  const upgraded = LEGACY_TO_NIM[model];
-  if (upgraded) model = upgraded;
-  if (isNimModel(model) && nimConfigured() && nimHealthy()) {
+  if (isNimModel(model) && nimConfigured() && nimHealthy() && !nimDegraded()) {
     const key = currentNimKey();
     const bodyExtras = {
       // Verified live 2026-06-10: qwen/qwen3.5-* 500s without explicit
@@ -54399,6 +54412,9 @@ function chatRequestFor(model) {
       bodyExtras
     };
   }
+  return openRouterRequestFor(model);
+}
+function openRouterRequestFor(model) {
   const effectiveModel = isNimModel(model) ? NIM_MODEL_FALLBACKS[model] ?? NIM_GENERIC_FALLBACK : model;
   const orKey = process.env["OPENROUTER_API_KEY"];
   if (!orKey) throw new Error("OPENROUTER_API_KEY is not set");
@@ -54447,7 +54463,14 @@ async function llmFetch(model, payload) {
     logger.warn({ model: req.model, err: String(err) }, "NIM request stalled/failed before responding \u2014 retrying on the fast NIM model.");
     reportModelStall(req.model);
     req = chatRequestFor(NIM_FAST_MODEL);
-    r = await timedFetch(req, payload);
+    try {
+      r = await timedFetch(req, payload);
+    } catch (err2) {
+      logger.warn({ err: String(err2) }, "Fast NIM model also stalled \u2014 escaping to OpenRouter.");
+      reportNimDegraded("stall on primary and fast NIM models");
+      req = openRouterRequestFor(model);
+      r = await timedFetch(req, payload);
+    }
   }
   let rotations = 0;
   const maxRotations = Math.max(0, nimKeyPool().length - 1);
@@ -54472,6 +54495,11 @@ async function llmFetch(model, payload) {
     logger.warn({ model: req.model, status: r.status }, "NIM answered 5xx \u2014 retrying on the fast NIM model.");
     reportModelStall(req.model);
     req = chatRequestFor(NIM_FAST_MODEL);
+    r = await timedFetch(req, payload);
+  }
+  if (!r.ok && req.provider === "nvidia-nim") {
+    reportNimDegraded(`HTTP ${r.status} after key rotation, backoff, and fast-model retry`);
+    req = openRouterRequestFor(model);
     r = await timedFetch(req, payload);
   }
   return { r, req };
@@ -54861,7 +54889,7 @@ function integrationStatus() {
     { key: "buddy", name: "Buddy AI (fallback LLM)", category: "llm", envVar: "BUDDY_API_KEY", configured: has("BUDDY_API_KEY") && has("BUDDY_BASE_URL") }
   ];
 }
-var OPENROUTER_DIRECT, OPENROUTER_VIA_HELICONE, NVIDIA_NIM_BASE, nimKeyIndex, NIM_AUTH_COOLDOWN_MS, nimDisabledUntil, MODEL_STALL_COOLDOWN_MS, modelStallUntil, NIM_PREFIXES, NIM_MODEL_FALLBACKS, NIM_GENERIC_FALLBACK, LEGACY_TO_NIM, NIM_FAST_MODEL, E2B_PKG, E2B_TIMEOUT_MS;
+var OPENROUTER_DIRECT, OPENROUTER_VIA_HELICONE, NVIDIA_NIM_BASE, nimKeyIndex, NIM_AUTH_COOLDOWN_MS, nimDisabledUntil, nimDegradedUntil, MODEL_STALL_COOLDOWN_MS, modelStallUntil, NIM_PREFIXES, NIM_MODEL_FALLBACKS, NIM_GENERIC_FALLBACK, NIM_FAST_MODEL, E2B_PKG, E2B_TIMEOUT_MS;
 var init_integrations = __esm({
   "src/lib/integrations.ts"() {
     "use strict";
@@ -54872,6 +54900,7 @@ var init_integrations = __esm({
     nimKeyIndex = 0;
     NIM_AUTH_COOLDOWN_MS = 10 * 6e4;
     nimDisabledUntil = 0;
+    nimDegradedUntil = 0;
     MODEL_STALL_COOLDOWN_MS = 5 * 6e4;
     modelStallUntil = /* @__PURE__ */ new Map();
     NIM_PREFIXES = [
@@ -54895,10 +54924,6 @@ var init_integrations = __esm({
       "z-ai/glm-5.1": "x-ai/grok-4.3"
     };
     NIM_GENERIC_FALLBACK = "x-ai/grok-4.3";
-    LEGACY_TO_NIM = {};
-    for (const [nim, legacy] of Object.entries(NIM_MODEL_FALLBACKS)) {
-      if (!LEGACY_TO_NIM[legacy]) LEGACY_TO_NIM[legacy] = nim;
-    }
     NIM_FAST_MODEL = "moonshotai/kimi-k2.6";
     E2B_PKG = "@e2b/code-interpreter";
     E2B_TIMEOUT_MS = 3e4;
