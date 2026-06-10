@@ -82315,10 +82315,10 @@ function decidePostAllowed(opts) {
   const max = opts.maxPerDay ?? MAX_PER_DAY;
   const spacingMin = opts.minSpacingMin ?? MIN_SPACING_MIN;
   const platform = opts.platform ?? "social";
-  if (opts.countLast24h >= max) {
+  if (max > 0 && opts.countLast24h >= max) {
     return `\u{1F6D1} Daily ${platform} post limit reached (${max}/day). Nothing was posted \u2014 the cap rolls over 24h after each post. Queue it for later.`;
   }
-  if (opts.last) {
+  if (spacingMin > 0 && opts.last) {
     const elapsedMin = (opts.now.getTime() - opts.last.getTime()) / 6e4;
     if (elapsedMin < spacingMin) {
       const wait = Math.ceil(spacingMin - elapsedMin);
@@ -82356,8 +82356,8 @@ var init_postLimit = __esm({
   "src/lib/postLimit.ts"() {
     "use strict";
     init_src();
-    MAX_PER_DAY = Number(process.env["SOCIAL_MAX_POSTS_PER_DAY"] ?? 12);
-    MIN_SPACING_MIN = Number(process.env["SOCIAL_MIN_SPACING_MINUTES"] ?? 90);
+    MAX_PER_DAY = Number(process.env["SOCIAL_MAX_POSTS_PER_DAY"] ?? 0);
+    MIN_SPACING_MIN = Number(process.env["SOCIAL_MIN_SPACING_MINUTES"] ?? 0);
   }
 });
 
