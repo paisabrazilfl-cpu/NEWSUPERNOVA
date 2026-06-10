@@ -54319,6 +54319,52 @@ function heliconeHeaders(extra) {
     ...extra
   };
 }
+function nimConfigured() {
+  return !!process.env["NVIDIA_API_KEY"];
+}
+function isNimModel(model) {
+  return NIM_PREFIXES.some((p) => model.startsWith(p));
+}
+function chatRequestFor(model) {
+  if (isNimModel(model) && nimConfigured()) {
+    const key = process.env["NVIDIA_API_KEY"];
+    const bodyExtras = {
+      // Verified live 2026-06-10: qwen/qwen3.5-* 500s without explicit
+      // sampling params, and Nemotron's default thinking budget can exceed the
+      // swarm's patience — so default thinking off (NIM_ENABLE_THINKING=on to
+      // re-enable) and set NVIDIA-recommended sampling.
+      temperature: 0.6,
+      top_p: 0.95
+    };
+    if (model.startsWith("nvidia/nemotron")) {
+      const thinking = (process.env["NIM_ENABLE_THINKING"] ?? "off").toLowerCase() === "on";
+      bodyExtras["chat_template_kwargs"] = { enable_thinking: thinking };
+    }
+    return {
+      url: `${NVIDIA_NIM_BASE}/chat/completions`,
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      model,
+      provider: "nvidia-nim",
+      bodyExtras
+    };
+  }
+  const effectiveModel = isNimModel(model) ? NIM_MODEL_FALLBACKS[model] ?? NIM_GENERIC_FALLBACK : model;
+  const orKey = process.env["OPENROUTER_API_KEY"];
+  if (!orKey) throw new Error("OPENROUTER_API_KEY is not set");
+  return {
+    url: `${llmBaseUrl()}/chat/completions`,
+    headers: {
+      Authorization: `Bearer ${orKey}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": "https://openclaw.abbyclaw.io",
+      "X-Title": "OPENCLAW OMEGA",
+      ...heliconeHeaders()
+    },
+    model: effectiveModel,
+    provider: "openrouter",
+    bodyExtras: {}
+  };
+}
 function formatHits(provider, query, hits) {
   if (!hits.length) return `no web results for "${query}" (via ${provider}).`;
   const body = hits.map((h, i) => `${i + 1}. ${h.title || "(untitled)"}
@@ -54674,6 +54720,7 @@ function integrationStatus() {
   const has = (k) => !!process.env[k];
   return [
     { key: "openrouter", name: "OpenRouter", category: "llm", envVar: "OPENROUTER_API_KEY", configured: has("OPENROUTER_API_KEY") },
+    { key: "nvidia-nim", name: "NVIDIA NIM", category: "llm", envVar: "NVIDIA_API_KEY", configured: has("NVIDIA_API_KEY") },
     { key: "neurobuddy", name: "Buddy AI (NeuroBuddy)", category: "llm", envVar: "NEUROBUDDY_API_KEY", configured: has("NEUROBUDDY_API_KEY") },
     { key: "helicone", name: "Helicone", category: "observability", envVar: "HELICONE_API_KEY", configured: has("HELICONE_API_KEY") },
     { key: "langsmith", name: "LangSmith (LangChain)", category: "observability", envVar: "LANGSMITH_API_KEY", configured: langsmithEnabled() },
@@ -54689,13 +54736,35 @@ function integrationStatus() {
     { key: "buddy", name: "Buddy AI (fallback LLM)", category: "llm", envVar: "BUDDY_API_KEY", configured: has("BUDDY_API_KEY") && has("BUDDY_BASE_URL") }
   ];
 }
-var OPENROUTER_DIRECT, OPENROUTER_VIA_HELICONE, E2B_PKG, E2B_TIMEOUT_MS;
+var OPENROUTER_DIRECT, OPENROUTER_VIA_HELICONE, NVIDIA_NIM_BASE, NIM_PREFIXES, NIM_MODEL_FALLBACKS, NIM_GENERIC_FALLBACK, E2B_PKG, E2B_TIMEOUT_MS;
 var init_integrations = __esm({
   "src/lib/integrations.ts"() {
     "use strict";
     init_logger2();
     OPENROUTER_DIRECT = "https://openrouter.ai/api/v1";
     OPENROUTER_VIA_HELICONE = "https://openrouter.helicone.ai/api/v1";
+    NVIDIA_NIM_BASE = "https://integrate.api.nvidia.com/v1";
+    NIM_PREFIXES = [
+      "nvidia/",
+      "deepseek-ai/",
+      "mistralai/",
+      "z-ai/",
+      "moonshotai/",
+      "minimaxai/",
+      "stepfun-ai/",
+      "qwen/qwen3.5-"
+    ];
+    NIM_MODEL_FALLBACKS = {
+      "nvidia/nemotron-3-ultra-550b-a55b": "x-ai/grok-4.3",
+      "nvidia/nemotron-3-super-120b-a12b": "x-ai/grok-4.20",
+      "deepseek-ai/deepseek-v4-flash": "x-ai/grok-build-0.1",
+      "deepseek-ai/deepseek-v4-pro": "qwen/qwen3.7-max",
+      "qwen/qwen3.5-397b-a17b": "qwen/qwen3.7-plus",
+      "qwen/qwen3.5-122b-a10b": "qwen/qwen3.6-plus",
+      "mistralai/mistral-medium-3.5-128b": "mistral/mistral-large",
+      "z-ai/glm-5.1": "x-ai/grok-4.3"
+    };
+    NIM_GENERIC_FALLBACK = "x-ai/grok-4.3";
     E2B_PKG = "@e2b/code-interpreter";
     E2B_TIMEOUT_MS = 3e4;
   }
@@ -87460,23 +87529,21 @@ function buildPostCaption(a, w, voice) {
   ].join("\n");
 }
 async function llmOnce(system, user, maxTokens = 160) {
-  const orKey = process.env["OPENROUTER_API_KEY"];
   const model = process.env["WORLD_VOICE_MODEL"] ?? "x-ai/grok-4.3";
-  if (orKey) {
-    try {
-      const r = await fetch(`${llmBaseUrl()}/chat/completions`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${orKey}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ model, messages: [{ role: "system", content: system }, { role: "user", content: user }], max_tokens: maxTokens, temperature: 0.95 }),
-        signal: AbortSignal.timeout(2e4)
-      });
-      if (r.ok) {
-        const d = await r.json();
-        const t = d.choices?.[0]?.message?.content?.trim();
-        if (t) return t;
-      }
-    } catch {
+  try {
+    const llmReq = chatRequestFor(model);
+    const r = await fetch(llmReq.url, {
+      method: "POST",
+      headers: llmReq.headers,
+      body: JSON.stringify({ ...llmReq.bodyExtras, model: llmReq.model, messages: [{ role: "system", content: system }, { role: "user", content: user }], max_tokens: maxTokens, temperature: 0.95 }),
+      signal: AbortSignal.timeout(2e4)
+    });
+    if (r.ok) {
+      const d = await r.json();
+      const t = d.choices?.[0]?.message?.content?.trim();
+      if (t) return t;
     }
+  } catch {
   }
   const bKey = process.env["BUDDY_API_KEY"], bBase = process.env["BUDDY_BASE_URL"];
   if (bKey && bBase) {
@@ -93975,10 +94042,10 @@ function requestsConnectedAccountAction(message) {
 }
 var CHAT_HISTORY_LIMIT = 16;
 var ABBY_ID2 = 1;
-var ABBY_DEFAULT_MODEL = "x-ai/grok-4.3";
+var ABBY_DEFAULT_MODEL = "nvidia/nemotron-3-ultra-550b-a55b";
 function resolveModel(agentId, agentModel, override) {
   const candidate = typeof override === "string" && override.trim() ? override : agentModel ?? ABBY_DEFAULT_MODEL;
-  if (agentId === ABBY_ID2 && !candidate.startsWith("x-ai/")) {
+  if (agentId === ABBY_ID2 && !candidate.startsWith("x-ai/") && !candidate.startsWith("nvidia/nemotron")) {
     return ABBY_DEFAULT_MODEL;
   }
   return candidate;
@@ -94017,6 +94084,14 @@ function openrouterHeaders() {
     ...heliconeHeaders()
   };
 }
+var NIM_FEATURED_MODELS = [
+  { id: "nvidia/nemotron-3-ultra-550b-a55b", name: "NVIDIA Nemotron 3 Ultra 550B (NIM)", context_length: 1e6 },
+  { id: "nvidia/nemotron-3-super-120b-a12b", name: "NVIDIA Nemotron 3 Super 120B (NIM)", context_length: 1e6 },
+  { id: "deepseek-ai/deepseek-v4-flash", name: "DeepSeek V4 Flash (NIM)", context_length: 1e6 },
+  { id: "qwen/qwen3.5-397b-a17b", name: "Qwen 3.5 397B MoE (NIM)", context_length: 262144 },
+  { id: "qwen/qwen3.5-122b-a10b", name: "Qwen 3.5 122B MoE (NIM)", context_length: 262144 },
+  { id: "mistralai/mistral-medium-3.5-128b", name: "Mistral Medium 3.5 128B (NIM)", context_length: 131072 }
+];
 router7.get("/ai/models", async (req, res) => {
   try {
     const r = await fetch(`${OPENROUTER_BASE}/models`, { headers: openrouterHeaders() });
@@ -94039,7 +94114,7 @@ router7.get("/ai/models", async (req, res) => {
       "mistral/mistral-large"
     ];
     const models = (data.data ?? []).filter((m) => featured.includes(m.id));
-    res.json({ models });
+    res.json({ models: [...NIM_FEATURED_MODELS, ...models] });
   } catch (err) {
     req.log.error({ err }, "Failed to fetch OpenRouter models");
     res.status(500).json({ error: "Failed to fetch models" });
@@ -94232,11 +94307,13 @@ PUBLIC-POST SAFEGUARD (critical): a public post must be built ONLY from content 
     }
     try {
       const decisionSystem = `You are the router for ABBY, orchestrator of an autonomous agent swarm that can search the web, browse sites, scrape pages, run code, call APIs, use long-term memory, generate images and downloadable files, AND act on the operator's OWN connected accounts \u2014 social platforms via their official APIs (Instagram, Facebook, X, LinkedIn, TikTok, YouTube, \u2026) and SaaS apps via Composio (Gmail, Slack, GitHub, Notion, Google Calendar, Sheets, \u2026). Classify the operator's latest message: is it an ACTIONABLE TASK that needs the swarm (anything requiring live/current data, web search, browsing, scraping, finding/pricing/looking things up online, code execution, multi-step research, OR checking/acting on the operator's own connected account) \u2014 or just CONVERSATION you can answer yourself (greetings, opinions, explanations, questions about you/the system)? CRITICAL: if the operator asks about or wants an action on THEIR OWN connected service \u2014 e.g. 'check my Instagram messages', 'any new emails?', 'post to my LinkedIn', 'what's on my calendar' \u2014 that is ACTIONABLE: dispatch=true with a goal telling the swarm to use the official API / Composio for that account. NEVER answer 'I don't have access to your personal account' \u2014 the swarm acts through the operator's connected integrations, and if an account isn't connected the CLAW reports that honestly. Respond with ONLY minified JSON, no markdown and no prose: {"dispatch": true|false, "goal": "<self-contained instruction for the swarm; required if dispatch=true>", "reply": "<your conversational answer; required if dispatch=false>"}. If the request needs real or current information you don't already have, prefer dispatch=true. ALSO dispatch=true whenever the request asks you to PRODUCE or SAVE a downloadable file/artifact (deck, report, PDF, CSV, document, code file), run code, fill/submit a form, or do any multi-step build \u2014 those need tools (save_artifact, code, web) that only the CLAWs have, so answering inline cannot actually create a downloadable file. Only answer inline (dispatch=false) for pure conversation or a quick factual answer that needs no tool and no saved file. The \`reply\` must be ABBY's actual answer to the operator AS ABBY \u2014 never describe this router, the classification, or that you are deciding anything; the operator must never see routing internals.`;
-      const decRes = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+      const decReq = chatRequestFor(model);
+      const decRes = await fetch(decReq.url, {
         method: "POST",
-        headers: openrouterHeaders(),
+        headers: decReq.headers,
         body: JSON.stringify({
-          model,
+          ...decReq.bodyExtras,
+          model: decReq.model,
           messages: [{ role: "system", content: decisionSystem }, ...history],
           stream: false,
           max_tokens: 800,
@@ -94288,11 +94365,13 @@ The agents are starting now; their work and results will stream into this channe
     }
   }
   try {
-    const orRes = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+    const chatReq = chatRequestFor(model);
+    const orRes = await fetch(chatReq.url, {
       method: "POST",
-      headers: openrouterHeaders(),
+      headers: chatReq.headers,
       body: JSON.stringify({
-        model,
+        ...chatReq.bodyExtras,
+        model: chatReq.model,
         stream: true,
         messages: chatMessages,
         max_tokens: 700
@@ -94381,10 +94460,11 @@ router7.post("/ai/complete", async (req, res) => {
     { role: "user", content: message }
   ];
   try {
-    const r = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+    const compReq = chatRequestFor(model);
+    const r = await fetch(compReq.url, {
       method: "POST",
-      headers: openrouterHeaders(),
-      body: JSON.stringify({ model, messages, max_tokens: 512 })
+      headers: compReq.headers,
+      body: JSON.stringify({ ...compReq.bodyExtras, model: compReq.model, messages, max_tokens: 512 })
     });
     if (!r.ok) {
       if (buddyConfigured()) {
@@ -94481,11 +94561,13 @@ async function completeChat(model, system, user, maxTokens = 800) {
   const startedAt = /* @__PURE__ */ new Date();
   let r;
   try {
-    r = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+    const llmReq = chatRequestFor(model);
+    r = await fetch(llmReq.url, {
       method: "POST",
-      headers: openrouterHeaders(),
+      headers: llmReq.headers,
       body: JSON.stringify({
-        model,
+        ...llmReq.bodyExtras,
+        model: llmReq.model,
         messages: [
           { role: "system", content: system },
           { role: "user", content: user }
@@ -94524,22 +94606,23 @@ async function completeChat(model, system, user, maxTokens = 800) {
   return out;
 }
 async function completeChatTurn(model, messages, tools) {
-  const body = { model, messages, stream: false, max_tokens: 8e3 };
+  const llmReq = chatRequestFor(model);
+  const body = { ...llmReq.bodyExtras, model: llmReq.model, messages, stream: false, max_tokens: 8e3 };
   if (tools.length) {
     body["tools"] = tools;
     body["tool_choice"] = "auto";
   }
-  let r = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+  let r = await fetch(llmReq.url, {
     method: "POST",
-    headers: openrouterHeaders(),
+    headers: llmReq.headers,
     body: JSON.stringify(body)
   });
   if (!r.ok && tools.length) {
     delete body["tools"];
     delete body["tool_choice"];
-    r = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+    r = await fetch(llmReq.url, {
       method: "POST",
-      headers: openrouterHeaders(),
+      headers: llmReq.headers,
       body: JSON.stringify(body)
     });
   }
@@ -95757,7 +95840,6 @@ function requireOperator(req, res, next) {
 
 // src/routes/external.ts
 var router11 = (0, import_express11.Router)();
-var OPENROUTER_BASE2 = llmBaseUrl();
 var AGENT_NAME_MAP = {
   abby: 1,
   forge: 2,
@@ -95867,20 +95949,15 @@ router11.post("/external/v1/chat/completions", async (req, res) => {
     res.status(404).json({ error: `Agent '${model}' not found` });
     return;
   }
-  const orKey = process.env["OPENROUTER_API_KEY"];
-  if (!orKey) {
-    res.status(500).json({ error: "OPENROUTER_API_KEY not configured on server" });
+  let llmReq;
+  try {
+    llmReq = chatRequestFor(agent.model ?? ABBY_DEFAULT_MODEL);
+  } catch (e) {
+    res.status(500).json({ error: `LLM provider not configured: ${String(e)}` });
     return;
   }
   const systemPrompt = (AGENT_PERSONAS2[agentId] ?? `You are ${agent.name}, an AI agent in the ABBY CLAW swarm.`) + ANTI_HALLUCINATION_DIRECTIVE;
   const orMessages = [{ role: "system", content: systemPrompt }, ...messages];
-  const orHeaders = {
-    "Authorization": `Bearer ${orKey}`,
-    "Content-Type": "application/json",
-    "HTTP-Referer": "https://openclaw.abbyclaw.io",
-    "X-Title": "OPENCLAW OMEGA External API",
-    ...heliconeHeaders()
-  };
   if (stream) {
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
@@ -95897,10 +95974,10 @@ router11.post("/external/v1/chat/completions", async (req, res) => {
 `);
     };
     try {
-      const orRes = await fetch(`${OPENROUTER_BASE2}/chat/completions`, {
+      const orRes = await fetch(llmReq.url, {
         method: "POST",
-        headers: orHeaders,
-        body: JSON.stringify({ model: agent.model, stream: true, messages: orMessages, max_tokens })
+        headers: llmReq.headers,
+        body: JSON.stringify({ ...llmReq.bodyExtras, model: llmReq.model, stream: true, messages: orMessages, max_tokens })
       });
       if (!orRes.ok) {
         const errText = await orRes.text();
@@ -95947,10 +96024,10 @@ router11.post("/external/v1/chat/completions", async (req, res) => {
     return;
   }
   try {
-    const orRes = await fetch(`${OPENROUTER_BASE2}/chat/completions`, {
+    const orRes = await fetch(llmReq.url, {
       method: "POST",
-      headers: orHeaders,
-      body: JSON.stringify({ model: agent.model, messages: orMessages, max_tokens })
+      headers: llmReq.headers,
+      body: JSON.stringify({ ...llmReq.bodyExtras, model: llmReq.model, messages: orMessages, max_tokens })
     });
     const data = await orRes.json();
     const content = data.choices?.[0]?.message?.content ?? "";
@@ -96805,13 +96882,21 @@ INSERT INTO "world_state" ("id") VALUES (1) ON CONFLICT ("id") DO NOTHING;
 var SEED_AGENTS = `
 INSERT INTO agents (name, role, description, status, color, avatar_initials, model, capabilities)
 VALUES
-  ('ABBY',   'Orchestrator',  'Master orchestrator and directive router',       'idle', '#00e5ff', 'AB', 'x-ai/grok-4.3',         ARRAY['orchestration','planning','routing']),
-  ('CLAW-1', 'Code Executor', 'Code generation and execution specialist',       'idle', '#bf00ff', 'C1', 'qwen/qwen3.7-plus',      ARRAY['code','execution','debugging']),
-  ('CLAW-2', 'Browser Agent', 'Web browsing and scraping via Steel',            'idle', '#0066ff', 'C2', 'x-ai/grok-build-0.1',   ARRAY['browser','scraping','research']),
-  ('CLAW-3', 'Memory & RAG',  'Long-term memory and retrieval',                 'idle', '#00cc88', 'C3', 'qwen/qwen3.7-max',       ARRAY['memory','rag','search']),
-  ('CLAW-4', 'API Connector', 'External API integration and automation',        'idle', '#ff6b00', 'C4', 'x-ai/grok-4.20',         ARRAY['api','integration','automation']),
-  ('MR.NICE','Social Agent',  'Social media and communications specialist',     'idle', '#ff2d78', 'MN', 'qwen/qwen3.6-plus',      ARRAY['social','communications','engagement'])
+  ('ABBY',   'Orchestrator',  'Master orchestrator and directive router',       'idle', '#00e5ff', 'AB', 'nvidia/nemotron-3-ultra-550b-a55b',  ARRAY['orchestration','planning','routing']),
+  ('CLAW-1', 'Code Executor', 'Code generation and execution specialist',       'idle', '#bf00ff', 'C1', 'qwen/qwen3.5-397b-a17b',             ARRAY['code','execution','debugging']),
+  ('CLAW-2', 'Browser Agent', 'Web browsing and scraping via Steel',            'idle', '#0066ff', 'C2', 'deepseek-ai/deepseek-v4-flash',      ARRAY['browser','scraping','research']),
+  ('CLAW-3', 'Memory & RAG',  'Long-term memory and retrieval',                 'idle', '#00cc88', 'C3', 'qwen/qwen3.5-122b-a10b',             ARRAY['memory','rag','search']),
+  ('CLAW-4', 'API Connector', 'External API integration and automation',        'idle', '#ff6b00', 'C4', 'nvidia/nemotron-3-super-120b-a12b',  ARRAY['api','integration','automation']),
+  ('MR.NICE','Social Agent',  'Social media and communications specialist',     'idle', '#ff2d78', 'MN', 'qwen/qwen3.5-122b-a10b',             ARRAY['social','communications','engagement'])
 `;
+var AGENT_MODEL_UPGRADES = [
+  ["x-ai/grok-4.3", "nvidia/nemotron-3-ultra-550b-a55b"],
+  ["qwen/qwen3.7-plus", "qwen/qwen3.5-397b-a17b"],
+  ["x-ai/grok-build-0.1", "deepseek-ai/deepseek-v4-flash"],
+  ["qwen/qwen3.7-max", "qwen/qwen3.5-122b-a10b"],
+  ["x-ai/grok-4.20", "nvidia/nemotron-3-super-120b-a12b"],
+  ["qwen/qwen3.6-plus", "qwen/qwen3.5-122b-a10b"]
+];
 var SEED_CHANNELS = `
 INSERT INTO channels (name, type, description)
 VALUES
@@ -96845,6 +96930,9 @@ async function runMigrations() {
     }
     for (const [id, caps] of Object.entries(AGENT_CAPABILITIES)) {
       await client.query("UPDATE agents SET capabilities = $1 WHERE id = $2", [caps, Number(id)]);
+    }
+    for (const [oldModel, newModel] of AGENT_MODEL_UPGRADES) {
+      await client.query("UPDATE agents SET model = $2 WHERE model = $1", [oldModel, newModel]);
     }
   } catch (err) {
     logger.error({ err }, "Migration failed \u2014 continuing anyway");
