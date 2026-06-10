@@ -2,7 +2,7 @@ import { Router } from "express";
 import { db } from "@workspace/db";
 import { agentsTable, messagesTable, attachmentsTable } from "@workspace/db";
 import { eq, and, inArray, desc } from "drizzle-orm";
-import { llmBaseUrl, heliconeHeaders, integrationStatus, llmFetch } from "../lib/integrations";
+import { llmBaseUrl, heliconeHeaders, integrationStatus, llmFetch, providerLabel } from "../lib/integrations";
 import { listSecretNames } from "../lib/vault";
 import { buildCapabilityCard, getToolNamesForAgent } from "../tools";
 import { orchestrateGoal } from "../orchestrator";
@@ -687,7 +687,7 @@ router.post("/ai/chat", async (req, res) => {
   }
 
   try {
-    const { r: orRes } = await llmFetch(model, {
+    const { r: orRes, req: llmReq } = await llmFetch(model, {
       stream: true,
       messages: chatMessages,
       max_tokens: 700,
@@ -695,12 +695,12 @@ router.post("/ai/chat", async (req, res) => {
 
     if (!orRes.ok) {
       const errText = await orRes.text();
-      req.log.error({ status: orRes.status, errText }, "OpenRouter error");
-      if (await tryBuddyFallback(`openrouter ${orRes.status}`)) return;
+      req.log.error({ status: orRes.status, provider: llmReq.provider, model: llmReq.model, errText }, "LLM provider error");
+      if (await tryBuddyFallback(`${llmReq.provider} ${orRes.status}`)) return;
       const hint =
-        orRes.status === 402
+        orRes.status === 402 && llmReq.provider === "openrouter"
           ? "OpenRouter is out of credits. Add credits, or configure BUDDY_API_KEY/BUDDY_BASE_URL for automatic fallback."
-          : `OpenRouter error ${orRes.status}: ${errText.slice(0, 200)}`;
+          : `${providerLabel(llmReq)} error ${orRes.status} (${llmReq.model}): ${errText.slice(0, 200)}`;
       sendEvent({ error: hint });
       sendEvent({ done: true });
       res.end(); return;
@@ -803,9 +803,9 @@ router.post("/ai/complete", async (req, res) => {
       }
       const errText = (await r.text()).slice(0, 200);
       const hint =
-        r.status === 402
+        r.status === 402 && llmReq.provider === "openrouter"
           ? "OpenRouter is out of credits. Add credits or configure Buddy fallback (BUDDY_API_KEY/BUDDY_BASE_URL)."
-          : `OpenRouter error ${r.status}: ${errText}`;
+          : `${providerLabel(llmReq)} error ${r.status} (${llmReq.model}): ${errText}`;
       res.status(502).json({ error: hint });
       return;
     }

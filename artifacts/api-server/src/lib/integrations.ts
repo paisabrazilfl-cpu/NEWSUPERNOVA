@@ -360,6 +360,16 @@ export async function llmFetch(
     r = await timedFetch(req, payload);
   }
 
+  // Still rate-limited after exhausting the pool (single key, free-tier RPM —
+  // observed live 2026-06-10 as a burst of 429s): back off briefly and retry
+  // once instead of surfacing a transient 429 to the operator.
+  if (!r.ok && req.provider === "nvidia-nim" && r.status === 429) {
+    const backoffMs = Number(process.env["NIM_429_BACKOFF_MS"]) || 2_500;
+    logger.warn({ model: req.model, backoffMs }, "NIM rate-limited on every pooled key — backing off and retrying once.");
+    await new Promise((resolve) => setTimeout(resolve, backoffMs));
+    r = await timedFetch(req, payload);
+  }
+
   // NIM-side 5xx (Nemotron 504s under load — observed live) → fast NIM model.
   if (!r.ok && req.provider === "nvidia-nim" && r.status >= 500 && req.model !== NIM_FAST_MODEL) {
     logger.warn({ model: req.model, status: r.status }, "NIM answered 5xx — retrying on the fast NIM model.");
@@ -369,6 +379,11 @@ export async function llmFetch(
   }
 
   return { r, req };
+}
+
+/** Human label for an LlmChatRequest's provider — for error messages the operator sees. */
+export function providerLabel(req: LlmChatRequest): string {
+  return req.provider === "nvidia-nim" ? "NVIDIA NIM" : "OpenRouter";
 }
 
 // ─── Tavily web search ───────────────────────────────────────────────────────
