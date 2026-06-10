@@ -94219,10 +94219,10 @@ function requestsConnectedAccountAction(message) {
 }
 var CHAT_HISTORY_LIMIT = 16;
 var ABBY_ID2 = 1;
-var ABBY_DEFAULT_MODEL = "nvidia/nemotron-3-ultra-550b-a55b";
+var ABBY_DEFAULT_MODEL = "moonshotai/kimi-k2.6";
 function resolveModel(agentId, agentModel, override) {
   const candidate = typeof override === "string" && override.trim() ? override : agentModel ?? ABBY_DEFAULT_MODEL;
-  if (agentId === ABBY_ID2 && !candidate.startsWith("x-ai/") && !candidate.startsWith("nvidia/nemotron")) {
+  if (agentId === ABBY_ID2 && !candidate.startsWith("x-ai/") && !candidate.startsWith("nvidia/nemotron") && !candidate.startsWith("moonshotai/")) {
     return ABBY_DEFAULT_MODEL;
   }
   return candidate;
@@ -94262,6 +94262,8 @@ function openrouterHeaders() {
   };
 }
 var NIM_FEATURED_MODELS = [
+  { id: "moonshotai/kimi-k2.6", name: "Moonshot Kimi K2.6 (NIM, fast)", context_length: 262144 },
+  { id: "meta/llama-3.1-8b-instruct", name: "Meta Llama 3.1 8B (NIM, fast)", context_length: 131072 },
   { id: "nvidia/nemotron-3-ultra-550b-a55b", name: "NVIDIA Nemotron 3 Ultra 550B (NIM)", context_length: 1e6 },
   { id: "nvidia/nemotron-3-super-120b-a12b", name: "NVIDIA Nemotron 3 Super 120B (NIM)", context_length: 1e6 },
   { id: "deepseek-ai/deepseek-v4-flash", name: "DeepSeek V4 Flash (NIM)", context_length: 1e6 },
@@ -97092,7 +97094,7 @@ INSERT INTO "world_state" ("id") VALUES (1) ON CONFLICT ("id") DO NOTHING;
 var SEED_AGENTS = `
 INSERT INTO agents (name, role, description, status, color, avatar_initials, model, capabilities)
 VALUES
-  ('ABBY',   'Orchestrator',  'Master orchestrator and directive router',       'idle', '#00e5ff', 'AB', 'nvidia/nemotron-3-ultra-550b-a55b',  ARRAY['orchestration','planning','routing']),
+  ('ABBY',   'Orchestrator',  'Master orchestrator and directive router',       'idle', '#00e5ff', 'AB', 'moonshotai/kimi-k2.6',               ARRAY['orchestration','planning','routing']),
   ('CLAW-1', 'Code Executor', 'Code generation and execution specialist',       'idle', '#bf00ff', 'C1', 'qwen/qwen3.5-397b-a17b',             ARRAY['code','execution','debugging']),
   ('CLAW-2', 'Browser Agent', 'Web browsing and scraping via Steel',            'idle', '#0066ff', 'C2', 'deepseek-ai/deepseek-v4-flash',      ARRAY['browser','scraping','research']),
   ('CLAW-3', 'Memory & RAG',  'Long-term memory and retrieval',                 'idle', '#00cc88', 'C3', 'qwen/qwen3.5-122b-a10b',             ARRAY['memory','rag','search']),
@@ -97100,7 +97102,11 @@ VALUES
   ('MR.NICE','Social Agent',  'Social media and communications specialist',     'idle', '#ff2d78', 'MN', 'qwen/qwen3.5-122b-a10b',             ARRAY['social','communications','engagement'])
 `;
 var AGENT_MODEL_UPGRADES = [
-  ["x-ai/grok-4.3", "nvidia/nemotron-3-ultra-550b-a55b"],
+  ["x-ai/grok-4.3", "moonshotai/kimi-k2.6"],
+  // 2026-06-10: nemotron-3-ultra-550b stalled live (45-60s, zero bytes) while
+  // kimi-k2.6 answered in <1s — fast models in charge. Runs AFTER the
+  // grok-4.3 remap above, so legacy grok rows chain straight to kimi too.
+  ["nvidia/nemotron-3-ultra-550b-a55b", "moonshotai/kimi-k2.6"],
   ["qwen/qwen3.7-plus", "qwen/qwen3.5-397b-a17b"],
   ["x-ai/grok-build-0.1", "deepseek-ai/deepseek-v4-flash"],
   ["qwen/qwen3.7-max", "qwen/qwen3.5-122b-a10b"],
