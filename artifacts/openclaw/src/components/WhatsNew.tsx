@@ -2,7 +2,7 @@ import { useState } from "react";
 import {
   Sparkles, X, Image as ImageIcon, FileDown, Paperclip, Mic, Copy, Compass,
   BookOpen, ShieldCheck, MessagesSquare, Wrench, RotateCcw, Link2, Gauge,
-  LayoutTemplate, Globe, KeyRound, Scale, BadgeCheck,
+  LayoutTemplate, Globe, KeyRound, Scale, BadgeCheck, Cpu,
 } from "lucide-react";
 
 /**
@@ -18,6 +18,7 @@ interface Item {
 }
 
 const CAPABILITIES: Item[] = [
+  { icon: Cpu, title: "NVIDIA NIM model engine", body: "The swarm now runs on NVIDIA-hosted models — ABBY on Nemotron 3 Ultra 550B (1M context, agentic reasoning), the CLAWs on Nemotron Super, DeepSeek V4 Flash, and Qwen 3.5 MoE — each live-verified for chat, tool calling, and JSON mode. If the NVIDIA key is missing, every agent transparently falls back to its previous model, so nothing ever goes dark." },
   { icon: LayoutTemplate, title: "$0 on-brand image cards", body: "Quotes, hooks, news, and stat posts render as real 1080×1080 PNGs by code — terminal/cyber on-brand, at about $0 each. The swarm reaches for these before paid image generation, paying only when you genuinely need a photoreal picture." },
   { icon: Globe, title: "ASCII world stories", body: "Generate a stylized ASCII \"world\" story or triptych as a real, shareable image — a distinct on-brand visual format alongside the cards." },
   { icon: KeyRound, title: "Uses your saved API keys automatically", body: "The swarm reads the credentials in Settings → Stored Secrets and authenticates with them at call time (write-only — never shown to the model). Tasks needing Render, GitHub, and other APIs just work instead of reporting \"not connected.\"" },

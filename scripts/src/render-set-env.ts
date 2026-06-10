@@ -24,6 +24,7 @@ const RENDER_API = "https://api.render.com/v1";
 // not set locally keeps its current value on Render (never wiped).
 const MANAGED_KEYS = [
   "OPENROUTER_API_KEY",
+  "NVIDIA_API_KEY",
   "STEEL_API_KEY",
   "FIRECRAWL_API_KEY",
   "GEMINI_API_KEY",

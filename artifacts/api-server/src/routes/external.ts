@@ -20,13 +20,11 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import { db } from "@workspace/db";
 import { agentsTable, messagesTable, channelsTable } from "@workspace/db";
 import { eq, desc } from "drizzle-orm";
-import { llmBaseUrl, heliconeHeaders } from "../lib/integrations";
+import { chatRequestFor } from "../lib/integrations";
 import { timingSafeStrEqual } from "../lib/auth";
-import { ANTI_HALLUCINATION_DIRECTIVE } from "./ai";
+import { ANTI_HALLUCINATION_DIRECTIVE, ABBY_DEFAULT_MODEL } from "./ai";
 
 const router = Router();
-// Routed through Helicone when configured (see lib/integrations).
-const OPENROUTER_BASE = llmBaseUrl();
 
 const AGENT_NAME_MAP: Record<string, number> = {
   abby:    1,
@@ -150,18 +148,16 @@ router.post("/external/v1/chat/completions", async (req, res) => {
   }
   if (!agent) { res.status(404).json({ error: `Agent '${model}' not found` }); return; }
 
-  const orKey = process.env["OPENROUTER_API_KEY"];
-  if (!orKey) { res.status(500).json({ error: "OPENROUTER_API_KEY not configured on server" }); return; }
+  // Provider routing (NVIDIA NIM vs OpenRouter) + fallback model remapping.
+  let llmReq: ReturnType<typeof chatRequestFor>;
+  try {
+    llmReq = chatRequestFor(agent.model ?? ABBY_DEFAULT_MODEL);
+  } catch (e) {
+    res.status(500).json({ error: `LLM provider not configured: ${String(e)}` }); return;
+  }
 
   const systemPrompt = (AGENT_PERSONAS[agentId] ?? `You are ${agent.name}, an AI agent in the ABBY CLAW swarm.`) + ANTI_HALLUCINATION_DIRECTIVE;
   const orMessages = [{ role: "system", content: systemPrompt }, ...messages];
-  const orHeaders = {
-    "Authorization": `Bearer ${orKey}`,
-    "Content-Type": "application/json",
-    "HTTP-Referer": "https://openclaw.abbyclaw.io",
-    "X-Title": "OPENCLAW OMEGA External API",
-    ...heliconeHeaders(),
-  };
 
   // ── Streaming response ───────────────────────────────────────────────────
   if (stream) {
@@ -177,10 +173,10 @@ router.post("/external/v1/chat/completions", async (req, res) => {
     };
 
     try {
-      const orRes = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+      const orRes = await fetch(llmReq.url, {
         method: "POST",
-        headers: orHeaders,
-        body: JSON.stringify({ model: agent.model, stream: true, messages: orMessages, max_tokens }),
+        headers: llmReq.headers,
+        body: JSON.stringify({ ...llmReq.bodyExtras, model: llmReq.model, stream: true, messages: orMessages, max_tokens }),
       });
 
       if (!orRes.ok) {
@@ -223,10 +219,10 @@ router.post("/external/v1/chat/completions", async (req, res) => {
 
   // ── Non-streaming response ───────────────────────────────────────────────
   try {
-    const orRes = await fetch(`${OPENROUTER_BASE}/chat/completions`, {
+    const orRes = await fetch(llmReq.url, {
       method: "POST",
-      headers: orHeaders,
-      body: JSON.stringify({ model: agent.model, messages: orMessages, max_tokens }),
+      headers: llmReq.headers,
+      body: JSON.stringify({ ...llmReq.bodyExtras, model: llmReq.model, messages: orMessages, max_tokens }),
     });
     const data = await orRes.json() as {
       choices?: { message?: { content?: string } }[];
