@@ -91,6 +91,11 @@ describe("requestsConnectedAccountAction — dispatch operator-account requests,
       "do I have unread Slack messages",
       "open a GitHub issue on my repo",
       "Post to my IG right now as a test Ai news 2d image render",
+      // Scheduled/cron-phrased posting tasks must ALSO classify as connected-account
+      // actions so the cron path routes them to the Composio-capable agent (WIRE).
+      "Every morning post the daily AI news card to my Instagram",
+      "Post a motivational quote to my instagram feed",
+      "publish today's market update to my IG",
     ]) {
       expect(requestsConnectedAccountAction(m), `should dispatch: "${m}"`).toBe(true);
     }
