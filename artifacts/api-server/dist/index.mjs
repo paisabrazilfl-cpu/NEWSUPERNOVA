@@ -54725,6 +54725,9 @@ async function composioConnectionStatus(connectionId) {
     toolkit: String(c["toolkit"]?.["slug"] ?? c["toolkit"] ?? "")
   };
 }
+async function composioDeleteConnection(connectionId) {
+  await composioApi("DELETE", `/connected_accounts/${encodeURIComponent(connectionId)}`);
+}
 function integrationStatus() {
   const has = (k) => !!process.env[k];
   return [
@@ -95149,9 +95152,12 @@ async function runCronJob(job, channelId = DEFAULT_CHANNEL_ID) {
   await db.update(cronJobsTable).set({ lastRunAt: /* @__PURE__ */ new Date(), runCount: job.runCount + 1, nextRunAt: computeNextRun(job.schedule) }).where(eq(cronJobsTable.id, job.id)).catch((err) => logger.error({ err, jobId: job.id }, "scheduler: bookkeeping update failed"));
   try {
     if (job.agentId === ABBY_ID3) {
-      const connectedAccount = requestsConnectedAccountAction(job.task);
+      const connectedAccount = requestsConnectedAccountAction(`${job.name} ${job.task}`);
+      const goal = connectedAccount && !requestsConnectedAccountAction(job.task) ? `${job.task}
+
+(Scheduled job name: "${job.name}" \u2014 honor the platform/action it names: an Instagram job means actually PUBLISH to the operator's connected Instagram via image_generate + instagram_post, not just draft the content.)` : job.task;
       await orchestrateGoal({
-        goal: job.task,
+        goal,
         channelId,
         priority: "normal",
         sourceContext: job.payload ?? null,
@@ -96175,6 +96181,16 @@ router12.get("/integrations/composio/connections/:id", requireOperator, async (r
     res.json(await composioConnectionStatus(String(req.params.id)));
   } catch (err) {
     req.log.error({ err }, "composio: connection status failed");
+    res.status(502).json({ error: String(err instanceof Error ? err.message : err) });
+  }
+});
+router12.delete("/integrations/composio/connections/:id", requireOperator, async (req, res) => {
+  if (!guardComposio(res)) return;
+  try {
+    await composioDeleteConnection(String(req.params.id));
+    res.json({ ok: true, deleted: String(req.params.id) });
+  } catch (err) {
+    req.log.error({ err, connectionId: req.params.id }, "composio: delete connection failed");
     res.status(502).json({ error: String(err instanceof Error ? err.message : err) });
   }
 });
