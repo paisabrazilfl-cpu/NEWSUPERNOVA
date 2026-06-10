@@ -54334,6 +54334,9 @@ function reportNimHttpFailure(status) {
     );
   }
 }
+function resetNimHealth() {
+  nimDisabledUntil = 0;
+}
 function isNimModel(model) {
   return NIM_PREFIXES.some((p) => model.startsWith(p));
 }
@@ -96347,6 +96350,7 @@ var import_express15 = __toESM(require_express2(), 1);
 init_src();
 init_drizzle_orm();
 init_vault2();
+init_integrations();
 var router15 = (0, import_express15.Router)();
 function fmt2(row) {
   return {
@@ -96406,6 +96410,7 @@ router15.put("/vault", async (req, res) => {
       }
     }).returning();
     process.env[name] = value;
+    if (name === "NVIDIA_API_KEY") resetNimHealth();
     res.status(200).json(fmt2(row));
   } catch (err) {
     req.log.error({ err }, "Failed to store secret");
