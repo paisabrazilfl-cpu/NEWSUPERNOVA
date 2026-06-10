@@ -1,12 +1,15 @@
 import { pool } from "@workspace/db";
 
 /**
- * Posting rate limiter — keeps the swarm from machine-gunning a public feed.
- * Fully automated (no human gate): a daily cap + minimum spacing between posts.
- * Configurable via env; sensible defaults (12/day, 90 min apart).
+ * Posting rate limiter — optional guard against machine-gunning a public feed.
+ *
+ * The cap is OFF by default (operator removed it): no daily limit, no spacing.
+ * It can be re-enabled per-deploy via env — set SOCIAL_MAX_POSTS_PER_DAY and/or
+ * SOCIAL_MIN_SPACING_MINUTES to a positive number to turn the respective guard
+ * back on. 0 (the default) means unlimited / no spacing.
  */
-const MAX_PER_DAY = Number(process.env["SOCIAL_MAX_POSTS_PER_DAY"] ?? 12);
-const MIN_SPACING_MIN = Number(process.env["SOCIAL_MIN_SPACING_MINUTES"] ?? 90);
+const MAX_PER_DAY = Number(process.env["SOCIAL_MAX_POSTS_PER_DAY"] ?? 0);
+const MIN_SPACING_MIN = Number(process.env["SOCIAL_MIN_SPACING_MINUTES"] ?? 0);
 
 /** Pure decision (testable without a DB): returns a block message, or null if allowed. */
 export function decidePostAllowed(opts: {
@@ -20,10 +23,11 @@ export function decidePostAllowed(opts: {
   const max = opts.maxPerDay ?? MAX_PER_DAY;
   const spacingMin = opts.minSpacingMin ?? MIN_SPACING_MIN;
   const platform = opts.platform ?? "social";
-  if (opts.countLast24h >= max) {
+  // max <= 0 → no daily cap; spacingMin <= 0 → no spacing. Cap is removed by default.
+  if (max > 0 && opts.countLast24h >= max) {
     return `🛑 Daily ${platform} post limit reached (${max}/day). Nothing was posted — the cap rolls over 24h after each post. Queue it for later.`;
   }
-  if (opts.last) {
+  if (spacingMin > 0 && opts.last) {
     const elapsedMin = (opts.now.getTime() - opts.last.getTime()) / 60000;
     if (elapsedMin < spacingMin) {
       const wait = Math.ceil(spacingMin - elapsedMin);
