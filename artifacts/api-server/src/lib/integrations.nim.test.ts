@@ -5,13 +5,14 @@
  * equivalents when it is not (zero loss of function on a key-less deploy).
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { isNimModel, nimConfigured, chatRequestFor, NIM_MODEL_FALLBACKS } from "./integrations";
+import { isNimModel, nimConfigured, chatRequestFor, NIM_MODEL_FALLBACKS, reportNimHttpFailure, resetNimHealth, nimHealthy } from "./integrations";
 
 const ENV_KEYS = ["NVIDIA_API_KEY", "OPENROUTER_API_KEY", "HELICONE_API_KEY", "NIM_ENABLE_THINKING"] as const;
 const saved: Record<string, string | undefined> = {};
 
 beforeEach(() => {
   for (const k of ENV_KEYS) { saved[k] = process.env[k]; delete process.env[k]; }
+  resetNimHealth();
 });
 afterEach(() => {
   for (const k of ENV_KEYS) {
@@ -111,5 +112,38 @@ describe("chatRequestFor", () => {
 
   it("throws a clear error when no provider key exists at all", () => {
     expect(() => chatRequestFor("x-ai/grok-4.3")).toThrow("OPENROUTER_API_KEY");
+  });
+});
+
+describe("NIM auth circuit-breaker — a bad NVIDIA key can never take the swarm down", () => {
+  it("trips on 401/403 and reroutes NIM models to OpenRouter despite the key being set", () => {
+    process.env["NVIDIA_API_KEY"] = "nvapi-revoked";
+    process.env["OPENROUTER_API_KEY"] = "or-test";
+    // Before the breaker trips: routes to NIM.
+    expect(chatRequestFor("qwen/qwen3.5-397b-a17b").provider).toBe("nvidia-nim");
+    // Observed live 2026-06-10: integrate.api.nvidia.com → 403 Authorization failed.
+    reportNimHttpFailure(403);
+    expect(nimHealthy()).toBe(false);
+    const r = chatRequestFor("qwen/qwen3.5-397b-a17b");
+    expect(r.provider).toBe("openrouter");
+    expect(r.model).toBe(NIM_MODEL_FALLBACKS["qwen/qwen3.5-397b-a17b"]);
+  });
+
+  it("does NOT trip on transient statuses (429/500) — only auth failures", () => {
+    process.env["NVIDIA_API_KEY"] = "nvapi-good";
+    process.env["OPENROUTER_API_KEY"] = "or-test";
+    reportNimHttpFailure(429);
+    reportNimHttpFailure(500);
+    expect(nimHealthy()).toBe(true);
+    expect(chatRequestFor("nvidia/nemotron-3-ultra-550b-a55b").provider).toBe("nvidia-nim");
+  });
+
+  it("recovers after reset (cooldown expiry) so a fixed key re-enables NIM without a restart", () => {
+    process.env["NVIDIA_API_KEY"] = "nvapi-fixed";
+    process.env["OPENROUTER_API_KEY"] = "or-test";
+    reportNimHttpFailure(401);
+    expect(chatRequestFor("deepseek-ai/deepseek-v4-flash").provider).toBe("openrouter");
+    resetNimHealth(); // stands in for the 10-minute cooldown elapsing
+    expect(chatRequestFor("deepseek-ai/deepseek-v4-flash").provider).toBe("nvidia-nim");
   });
 });

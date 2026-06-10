@@ -47,7 +47,7 @@ import {
   sanitizeForStorage,
   type ToolContext,
 } from "./tools";
-import { sendInngestEvent, traceLlmRun, chatRequestFor } from "./lib/integrations";
+import { sendInngestEvent, traceLlmRun, chatRequestFor, llmFetch } from "./lib/integrations";
 import { groundingProof } from "./lib/grounding";
 
 type Agent = typeof agentsTable.$inferSelect;
@@ -166,21 +166,16 @@ async function completeChat(model: string, system: string, user: string, maxToke
   const startedAt = new Date();
   let r: Response;
   try {
-    const llmReq = chatRequestFor(model);
-    r = await fetch(llmReq.url, {
-      method: "POST",
-      headers: llmReq.headers,
-      body: JSON.stringify({
-        ...llmReq.bodyExtras,
-        model: llmReq.model,
-        messages: [
-          { role: "system", content: system },
-          { role: "user", content: user },
-        ],
-        stream: false,
-        max_tokens: maxTokens,
-      }),
-    });
+    // llmFetch carries the NIM auth circuit-breaker: a rejected NVIDIA key
+    // trips it and the same payload retries on OpenRouter immediately.
+    ({ r } = await llmFetch(model, {
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
+      stream: false,
+      max_tokens: maxTokens,
+    }));
   } catch (err) {
     traceLlmRun({ name: "completeChat", model, input: { system, user }, output: null, startedAt, error: String(err) });
     throw err;
@@ -278,26 +273,19 @@ async function completeChatTurn(
   messages: ChatMessage[],
   tools: Array<Record<string, unknown>>,
 ): Promise<AssistantMessage> {
-  const llmReq = chatRequestFor(model);
-  const body: Record<string, unknown> = { ...llmReq.bodyExtras, model: llmReq.model, messages, stream: false, max_tokens: 8000 };
+  const payload: Record<string, unknown> = { messages, stream: false, max_tokens: 8000 };
   if (tools.length) {
-    body["tools"] = tools;
-    body["tool_choice"] = "auto";
+    payload["tools"] = tools;
+    payload["tool_choice"] = "auto";
   }
-  let r = await fetch(llmReq.url, {
-    method: "POST",
-    headers: llmReq.headers,
-    body: JSON.stringify(body),
-  });
+  // llmFetch carries the NIM auth circuit-breaker: a rejected NVIDIA key trips
+  // it and the same payload retries on OpenRouter immediately.
+  let { r, req: llmReq } = await llmFetch(model, payload);
   if (!r.ok && tools.length) {
     // Some providers reject function-calling — retry once without tools.
-    delete body["tools"];
-    delete body["tool_choice"];
-    r = await fetch(llmReq.url, {
-      method: "POST",
-      headers: llmReq.headers,
-      body: JSON.stringify(body),
-    });
+    delete payload["tools"];
+    delete payload["tool_choice"];
+    ({ r, req: llmReq } = await llmFetch(model, payload));
   }
   if (!r.ok) {
     const errText = (await r.text()).slice(0, 200);
