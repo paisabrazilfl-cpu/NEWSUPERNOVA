@@ -36,6 +36,7 @@ import {
   SWARM_SAFETY_RULES,
   CODING_LIFECYCLE_DOCTRINE,
   buildVaultCard,
+  buildLiveReachCard,
 } from "./routes/ai";
 import { isSwarmPaused } from "./routes/swarm";
 import {
@@ -480,7 +481,11 @@ export async function executeAgentCommand(opts: {
     const toolGuide = toolNames.length
       ? `\n\nYou are an autonomous tool-using agent. Call tools to gather real data and perform real work instead of guessing — chain multiple calls when needed, and avoid repeating a call that already returned (it wastes time and budget). When the directive is fully satisfied, stop calling tools and reply with your final concrete result (no preamble).${buildCapabilityCard(agent.id)}`
       : "";
-    const system = persona + toolGuide + EXECUTION_DOCTRINE + RESEARCH_PLAYBOOKS + ANTI_HALLUCINATION_DIRECTIVE + SWARM_SAFETY_RULES + CODING_LIFECYCLE_DOCTRINE + (await buildVaultCard());
+    // LIVE REACH gives the CLAW the same ground truth the chat path gets: its
+    // tool list plus which integrations are ONLINE/OFFLINE right now — so a
+    // dispatched CLAW never "forgets" Tavily/Firecrawl/Composio/E2B exist, and
+    // never pretends an offline one works.
+    const system = persona + toolGuide + buildLiveReachCard(agent.id) + EXECUTION_DOCTRINE + RESEARCH_PLAYBOOKS + ANTI_HALLUCINATION_DIRECTIVE + SWARM_SAFETY_RULES + CODING_LIFECYCLE_DOCTRINE + (await buildVaultCard());
 
     const messages: ChatMessage[] = [
       { role: "system", content: system },
@@ -824,7 +829,9 @@ export async function orchestrateGoal(opts: {
     const roster = claws
       .map((c) => `${c.id}=${c.name} (${c.role ?? "agent"})`)
       .join(", ");
-    const planSystem = (AGENT_PERSONAS[ABBY_ID] ?? "You are ABBY, the swarm orchestrator.") + EXECUTION_DOCTRINE + RESEARCH_PLAYBOOKS + SWARM_SAFETY_RULES + CODING_LIFECYCLE_DOCTRINE + (await buildVaultCard());
+    // ABBY plans with LIVE REACH so directives only lean on integrations that
+    // are actually online (e.g. don't direct a CLAW to Firecrawl if it's off).
+    const planSystem = (AGENT_PERSONAS[ABBY_ID] ?? "You are ABBY, the swarm orchestrator.") + buildLiveReachCard(ABBY_ID) + EXECUTION_DOCTRINE + RESEARCH_PLAYBOOKS + SWARM_SAFETY_RULES + CODING_LIFECYCLE_DOCTRINE + (await buildVaultCard());
     const planUser = `Operator goal: "${goal}"
 ${sourceContext && sourceContext.trim() ? `\nThe operator provided this source material to work from (decompose against THIS; the CLAWs will receive it too — do not tell them to search memory for it):\n"""\n${sourceContext.slice(0, 12000)}\n"""\n` : ""}
 Available CLAWs you command: ${roster}.
