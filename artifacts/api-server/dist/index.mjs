@@ -94588,7 +94588,7 @@ router7.post("/ai/complete", async (req, res) => {
     { role: "user", content: message }
   ];
   try {
-    const { r } = await llmFetch(model, { messages, max_tokens: 512 });
+    const { r, req: llmReq } = await llmFetch(model, { messages, max_tokens: 512 });
     if (!r.ok) {
       if (buddyConfigured()) {
         try {
@@ -94606,7 +94606,7 @@ router7.post("/ai/complete", async (req, res) => {
     }
     const data = await r.json();
     const content = data.choices?.[0]?.message?.content ?? "";
-    res.json({ content, model, agentId: resolvedAgentId });
+    res.json({ content, model: llmReq.model, provider: llmReq.provider, requestedModel: model, agentId: resolvedAgentId });
   } catch (err) {
     req.log.error({ err }, "AI complete error");
     res.status(500).json({ error: String(err) });
