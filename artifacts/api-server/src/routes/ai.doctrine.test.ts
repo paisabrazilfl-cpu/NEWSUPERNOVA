@@ -300,7 +300,14 @@ describe("EXECUTION_DOCTRINE — self-learning on failure", () => {
   });
 
   it("limits research-retry cycles to prevent infinite loops", () => {
-    expect(EXECUTION_DOCTRINE.toLowerCase()).toContain("2 research-retry cycles");
+    expect(EXECUTION_DOCTRINE.toLowerCase()).toContain("3 research-retry cycles");
+  });
+
+  it("mandates relentless persistence — alternate tools/approaches before declaring blocked", () => {
+    expect(EXECUTION_DOCTRINE).toContain("RELENTLESS PERSISTENCE");
+    expect(EXECUTION_DOCTRINE).toContain("a different tool for the same job");
+    expect(EXECUTION_DOCTRINE).toMatch(/LIST each approach attempted/);
+    expect(EXECUTION_DOCTRINE).toContain("Never downgrade the goal");
   });
 
   it("frames the agent as self-improving — failures become permanent lessons", () => {
