@@ -52,9 +52,19 @@ export async function runCronJob(job: CronJob, channelId = DEFAULT_CHANNEL_ID): 
       // and the slices land on agents that don't hold the Composio/Instagram tools,
       // so the post never reaches Instagram. Also pass the job's stored payload as
       // source material (previously dropped on the ABBY path).
-      const connectedAccount = requestsConnectedAccountAction(job.task);
+      // Detect on the job NAME too: operators name jobs descriptively ("Instagram
+      // Post news") while the task text often omits the platform. Task-only
+      // detection routed those jobs to the generic multi-CLAW fan-out, where no
+      // agent holds the Instagram tools — so the post silently never happened.
+      const connectedAccount = requestsConnectedAccountAction(`${job.name} ${job.task}`);
+      // When only the NAME carries the platform, fold it into the goal so the
+      // executing agent actually publishes instead of just writing content.
+      const goal =
+        connectedAccount && !requestsConnectedAccountAction(job.task)
+          ? `${job.task}\n\n(Scheduled job name: "${job.name}" — honor the platform/action it names: an Instagram job means actually PUBLISH to the operator's connected Instagram via image_generate + instagram_post, not just draft the content.)`
+          : job.task;
       await orchestrateGoal({
-        goal: job.task,
+        goal,
         channelId,
         priority: "normal",
         sourceContext: job.payload ?? null,

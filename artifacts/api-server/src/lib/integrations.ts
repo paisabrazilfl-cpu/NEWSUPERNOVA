@@ -701,6 +701,15 @@ export async function composioConnectionStatus(connectionId: string): Promise<{ 
   };
 }
 
+/**
+ * Delete a connected account (e.g. an EXPIRED linkedin/slack connection) so the
+ * operator can clean up stale entries and re-connect fresh. Composio v3:
+ * DELETE /connected_accounts/{id}.
+ */
+export async function composioDeleteConnection(connectionId: string): Promise<void> {
+  await composioApi("DELETE", `/connected_accounts/${encodeURIComponent(connectionId)}`);
+}
+
 // ─── Status snapshot ─────────────────────────────────────────────────────────
 // A non-secret view of which integrations are configured, for the dashboard /
 // health checks. Only booleans are exposed — never the key values themselves.

@@ -596,6 +596,7 @@ async function authedFetch(path: string, init?: RequestInit): Promise<Response> 
 function ComposioIntegrations() {
   const [slug, setSlug] = useState("");
   const [connecting, setConnecting] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
 
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery<{ connections: ComposioConnection[] }>({
     queryKey: ["composio-connections"],
@@ -639,6 +640,24 @@ function ComposioIntegrations() {
       toast.error(`Connect failed: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setConnecting(null);
+    }
+  };
+
+  const removeConnection = async (c: ComposioConnection) => {
+    if (!window.confirm(`Delete the ${c.toolkit} connection (${c.id})? You can re-connect it any time.`)) return;
+    setDeleting(c.id);
+    try {
+      const r = await authedFetch(`/api/integrations/composio/connections/${encodeURIComponent(c.id)}`, {
+        method: "DELETE",
+      });
+      const body = (await r.json().catch(() => ({}))) as { error?: string };
+      if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
+      toast.success(`Deleted ${c.toolkit} connection.`);
+      refetch();
+    } catch (e) {
+      toast.error(`Delete failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setDeleting(null);
     }
   };
 
@@ -765,6 +784,14 @@ function ComposioIntegrations() {
                     </div>
                     <p className="text-xs text-muted-foreground font-mono truncate mt-0.5">{c.id}</p>
                   </div>
+                  <button
+                    onClick={() => removeConnection(c)}
+                    disabled={deleting === c.id}
+                    title={`Delete ${c.toolkit} connection`}
+                    className="shrink-0 p-2 rounded-md border border-card-border text-muted-foreground hover:text-[#ff3355] hover:border-[#ff3355]/50 transition-colors disabled:opacity-40"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
                 </div>
               ))}
             </div>
