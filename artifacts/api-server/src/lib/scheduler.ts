@@ -16,6 +16,7 @@ import { executeAgentCommand, orchestrateGoal } from "../orchestrator";
 import { isSwarmPaused } from "../routes/swarm";
 import { requestsConnectedAccountAction } from "../routes/ai";
 import { computeNextRun } from "./cron";
+import { teachTwin } from "./twinSync";
 import { worldEngineEnabled, readAuraState, runStoryCycle, runArtTriptych } from "./world";
 
 // Re-export so existing importers of computeNextRun from the scheduler keep working.
@@ -42,7 +43,7 @@ export async function runCronJob(job: CronJob, channelId = DEFAULT_CHANNEL_ID): 
     .update(cronJobsTable)
     .set({ lastRunAt: new Date(), runCount: job.runCount + 1, nextRunAt: computeNextRun(job.schedule) })
     .where(eq(cronJobsTable.id, job.id))
-    .catch((err) => logger.error({ err, jobId: job.id }, "scheduler: bookkeeping update failed"));
+    .catch((err: unknown) => logger.error({ err, jobId: job.id }, "scheduler: bookkeeping update failed"));
 
   try {
     if (job.agentId === ABBY_ID) {
@@ -74,6 +75,23 @@ export async function runCronJob(job: CronJob, channelId = DEFAULT_CHANNEL_ID): 
         .update(cronJobsTable)
         .set({ lastResult: connectedAccount ? "orchestrated → WIRE (connected-account action)" : "orchestrated" })
         .where(eq(cronJobsTable.id, job.id));
+
+      // After the nightly self-learning review, teach the twin: forward the
+      // lessons AURA just verified to the T800 sibling swarm. No-op unless
+      // TWIN_SYNC_ENABLED + TWIN_API_URL + TWIN_API_KEY are set; best-effort, so
+      // a down/throttled twin can never break this run. Detected on the job name
+      // so only the self-learning job triggers the push.
+      if (/self-learning/i.test(job.name)) {
+        const twinResult = await teachTwin().catch((err: unknown) => {
+          logger.warn({ err: String(err) }, "scheduler: teachTwin threw (ignored)");
+          return "twin sync errored";
+        });
+        await db
+          .update(cronJobsTable)
+          .set({ lastResult: `orchestrated · ${twinResult}` })
+          .where(eq(cronJobsTable.id, job.id))
+          .catch(() => {});
+      }
       return;
     }
 
