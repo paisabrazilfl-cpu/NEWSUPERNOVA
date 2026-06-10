@@ -2,6 +2,7 @@ import { Router } from "express";
 import { db, vaultSecretsTable, setVaultSecretSchema } from "@workspace/db";
 import { eq, desc } from "drizzle-orm";
 import { encryptSecret } from "../lib/vault";
+import { resetNimHealth } from "../lib/integrations";
 
 const router = Router();
 
@@ -75,6 +76,10 @@ router.put("/vault", async (req, res) => {
     // environment (EMBEDDINGS_API_KEY, PINECONE_*, COMPOSIO_API_KEY, GITHUB_API_KEY,
     // …) turn On without waiting for a server restart. Boot still re-loads the vault.
     process.env[name] = value;
+    // A rotated NVIDIA key must take effect immediately — the NIM breaker may
+    // still be tripped by the OLD key's 401/403s, which would leave the swarm
+    // on OpenRouter for the rest of the cooldown despite a now-valid key.
+    if (name === "NVIDIA_API_KEY") resetNimHealth();
     res.status(200).json(fmt(row));
   } catch (err) {
     req.log.error({ err }, "Failed to store secret");
