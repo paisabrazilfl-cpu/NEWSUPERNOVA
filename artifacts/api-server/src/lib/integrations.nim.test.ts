@@ -78,11 +78,34 @@ describe("chatRequestFor", () => {
     expect(unknown.model).toBe("x-ai/grok-4.3");
   });
 
-  it("passes non-NIM models through to OpenRouter unchanged", () => {
+  it("auto-upgrades legacy DB model ids to NIM at request time (self-healing)", () => {
+    process.env["NVIDIA_API_KEY"] = "nvapi-test";
+    // DB still says qwen/qwen3.7-plus but runtime upgrades to qwen/qwen3.5-397b-a17b
+    const r = chatRequestFor("qwen/qwen3.7-plus");
+    expect(r.provider).toBe("nvidia-nim");
+    expect(r.model).toBe("qwen/qwen3.5-397b-a17b");
+    // Same for all legacy models
+    const r2 = chatRequestFor("x-ai/grok-4.3");
+    expect(r2.provider).toBe("nvidia-nim");
+    expect(r2.model).toBe("nvidia/nemotron-3-ultra-550b-a55b");
+  });
+
+  it("auto-upgrades legacy models to NIM fallbacks when NVIDIA key is absent", () => {
     process.env["OPENROUTER_API_KEY"] = "or-test";
-    const r = chatRequestFor("x-ai/grok-4.3");
+    // DB has old qwen/qwen3.7-plus → upgrades to NIM id → falls back to OpenRouter
+    // equivalent (which may be different from the original if the fallback map differs)
+    const r = chatRequestFor("qwen/qwen3.7-plus");
     expect(r.provider).toBe("openrouter");
-    expect(r.model).toBe("x-ai/grok-4.3");
+    // The legacy model gets upgraded to NIM, then NIM falls back — the round-trip
+    // should land on the same legacy model (fallback map is self-consistent)
+    expect(r.model).toBe("qwen/qwen3.7-plus");
+  });
+
+  it("passes non-NIM, non-legacy models through to OpenRouter unchanged", () => {
+    process.env["OPENROUTER_API_KEY"] = "or-test";
+    const r = chatRequestFor("openai/gpt-4o");
+    expect(r.provider).toBe("openrouter");
+    expect(r.model).toBe("openai/gpt-4o");
     expect(r.headers["Authorization"]).toBe("Bearer or-test");
   });
 

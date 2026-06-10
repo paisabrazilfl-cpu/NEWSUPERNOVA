@@ -103,6 +103,15 @@ export const NIM_MODEL_FALLBACKS: Record<string, string> = {
 };
 const NIM_GENERIC_FALLBACK = "x-ai/grok-4.3";
 
+// Reverse map: legacy OpenRouter model → its NIM replacement. Built from
+// NIM_MODEL_FALLBACKS so the two can never drift. When the DB still has a legacy
+// model id (e.g. the boot migration hasn't run yet after a zero-downtime deploy),
+// chatRequestFor() auto-upgrades it at request time — self-healing, no restart.
+const LEGACY_TO_NIM: Record<string, string> = {};
+for (const [nim, legacy] of Object.entries(NIM_MODEL_FALLBACKS)) {
+  if (!LEGACY_TO_NIM[legacy]) LEGACY_TO_NIM[legacy] = nim;
+}
+
 export interface LlmChatRequest {
   url: string;
   headers: Record<string, string>;
@@ -123,6 +132,13 @@ export interface LlmChatRequest {
  * it is not. Throws only when the chosen provider's key is missing entirely.
  */
 export function chatRequestFor(model: string): LlmChatRequest {
+  // Auto-upgrade legacy model ids that the DB migration hasn't rewritten yet.
+  // e.g. "qwen/qwen3.7-plus" → "qwen/qwen3.5-397b-a17b" so the request routes
+  // through NIM (or its correct OpenRouter fallback) instead of hitting a
+  // rate-limited / deprecated upstream.
+  const upgraded = LEGACY_TO_NIM[model];
+  if (upgraded) model = upgraded;
+
   if (isNimModel(model) && nimConfigured()) {
     const key = process.env["NVIDIA_API_KEY"]!;
     const bodyExtras: Record<string, unknown> = {
