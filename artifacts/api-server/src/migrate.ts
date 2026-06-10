@@ -186,7 +186,7 @@ INSERT INTO "world_state" ("id") VALUES (1) ON CONFLICT ("id") DO NOTHING;
 const SEED_AGENTS = `
 INSERT INTO agents (name, role, description, status, color, avatar_initials, model, capabilities)
 VALUES
-  ('ABBY',   'Orchestrator',  'Master orchestrator and directive router',       'idle', '#00e5ff', 'AB', 'nvidia/nemotron-3-ultra-550b-a55b',  ARRAY['orchestration','planning','routing']),
+  ('ABBY',   'Orchestrator',  'Master orchestrator and directive router',       'idle', '#00e5ff', 'AB', 'moonshotai/kimi-k2.6',               ARRAY['orchestration','planning','routing']),
   ('CLAW-1', 'Code Executor', 'Code generation and execution specialist',       'idle', '#bf00ff', 'C1', 'qwen/qwen3.5-397b-a17b',             ARRAY['code','execution','debugging']),
   ('CLAW-2', 'Browser Agent', 'Web browsing and scraping via Steel',            'idle', '#0066ff', 'C2', 'deepseek-ai/deepseek-v4-flash',      ARRAY['browser','scraping','research']),
   ('CLAW-3', 'Memory & RAG',  'Long-term memory and retrieval',                 'idle', '#00cc88', 'C3', 'qwen/qwen3.5-122b-a10b',             ARRAY['memory','rag','search']),
@@ -201,7 +201,11 @@ VALUES
 // falls back to the legacy OpenRouter model when NVIDIA_API_KEY is unset, so
 // this upgrade can never strand an agent on an unreachable model.
 const AGENT_MODEL_UPGRADES: Array<[oldModel: string, newModel: string]> = [
-  ["x-ai/grok-4.3",        "nvidia/nemotron-3-ultra-550b-a55b"],
+  ["x-ai/grok-4.3",        "moonshotai/kimi-k2.6"],
+  // 2026-06-10: nemotron-3-ultra-550b stalled live (45-60s, zero bytes) while
+  // kimi-k2.6 answered in <1s — fast models in charge. Runs AFTER the
+  // grok-4.3 remap above, so legacy grok rows chain straight to kimi too.
+  ["nvidia/nemotron-3-ultra-550b-a55b", "moonshotai/kimi-k2.6"],
   ["qwen/qwen3.7-plus",    "qwen/qwen3.5-397b-a17b"],
   ["x-ai/grok-build-0.1",  "deepseek-ai/deepseek-v4-flash"],
   ["qwen/qwen3.7-max",     "qwen/qwen3.5-122b-a10b"],
