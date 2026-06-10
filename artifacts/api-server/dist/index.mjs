@@ -95308,6 +95308,71 @@ init_src();
 init_drizzle_orm();
 init_logger2();
 init_cron();
+
+// src/lib/twinSync.ts
+init_drizzle_orm();
+init_src();
+init_logger2();
+function twinSyncEnabled() {
+  const flag = (process.env["TWIN_SYNC_ENABLED"] ?? "").toLowerCase();
+  const on = flag === "1" || flag === "true" || flag === "yes";
+  return on && !!process.env["TWIN_API_URL"] && !!process.env["TWIN_API_KEY"];
+}
+function lookbackMs() {
+  const v = Number(process.env["TWIN_SYNC_LOOKBACK_MS"]);
+  return Number.isFinite(v) && v > 0 ? v : 6 * 60 * 6e4;
+}
+async function collectVerifiedLessons(now = /* @__PURE__ */ new Date()) {
+  const since = new Date(now.getTime() - lookbackMs());
+  const rows = await db.select().from(agentMemoryTable).where(and(gte(agentMemoryTable.createdAt, since), like(agentMemoryTable.tags, "%self-learned%"))).orderBy(desc(agentMemoryTable.createdAt)).limit(200);
+  return rows.map((r) => ({
+    // Stable cross-service id so the twin can dedupe on re-run.
+    sourceId: `aura:${r.id}`,
+    key: r.key,
+    content: r.content,
+    tags: r.tags,
+    agentName: r.agentName
+  }));
+}
+async function teachTwin(now = /* @__PURE__ */ new Date()) {
+  if (!twinSyncEnabled()) return "twin sync disabled";
+  const base = process.env["TWIN_API_URL"].replace(/\/$/, "");
+  const key = process.env["TWIN_API_KEY"];
+  let lessons;
+  try {
+    lessons = await collectVerifiedLessons(now);
+  } catch (err) {
+    logger.error({ err }, "twinSync: failed to collect lessons");
+    return "twin sync error (collect)";
+  }
+  if (lessons.length === 0) return "twin sync: no new verified lessons";
+  const url2 = `${base}/api/external/v1/twin-lessons`;
+  const ac = new AbortController();
+  const timer2 = setTimeout(() => ac.abort(), 3e4);
+  try {
+    const r = await fetch(url2, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ source: "BOS-AURA", lessons }),
+      signal: ac.signal
+    });
+    if (!r.ok) {
+      const body = (await r.text().catch(() => "")).slice(0, 200);
+      logger.warn({ status: r.status, body }, "twinSync: twin rejected the lessons");
+      return `twin sync: HTTP ${r.status}`;
+    }
+    const data = await r.json().catch(() => ({}));
+    logger.info({ sent: lessons.length, ingested: data.ingested, skipped: data.skipped }, "twinSync: taught the twin");
+    return `twin sync: sent ${lessons.length}, ingested ${data.ingested ?? "?"}, skipped ${data.skipped ?? "?"}`;
+  } catch (err) {
+    logger.warn({ err: String(err) }, "twinSync: push failed (twin unreachable/throttled)");
+    return "twin sync: twin unreachable";
+  } finally {
+    clearTimeout(timer2);
+  }
+}
+
+// src/lib/scheduler.ts
 init_world();
 init_cron();
 var ABBY_ID3 = 1;
@@ -95330,6 +95395,14 @@ async function runCronJob(job, channelId = DEFAULT_CHANNEL_ID) {
         ...connectedAccount ? { forceAgentId: COMPOSIO_AGENT_ID } : {}
       });
       await db.update(cronJobsTable).set({ lastResult: connectedAccount ? "orchestrated \u2192 WIRE (connected-account action)" : "orchestrated" }).where(eq(cronJobsTable.id, job.id));
+      if (/self-learning/i.test(job.name)) {
+        const twinResult = await teachTwin().catch((err) => {
+          logger.warn({ err: String(err) }, "scheduler: teachTwin threw (ignored)");
+          return "twin sync errored";
+        });
+        await db.update(cronJobsTable).set({ lastResult: `orchestrated \xB7 ${twinResult}` }).where(eq(cronJobsTable.id, job.id)).catch(() => {
+        });
+      }
       return;
     }
     const [agent] = await db.select().from(agentsTable).where(eq(agentsTable.id, job.agentId));
@@ -97150,6 +97223,14 @@ async function runMigrations() {
     for (const [oldModel, newModel] of AGENT_MODEL_UPGRADES) {
       await client.query("UPDATE agents SET model = $2 WHERE model = $1", [oldModel, newModel]);
     }
+    const NIGHTLY_JOB_NAME = "Nightly Self-Learning Review";
+    const NIGHTLY_TASK = `Run the nightly self-learning review. (1) Read today's tool failures and unresolved errors from recent agent activity. (2) For each recurring or unresolved failure, follow the SELF-LEARN protocol: memory_search for a prior lesson, then web_search/web_scrape for a fix if memory has none, then verify the fix actually works. (3) memory_write each VERIFIED lesson in reusable "PROBLEM \u2192 SOLUTION (evidence)" form, tagged "lesson,self-learned,nightly". Store only lessons you actually verified \u2014 never speculation. This makes the swarm permanently smarter overnight.`;
+    await client.query(
+      `INSERT INTO cron_jobs (agent_id, name, schedule, task, enabled)
+       SELECT $1, $2, $3, $4, true
+       WHERE NOT EXISTS (SELECT 1 FROM cron_jobs WHERE name = $2)`,
+      [1, NIGHTLY_JOB_NAME, "0 4,5,6 * * *", NIGHTLY_TASK]
+    );
   } catch (err) {
     logger.error({ err }, "Migration failed \u2014 continuing anyway");
   } finally {
