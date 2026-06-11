@@ -26,6 +26,7 @@ import { db } from "@workspace/db";
 import { agentMemoryTable, vaultSecretsTable, messagesTable, cronJobsTable, attachmentsTable } from "@workspace/db";
 import { desc, ilike, or, isNotNull, eq } from "drizzle-orm";
 import { substituteSecrets, redactSecrets, hasSecretPlaceholder } from "./lib/vault";
+import { assessActionRisk, policyRefusal } from "./lib/safetyPolicy";
 import {
   PLATFORMS,
   getPlatform,
@@ -1382,6 +1383,13 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
       if (!composioExecuteEnabled()) {
         return "error: Composio execution is disabled. The operator must set ALLOW_COMPOSIO_EXECUTE=true after connecting accounts.";
       }
+      // HARD GUARDRAIL (defense in depth): never execute a financial-account
+      // opening or a government-ID/KYC submission via a connected app, even if the
+      // orchestrator's pre-check was somehow bypassed.
+      const policy = assessActionRisk(
+        `${args["action"] ?? ""} ${args["endpoint"] ?? ""} ${JSON.stringify(args["arguments"] ?? {})} ${JSON.stringify(args["body"] ?? "")}`,
+      );
+      if (policy.blocked) return policyRefusal(policy);
       // SAFEGUARD: when this is a WRITE to a public social platform (e.g. publishing
       // a post), screen the payload for confidential/sensitive content first.
       const tk = (args["toolkit"] != null ? String(args["toolkit"]) : "").toLowerCase();

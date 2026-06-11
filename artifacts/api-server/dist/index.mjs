@@ -28105,7 +28105,7 @@ var require_pino = __commonJS({
     function pinoBundlerAbsolutePath(p) {
       try {
         const path3 = __require("path");
-        const outputDir = "/home/runner/work/BOS-AURA/BOS-AURA/artifacts/api-server/dist";
+        const outputDir = "/home/user/BOS-AURA/artifacts/api-server/dist";
         return path3.resolve(outputDir, p.replace(/^\.\//, ""));
       } catch (e) {
         const f = new Function("p", "return new URL(p, import.meta.url).pathname");
@@ -55003,6 +55003,44 @@ var init_vault2 = __esm({
     init_drizzle_orm();
     cachedKey = null;
     SECRET_PLACEHOLDER = /\{\{\s*secret:([A-Za-z0-9_\-]+)\s*\}\}/g;
+  }
+});
+
+// src/lib/safetyPolicy.ts
+function assessActionRisk(text2) {
+  const t = (text2 ?? "").toString();
+  if (!t.trim()) return { blocked: false };
+  if (FINANCIAL_ACCOUNT_RE.test(t) || FINANCIAL_ACCOUNT_RE2.test(t)) {
+    return {
+      blocked: true,
+      category: "financial-account-opening",
+      reason: "Opening or applying for financial accounts (bank, brokerage, credit, loan, payment-processor, or crypto-exchange) is not permitted by the operator's safety policy."
+    };
+  }
+  if (GOV_ID_RE.test(t) || GOV_ID_RE2.test(t)) {
+    return {
+      blocked: true,
+      category: "government-id",
+      reason: "Submitting or entering government identifiers (SSN, passport, driver's license, national/tax ID, immigration documents) is not permitted by the operator's safety policy."
+    };
+  }
+  return { blocked: false };
+}
+function policyRefusal(v) {
+  return `\u{1F6AB} BLOCKED by account-safety policy (${v.category}): ${v.reason} The rest of the request, if any, was not executed. Re-issue it without the blocked part.`;
+}
+var OPEN_VERB, FINANCIAL_NOUN, FINANCIAL_ACCOUNT_RE, FINANCIAL_ACCOUNT_RE2, GOV_ID_NOUN, GOV_ID_ACTION, GOV_ID_RE, GOV_ID_RE2;
+var init_safetyPolicy = __esm({
+  "src/lib/safetyPolicy.ts"() {
+    "use strict";
+    OPEN_VERB = "(open|opening|apply for|applying for|sign[\\s-]?up for|signing up for|register for|registering for|set[\\s-]?up|setting up|create|creating|start)";
+    FINANCIAL_NOUN = "(bank|checking|savings|brokerage|trading|investment|securities|credit[\\s-]?card|debit[\\s-]?card|charge[\\s-]?card|loan|mortgage|line of credit|payday|crypto(currency)?|exchange|wallet|merchant|payment[\\s-]?processor|paypal|venmo|cash[\\s-]?app|stripe|coinbase|binance|kraken|robinhood|revolut|wise|chime|wells fargo|chase|citibank|bank of america)\\b";
+    FINANCIAL_ACCOUNT_RE = new RegExp(`${OPEN_VERB}[^.\\n]{0,40}?(${FINANCIAL_NOUN})[^.\\n]{0,20}?(account|card|loan|line)?`, "i");
+    FINANCIAL_ACCOUNT_RE2 = new RegExp(`(new|a)\\s+(${FINANCIAL_NOUN})[^.\\n]{0,15}?account`, "i");
+    GOV_ID_NOUN = "(ssn|social security (number|no\\.?|#)|sin number|passport (number|no\\.?|#)|driver'?s? licen[sc]e (number|no\\.?|#)?|national id|tax id|\\bein\\b|\\bitin\\b|birth certificate|green card|visa application|immigration (form|application)|passport application)";
+    GOV_ID_ACTION = "(enter|entering|submit|submitting|provide|providing|fill (in|out)|filling (in|out)|type|typing|upload|uploading|use|using|give|giving)";
+    GOV_ID_RE = new RegExp(`${GOV_ID_ACTION}[^.\\n]{0,40}?${GOV_ID_NOUN}`, "i");
+    GOV_ID_RE2 = new RegExp(`(my|your|the (user|operator|applicant|client)'?s?)\\s+(${GOV_ID_NOUN})`, "i");
   }
 });
 
@@ -88678,6 +88716,7 @@ var init_tools = __esm({
     init_src();
     init_drizzle_orm();
     init_vault2();
+    init_safetyPolicy();
     init_connectors();
     init_integrations();
     init_embeddings();
@@ -89313,6 +89352,10 @@ The operator connects apps in Settings \u2192 Connect Apps (Composio).`;
           if (!composioExecuteEnabled()) {
             return "error: Composio execution is disabled. The operator must set ALLOW_COMPOSIO_EXECUTE=true after connecting accounts.";
           }
+          const policy = assessActionRisk(
+            `${args["action"] ?? ""} ${args["endpoint"] ?? ""} ${JSON.stringify(args["arguments"] ?? {})} ${JSON.stringify(args["body"] ?? "")}`
+          );
+          if (policy.blocked) return policyRefusal(policy);
           const tk = (args["toolkit"] != null ? String(args["toolkit"]) : "").toLowerCase();
           const mth = (args["method"] != null ? String(args["method"]) : "").toUpperCase();
           const ep = args["endpoint"] != null ? String(args["endpoint"]) : "";
@@ -94210,6 +94253,28 @@ CODING & CHANGE DISCIPLINE (HARDENED \u2014 mandatory whenever you write code, e
 - ALWAYS BRANCH FROM THE LATEST, NEVER REGRESS: before branching, sync to the newest main (the superset of all work) so your branch contains the latest version of the project with ZERO loss of function. Verify BEFORE merging, then merge. If a change would drop existing functionality, STOP \u2014 do not merge.
 - FOLLOW THE FULL LIFECYCLE on every coding task, in order: (1) Self-Reflection \u2014 review your reasoning, assumptions, and likely mistakes before acting; (2) Planning \u2014 write a concrete step-by-step plan before changing anything; (3) Execution \u2014 perform the planned edits/commands; (4) Observation \u2014 check what actually happened after each step; (5) Verification \u2014 confirm it works via tests, builds, and logs; (6) Playwright Validation / UI Smoke \u2014 for ANY UI change, open the app in a browser, click through, and confirm the feature works (if not run, say "browser: NOT RUN" and why); (7) Regression Check \u2014 confirm existing functionality still works (no loss); (8) Automated Test Run \u2014 run typecheck, lint, unit/integration, and build; (9) Post-Execution Review + Plan-vs-Execution Match \u2014 compare the result to the plan and detect any mismatch; (10) Root Cause Analysis + Correction Loop \u2014 on any failure, read the error, find the real cause, patch, and re-verify until green; (11) Reflective Alignment Check \u2014 state explicitly whether the final outcome matches the original plan.
 - EVIDENCE-BASED REPORTING (no hallucination): report ONLY what you actually ran, observed, and verified. Never invent files, APIs, test results, or success. Keep an Execution Trace (commands run, files changed, tests/browser checks done). State the Acceptance Criteria and whether each is met. End with a Human-Readable Report: what changed, what passed, what failed, what is still blocked.`;
+var ACCOUNT_POLICY_DOCTRINE = `
+
+OPERATING THE OPERATOR'S ACCOUNTS (negotiation + hard limits):
+- PREFER THE API: when an action can be done through a connected Composio app
+  (Gmail, Calendar, Sheets, Slack, GitHub, Notion, Instagram, \u2026), use it \u2014 call
+  composio_apps to confirm the app is live, then composio_action / instagram_post.
+  The authenticated API is reliable, auditable, and OAuth-based (no passwords).
+  Always reach for it FIRST.
+- BROWSER IS THE FALLBACK: only drive the browser for a site that genuinely has
+  NO connected API, and only for accounts the operator owns and has authorized.
+  Pull any needed credential from the vault as {{secret:NAME}} \u2014 never hardcode
+  or echo a password.
+- CONNECTING / SIGNING UP: you may sign up for and connect ordinary online
+  services on the operator's behalf when asked; new SaaS connections go through
+  Composio's OAuth consent \u2014 initiate the connection and report the consent URL.
+- HARD LIMITS \u2014 NEVER do these, even if explicitly instructed (refuse and say so):
+    \u2022 Open or apply for any FINANCIAL account \u2014 bank, brokerage, trading, credit/
+      debit card, loan, mortgage, payment processor, or crypto exchange.
+    \u2022 Submit, enter, or upload any GOVERNMENT ID / KYC identity \u2014 SSN, passport,
+      driver's license, national/tax ID, birth certificate, or immigration docs.
+  These are also blocked at the system level; attempting them only wastes the run.
+- Everything else: execute end-to-end. No pause-for-approval needed.`;
 var EXECUTION_DOCTRINE = `
 
 EXECUTION STANDARD (hold to this on every task):
@@ -94738,6 +94803,7 @@ function groundingProof(sourceContext) {
 }
 
 // src/orchestrator.ts
+init_safetyPolicy();
 var ABBY_COLOR = "#00e5ff";
 var SYNTHESIS_DOCTRINE = `
 
@@ -95036,7 +95102,7 @@ ${scraped.slice(0, 1400)}${scraped.length > 1400 ? "\n\u2026" : ""}`,
     const toolGuide = toolNames.length ? `
 
 You are an autonomous tool-using agent. Call tools to gather real data and perform real work instead of guessing \u2014 chain multiple calls when needed, and avoid repeating a call that already returned (it wastes time and budget). When the directive is fully satisfied, stop calling tools and reply with your final concrete result (no preamble).${buildCapabilityCard(agent.id)}` : "";
-    const system = persona + toolGuide + buildLiveReachCard(agent.id) + EXECUTION_DOCTRINE + RESEARCH_PLAYBOOKS + ANTI_HALLUCINATION_DIRECTIVE + SWARM_SAFETY_RULES + CODING_LIFECYCLE_DOCTRINE + await buildVaultCard();
+    const system = persona + toolGuide + buildLiveReachCard(agent.id) + EXECUTION_DOCTRINE + RESEARCH_PLAYBOOKS + ANTI_HALLUCINATION_DIRECTIVE + SWARM_SAFETY_RULES + CODING_LIFECYCLE_DOCTRINE + ACCOUNT_POLICY_DOCTRINE + await buildVaultCard();
     const messages = [
       { role: "system", content: system },
       {
@@ -95296,6 +95362,22 @@ async function dispatchDirectives(directives, claws, channelId, priority, abby, 
 async function orchestrateGoal(opts) {
   const { goal, channelId, priority, sourceContext, forceAgentId } = opts;
   logger.info({ phase: "abby-planning", ...groundingProof(sourceContext) }, "orchestration grounding");
+  const goalRisk = assessActionRisk(`${goal}
+${sourceContext ?? ""}`);
+  if (goalRisk.blocked) {
+    logger.warn({ category: goalRisk.category }, "orchestrateGoal blocked by safety policy");
+    await postMessage({
+      channelId,
+      agentId: ABBY_ID2,
+      agentName: "ABBY",
+      agentColor: ABBY_COLOR,
+      content: policyRefusal(goalRisk),
+      messageType: "system"
+    }).catch(() => {
+    });
+    void sendInngestEvent("swarm/goal.blocked", { goal, channelId, category: goalRisk.category });
+    return;
+  }
   void sendInngestEvent("swarm/goal.received", { goal, channelId, priority });
   try {
     const agents = await db.select().from(agentsTable);
@@ -95314,7 +95396,7 @@ async function orchestrateGoal(opts) {
     }
     await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, ABBY_ID2));
     const roster = claws.map((c) => `${c.id}=${c.name} (${c.role ?? "agent"})`).join(", ");
-    const planSystem = (AGENT_PERSONAS[ABBY_ID2] ?? "You are ABBY, the swarm orchestrator.") + buildLiveReachCard(ABBY_ID2) + EXECUTION_DOCTRINE + RESEARCH_PLAYBOOKS + SWARM_SAFETY_RULES + CODING_LIFECYCLE_DOCTRINE + await buildVaultCard();
+    const planSystem = (AGENT_PERSONAS[ABBY_ID2] ?? "You are ABBY, the swarm orchestrator.") + buildLiveReachCard(ABBY_ID2) + EXECUTION_DOCTRINE + RESEARCH_PLAYBOOKS + SWARM_SAFETY_RULES + CODING_LIFECYCLE_DOCTRINE + ACCOUNT_POLICY_DOCTRINE + await buildVaultCard();
     const planUser = `Operator goal: "${goal}"
 ${sourceContext && sourceContext.trim() ? `
 The operator provided this source material to work from (decompose against THIS; the CLAWs will receive it too \u2014 do not tell them to search memory for it):

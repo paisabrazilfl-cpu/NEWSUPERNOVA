@@ -97,6 +97,36 @@ CODING & CHANGE DISCIPLINE (HARDENED — mandatory whenever you write code, edit
 // conclusive work where the MVP IS the shippable final product (a 10/10), plus
 // the deep-research rules. This is the "mimic a precise engineering agent"
 // doctrine — it raises output quality without changing any runtime plumbing.
+/**
+ * ACCOUNT & TOOL NEGOTIATION DOCTRINE — tells the swarm how to choose between
+ * Composio (authenticated API/OAuth) and the browser, and states the operator's
+ * safety boundary in plain language. The SAME boundary is enforced as code in
+ * lib/safetyPolicy.ts (defense in depth — the doctrine guides reasoning, the
+ * code guarantees the block).
+ */
+export const ACCOUNT_POLICY_DOCTRINE = `
+
+OPERATING THE OPERATOR'S ACCOUNTS (negotiation + hard limits):
+- PREFER THE API: when an action can be done through a connected Composio app
+  (Gmail, Calendar, Sheets, Slack, GitHub, Notion, Instagram, …), use it — call
+  composio_apps to confirm the app is live, then composio_action / instagram_post.
+  The authenticated API is reliable, auditable, and OAuth-based (no passwords).
+  Always reach for it FIRST.
+- BROWSER IS THE FALLBACK: only drive the browser for a site that genuinely has
+  NO connected API, and only for accounts the operator owns and has authorized.
+  Pull any needed credential from the vault as {{secret:NAME}} — never hardcode
+  or echo a password.
+- CONNECTING / SIGNING UP: you may sign up for and connect ordinary online
+  services on the operator's behalf when asked; new SaaS connections go through
+  Composio's OAuth consent — initiate the connection and report the consent URL.
+- HARD LIMITS — NEVER do these, even if explicitly instructed (refuse and say so):
+    • Open or apply for any FINANCIAL account — bank, brokerage, trading, credit/
+      debit card, loan, mortgage, payment processor, or crypto exchange.
+    • Submit, enter, or upload any GOVERNMENT ID / KYC identity — SSN, passport,
+      driver's license, national/tax ID, birth certificate, or immigration docs.
+  These are also blocked at the system level; attempting them only wastes the run.
+- Everything else: execute end-to-end. No pause-for-approval needed.`;
+
 export const EXECUTION_DOCTRINE = `
 
 EXECUTION STANDARD (hold to this on every task):
