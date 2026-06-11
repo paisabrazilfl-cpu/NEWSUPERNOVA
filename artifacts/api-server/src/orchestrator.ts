@@ -108,6 +108,59 @@ note the 401 was an unauthenticated call. Give ONE evidence-based DIRECT ANSWER.
 const MAX_AGENT_STEPS = Number(process.env["MAX_AGENT_STEPS"]) > 0 ? Number(process.env["MAX_AGENT_STEPS"]) : 24;
 
 /**
+ * Max solve cycles per operator goal. A "cycle" is one coordinator review of
+ * the CLAW results against the goal followed by a corrective dispatch round,
+ * plus the solution-gate re-verification of the final briefing. The contract:
+ * the final output the operator reads must BE a solution to their input — if a
+ * review or the gate judges it isn't, the swarm keeps solving until it is or
+ * this budget runs out (in which case the gap is reported honestly, never
+ * papered over). Operator-tunable via MAX_SOLVE_CYCLES without a redeploy.
+ */
+export const MAX_SOLVE_CYCLES = Number(process.env["MAX_SOLVE_CYCLES"]) > 0 ? Number(process.env["MAX_SOLVE_CYCLES"]) : 4;
+
+/**
+ * SOLUTION GATE — the verifier contract appended when ABBY judges whether the
+ * final briefing actually solves the operator's input. Exported (and asserted
+ * by tests) so the gate's strictness can't silently drift.
+ */
+export const SOLUTION_GATE_DOCTRINE = `
+SOLUTION GATE (MANDATORY): you are judging whether the final briefing SOLVES the
+operator's input — not whether it is well-written. "Solves" means the operator
+could act on it as-is: the question is answered with evidence, or the requested
+deliverable exists and is complete. A status report, a plan, a partial answer,
+or "we couldn't" without exhausting the swarm's tools is NOT a solution.
+Judge ONLY on evidence present in the briefing/results. Be strict: when in
+doubt, the goal is NOT solved.`;
+
+/**
+ * Parse the solution-gate verifier's verdict. The verifier replies with a JSON
+ * object {"solved": boolean, "reason": string, "directives": [...]}; models
+ * wrap JSON in prose/fences often enough that this is regex-hardened. An
+ * unparseable verdict fails OPEN (solved=true) so a flaky judge can never burn
+ * the whole cycle budget churning on its own garbage — the failure is logged.
+ */
+export function parseSolutionVerdict(raw: string): { solved: boolean; reason: string } {
+  const start = raw.indexOf("{");
+  const end = raw.lastIndexOf("}");
+  if (start !== -1 && end > start) {
+    try {
+      const parsed = JSON.parse(raw.slice(start, end + 1)) as Record<string, unknown>;
+      if (typeof parsed["solved"] === "boolean") {
+        return { solved: parsed["solved"], reason: String(parsed["reason"] ?? "").slice(0, 600) };
+      }
+    } catch {
+      // fall through to regex
+    }
+  }
+  const m = raw.match(/"solved"\s*:\s*(true|false)/i);
+  if (m) {
+    const reason = raw.match(/"reason"\s*:\s*"([^"]{0,600})/i)?.[1] ?? "";
+    return { solved: m[1]!.toLowerCase() === "true", reason };
+  }
+  return { solved: true, reason: "verdict unparseable — accepted without verification" };
+}
+
+/**
  * Crash/restart recovery. Execution is in-process and fire-and-forget, so a
  * restart mid-run can leave commands/tasks stuck `running` and agents stuck in a
  * non-idle status. On boot we mark those orphans as `interrupted` (NOT `failed` —
@@ -897,37 +950,46 @@ Respond with ONLY a JSON array (no prose, no code fences) of objects shaped: {"a
       sourceContext,
     );
 
-    // ── ABBY coordinator pass ──
-    // ABBY reviews the CLAWs' real results and, if the goal isn't fully met,
-    // issues ONE bounded follow-up round before committing.
+    // ── ABBY coordinator solve loop ──
+    // ABBY reviews the CLAWs' real results against the goal and keeps issuing
+    // corrective rounds — cycling up to MAX_SOLVE_CYCLES — until the review
+    // judges the goal solved. Skipped for forceAgentId runs: those are
+    // connected-account ACTIONS (e.g. publish a post) that must execute exactly
+    // once; re-cycling would repeat the side effect.
     if (results.length && !isSwarmPaused() && !forceAgentId) {
-      await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, ABBY_ID));
-      const reviewUser = `Operator goal: "${goal}"
+      let cycle = 0;
+      while (cycle < MAX_SOLVE_CYCLES && !isSwarmPaused()) {
+        cycle++;
+        await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, ABBY_ID));
+        const reviewUser = `Operator goal: "${goal}"
 
-Round 1 CLAW results:
+CLAW results so far:
 ${results.map((r) => `- ${r.name}: ${r.result.slice(0, 500)}`).join("\n")}
 
 First, internally assess which parts of the goal are VERIFIED by the real tool output above versus still missing, unverified, or only assumed — judge only on evidence actually present in the results, never on work no result shows. Do this reasoning silently; do not write it out.
 
 Then, if every part of the goal is verified and complete, respond with exactly: []
-Otherwise respond with ONLY a JSON array (no prose, no code fences) of up to 2 follow-up directives that close the remaining gap, each shaped {"agentId": <number>, "directive": "<instruction>"}. Available CLAWs: ${roster}.`;
-      let followups: Directive[] = [];
-      try {
-        const reviewRaw = await completeChat(model, planSystem, reviewUser);
-        followups = parseDirectives(reviewRaw, claws).slice(0, 2);
-      } catch (e) {
-        logger.error({ e }, "coordinator review failed");
-      }
-      await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.id, ABBY_ID));
+Otherwise respond with ONLY a JSON array (no prose, no code fences) of up to 2 follow-up directives that close the remaining gap, each shaped {"agentId": <number>, "directive": "<instruction>"}. Do NOT repeat a directive that already failed the same way — change the approach. Available CLAWs: ${roster}.`;
+        let followups: Directive[] = [];
+        try {
+          const reviewRaw = await completeChat(model, planSystem, reviewUser);
+          followups = parseDirectives(reviewRaw, claws).slice(0, 2);
+        } catch (e) {
+          logger.error({ e, cycle }, "coordinator review failed");
+          await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.id, ABBY_ID));
+          break; // can't judge — fall through to synthesis with what we have
+        }
+        await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.id, ABBY_ID));
 
-      if (followups.length && !isSwarmPaused()) {
+        if (!followups.length) break; // review judged the goal solved
+
         await postMessage({
           channelId,
           agentId: ABBY_ID,
           agentName: "ABBY",
           agentColor: abby?.color ?? ABBY_COLOR,
           content:
-            `Coordinator review: goal not yet complete. Follow-up round:\n\n` +
+            `Solve cycle ${cycle}/${MAX_SOLVE_CYCLES}: goal not yet solved. Corrective round:\n\n` +
             followups
               .map((d) => {
                 const c = claws.find((x) => x.id === d.agentId);
@@ -937,6 +999,7 @@ Otherwise respond with ONLY a JSON array (no prose, no code fences) of up to 2 f
           messageType: "agent",
         });
         const more = await dispatchDirectives(followups, claws, channelId, priority, abby, sourceContext);
+        if (!more.length) break; // dispatch produced nothing (paused/unknown agents) — stop cycling
         results.push(...more);
       }
     }
@@ -953,17 +1016,75 @@ Otherwise respond with ONLY a JSON array (no prose, no code fences) of up to 2 f
         EXECUTION_DOCTRINE +
         ANTI_HALLUCINATION_DIRECTIVE +
         SWARM_SAFETY_RULES;
-      const synthUser = `Operator goal: "${goal}"\n\nEach CLAW's final reported work — present and attribute ALL of it (Discovery), then turn it into recommendations and next steps (Application):\n${results
-        .map((r) => `### ${r.name}\n${r.result.slice(0, 3000)}`)
-        .join("\n\n")}\n\nWrite your final orchestrator briefing for the operator now — direct answer first, then each CLAW's attributed discovery, then the application (recommendations + next steps). Peer-to-peer voice.`;
-      let finalAnswer = "";
-      try {
-        // Generous budget: this is the operator-facing deliverable, so it must
-        // not be truncated the way an 800-token planning call would be.
-        finalAnswer = (await completeChat(model, synthSystem, synthUser, 4000)).trim();
-      } catch (e) {
-        logger.error({ e }, "final synthesis failed");
+      const synthesize = async (): Promise<string> => {
+        const synthUser = `Operator goal: "${goal}"\n\nEach CLAW's final reported work — present and attribute ALL of it (Discovery), then turn it into recommendations and next steps (Application):\n${results
+          .map((r) => `### ${r.name}\n${r.result.slice(0, 3000)}`)
+          .join("\n\n")}\n\nWrite your final orchestrator briefing for the operator now — direct answer first, then each CLAW's attributed discovery, then the application (recommendations + next steps). Peer-to-peer voice.`;
+        try {
+          // Generous budget: this is the operator-facing deliverable, so it must
+          // not be truncated the way an 800-token planning call would be.
+          return (await completeChat(model, synthSystem, synthUser, 4000)).trim();
+        } catch (e) {
+          logger.error({ e }, "final synthesis failed");
+          return "";
+        }
+      };
+      let finalAnswer = await synthesize();
+
+      // ── SOLUTION GATE ──
+      // The final output the operator reads must BE a solution to their input.
+      // ABBY verifies the briefing against the goal; if it doesn't solve it,
+      // the verdict's corrective directives are dispatched and the briefing is
+      // re-synthesized — cycling until it passes or the budget runs out, in
+      // which case the remaining gap is stated honestly in the briefing itself.
+      // Skipped for forceAgentId runs (single-shot actions must not repeat).
+      if (finalAnswer && !forceAgentId) {
+        let gateCycle = 0;
+        while (gateCycle < MAX_SOLVE_CYCLES && !isSwarmPaused()) {
+          gateCycle++;
+          const gateUser = `Operator input: "${goal}"
+
+Final briefing produced by the swarm:
+"""
+${finalAnswer.slice(0, 8000)}
+"""
+${SOLUTION_GATE_DOCTRINE}
+Respond with ONLY a JSON object (no prose, no code fences) shaped:
+{"solved": <true|false>, "reason": "<one sentence: why it is/isn't a solution>", "directives": [{"agentId": <number>, "directive": "<corrective instruction that closes the gap>"}]}
+"directives" must be [] when solved is true, and otherwise contain 1-2 directives. Available CLAWs: ${roster}.`;
+          let verdictRaw = "";
+          try {
+            verdictRaw = await completeChat(model, planSystem, gateUser);
+          } catch (e) {
+            logger.error({ e, gateCycle }, "solution gate verification failed");
+            break; // can't verify — ship what we have rather than stall
+          }
+          const verdict = parseSolutionVerdict(verdictRaw);
+          if (verdict.solved) break;
+
+          const fixes = parseDirectives(verdictRaw, claws).slice(0, 2);
+          await postMessage({
+            channelId,
+            agentId: ABBY_ID,
+            agentName: "ABBY",
+            agentColor: abby?.color ?? ABBY_COLOR,
+            content: `Solution gate ${gateCycle}/${MAX_SOLVE_CYCLES}: briefing does not yet solve the goal — ${verdict.reason || "gap unspecified"}.${fixes.length ? " Dispatching corrective round." : ""}`,
+            messageType: "system",
+          });
+
+          if (gateCycle >= MAX_SOLVE_CYCLES || !fixes.length || isSwarmPaused()) {
+            // Budget spent (or no actionable fix): report the gap honestly in
+            // the deliverable itself — never present an unsolved goal as solved.
+            finalAnswer += `\n\n---\n⚠️ SOLUTION GATE — NOT FULLY SOLVED after ${gateCycle} verification cycle${gateCycle === 1 ? "" : "s"} (UNVERIFIED): ${verdict.reason || "the briefing does not fully solve the operator's input"}. The above is the swarm's best verified progress, not a complete solution.`;
+            break;
+          }
+          const more = await dispatchDirectives(fixes, claws, channelId, priority, abby, sourceContext);
+          if (more.length) results.push(...more);
+          const redone = await synthesize();
+          if (redone) finalAnswer = redone;
+        }
       }
+
       await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.id, ABBY_ID));
       // Fallback: never post a bare status line — if synthesis yields nothing,
       // hand back the raw CLAW results so the operator still gets the answer.
