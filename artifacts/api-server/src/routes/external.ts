@@ -272,11 +272,13 @@ router.post("/external/v1/messages", async (req, res) => {
 
 // ─── POST /api/external/v1/twin-lessons ──────────────────────────────────────
 // Learner side of the twin teaching sync (lib/twinSync.ts is the teacher side).
-// The sibling swarm (AURA ⇄ T800 — same codebase, two deployments) pushes its
-// nightly VERIFIED lessons here. They are stored QUARANTINED: tagged
-// "from-twin,proposed" with the teacher's "self-learned" tag stripped, so a
-// twin lesson is visible to this swarm's agents via memory_search but is never
-// auto-trusted and can never be re-exported as if verified here (no echo loop).
+// T800-AURA is a SEPARATE repo/service: it needs its own implementation of this
+// ingest endpoint to receive AURA's nightly teach push — this route is AURA's
+// own inbound ear, so a twin can teach BOS-AURA back through the same contract.
+// Inbound lessons are stored QUARANTINED: tagged "from-twin,proposed" with the
+// teacher's "self-learned" tag stripped, so a twin lesson is visible to this
+// swarm's agents via memory_search but is never auto-trusted and can never be
+// re-exported as if verified here (no echo loop).
 // Idempotent: each lesson carries a stable sourceId ("aura:<id>"); re-pushes
 // of an already-ingested lesson are skipped via its "src:" tag marker.
 // Body: { source?: string, lessons: [{ sourceId, key?, content, tags?, agentName? }] }
