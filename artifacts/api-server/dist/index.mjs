@@ -95240,10 +95240,9 @@ Respond with ONLY a JSON array (no prose, no code fences) of objects shaped: {"a
       abby,
       sourceContext
     );
+    let solveRoundsUsed = 1;
     if (results.length && !isSwarmPaused() && !forceAgentId) {
-      let cycle = 0;
-      while (cycle < MAX_SOLVE_CYCLES && !isSwarmPaused()) {
-        cycle++;
+      while (solveRoundsUsed < MAX_SOLVE_CYCLES && !isSwarmPaused()) {
         await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, ABBY_ID2));
         const reviewUser = `Operator goal: "${goal}"
 
@@ -95259,7 +95258,7 @@ Otherwise respond with ONLY a JSON array (no prose, no code fences) of up to 2 f
           const reviewRaw = await completeChat(model, planSystem, reviewUser);
           followups = parseDirectives(reviewRaw, claws).slice(0, 2);
         } catch (e) {
-          logger.error({ e, cycle }, "coordinator review failed");
+          logger.error({ e, solveRoundsUsed }, "coordinator review failed");
           await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.id, ABBY_ID2));
           break;
         }
@@ -95270,7 +95269,7 @@ Otherwise respond with ONLY a JSON array (no prose, no code fences) of up to 2 f
           agentId: ABBY_ID2,
           agentName: "ABBY",
           agentColor: abby?.color ?? ABBY_COLOR,
-          content: `Solve cycle ${cycle}/${MAX_SOLVE_CYCLES}: goal not yet solved. Corrective round:
+          content: `Solve round ${solveRoundsUsed + 1}/${MAX_SOLVE_CYCLES}: goal not yet solved. Corrective round:
 
 ` + followups.map((d) => {
             const c = claws.find((x) => x.id === d.agentId);
@@ -95279,6 +95278,7 @@ Otherwise respond with ONLY a JSON array (no prose, no code fences) of up to 2 f
           messageType: "agent"
         });
         const more = await dispatchDirectives(followups, claws, channelId, priority, abby, sourceContext);
+        solveRoundsUsed++;
         if (!more.length) break;
         results.push(...more);
       }
@@ -95303,9 +95303,9 @@ Write your final orchestrator briefing for the operator now \u2014 direct answer
       };
       let finalAnswer = await synthesize();
       if (finalAnswer && !forceAgentId) {
-        let gateCycle = 0;
-        while (gateCycle < MAX_SOLVE_CYCLES && !isSwarmPaused()) {
-          gateCycle++;
+        let gateChecks = 0;
+        while (!isSwarmPaused()) {
+          gateChecks++;
           const gateUser = `Operator input: "${goal}"
 
 Final briefing produced by the swarm:
@@ -95320,28 +95320,30 @@ Respond with ONLY a JSON object (no prose, no code fences) shaped:
           try {
             verdictRaw = await completeChat(model, planSystem, gateUser);
           } catch (e) {
-            logger.error({ e, gateCycle }, "solution gate verification failed");
+            logger.error({ e, gateChecks }, "solution gate verification failed");
             break;
           }
           const verdict = parseSolutionVerdict(verdictRaw);
           if (verdict.solved) break;
           const fixes = parseDirectives(verdictRaw, claws).slice(0, 2);
+          const budgetLeft = solveRoundsUsed < MAX_SOLVE_CYCLES;
           await postMessage({
             channelId,
             agentId: ABBY_ID2,
             agentName: "ABBY",
             agentColor: abby?.color ?? ABBY_COLOR,
-            content: `Solution gate ${gateCycle}/${MAX_SOLVE_CYCLES}: briefing does not yet solve the goal \u2014 ${verdict.reason || "gap unspecified"}.${fixes.length ? " Dispatching corrective round." : ""}`,
+            content: `Solution gate (round ${solveRoundsUsed}/${MAX_SOLVE_CYCLES} used): briefing does not yet solve the goal \u2014 ${verdict.reason || "gap unspecified"}.${budgetLeft && fixes.length ? " Dispatching corrective round." : ""}`,
             messageType: "system"
           });
-          if (gateCycle >= MAX_SOLVE_CYCLES || !fixes.length || isSwarmPaused()) {
+          if (!budgetLeft || !fixes.length || isSwarmPaused()) {
             finalAnswer += `
 
 ---
-\u26A0\uFE0F SOLUTION GATE \u2014 NOT FULLY SOLVED after ${gateCycle} verification cycle${gateCycle === 1 ? "" : "s"} (UNVERIFIED): ${verdict.reason || "the briefing does not fully solve the operator's input"}. The above is the swarm's best verified progress, not a complete solution.`;
+\u26A0\uFE0F SOLUTION GATE \u2014 NOT FULLY SOLVED after ${solveRoundsUsed} dispatch round${solveRoundsUsed === 1 ? "" : "s"} (UNVERIFIED): ${verdict.reason || "the briefing does not fully solve the operator's input"}. The above is the swarm's best verified progress, not a complete solution.`;
             break;
           }
           const more = await dispatchDirectives(fixes, claws, channelId, priority, abby, sourceContext);
+          solveRoundsUsed++;
           if (more.length) results.push(...more);
           const redone = await synthesize();
           if (redone) finalAnswer = redone;

@@ -108,13 +108,15 @@ note the 401 was an unauthenticated call. Give ONE evidence-based DIRECT ANSWER.
 const MAX_AGENT_STEPS = Number(process.env["MAX_AGENT_STEPS"]) > 0 ? Number(process.env["MAX_AGENT_STEPS"]) : 24;
 
 /**
- * Max solve cycles per operator goal. A "cycle" is one coordinator review of
- * the CLAW results against the goal followed by a corrective dispatch round,
- * plus the solution-gate re-verification of the final briefing. The contract:
- * the final output the operator reads must BE a solution to their input — if a
- * review or the gate judges it isn't, the swarm keeps solving until it is or
- * this budget runs out (in which case the gap is reported honestly, never
- * papered over). Operator-tunable via MAX_SOLVE_CYCLES without a redeploy.
+ * Total solve budget per operator goal, expressed as a multiple of a single
+ * run: at most MAX_SOLVE_CYCLES dispatch rounds INCLUDING the initial one, so
+ * the default of 4 caps total spend at 4× one single run. The budget is SHARED
+ * between the coordinator review loop and the solution gate — corrective
+ * rounds from either draw from the same pool. The contract: the final output
+ * the operator reads must BE a solution to their input — if a review or the
+ * gate judges it isn't, the swarm keeps solving until it is or the budget runs
+ * out (in which case the gap is reported honestly, never papered over).
+ * Operator-tunable via MAX_SOLVE_CYCLES without a redeploy.
  */
 export const MAX_SOLVE_CYCLES = Number(process.env["MAX_SOLVE_CYCLES"]) > 0 ? Number(process.env["MAX_SOLVE_CYCLES"]) : 4;
 
@@ -950,16 +952,19 @@ Respond with ONLY a JSON array (no prose, no code fences) of objects shaped: {"a
       sourceContext,
     );
 
+    // Shared solve budget: total dispatch rounds for this goal, counting the
+    // initial round above. Capped at MAX_SOLVE_CYCLES (default 4 = 4× one
+    // single run); the coordinator loop and the solution gate both draw from it.
+    let solveRoundsUsed = 1;
+
     // ── ABBY coordinator solve loop ──
     // ABBY reviews the CLAWs' real results against the goal and keeps issuing
-    // corrective rounds — cycling up to MAX_SOLVE_CYCLES — until the review
+    // corrective rounds — within the shared solve budget — until the review
     // judges the goal solved. Skipped for forceAgentId runs: those are
     // connected-account ACTIONS (e.g. publish a post) that must execute exactly
     // once; re-cycling would repeat the side effect.
     if (results.length && !isSwarmPaused() && !forceAgentId) {
-      let cycle = 0;
-      while (cycle < MAX_SOLVE_CYCLES && !isSwarmPaused()) {
-        cycle++;
+      while (solveRoundsUsed < MAX_SOLVE_CYCLES && !isSwarmPaused()) {
         await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, ABBY_ID));
         const reviewUser = `Operator goal: "${goal}"
 
@@ -975,7 +980,7 @@ Otherwise respond with ONLY a JSON array (no prose, no code fences) of up to 2 f
           const reviewRaw = await completeChat(model, planSystem, reviewUser);
           followups = parseDirectives(reviewRaw, claws).slice(0, 2);
         } catch (e) {
-          logger.error({ e, cycle }, "coordinator review failed");
+          logger.error({ e, solveRoundsUsed }, "coordinator review failed");
           await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.id, ABBY_ID));
           break; // can't judge — fall through to synthesis with what we have
         }
@@ -989,7 +994,7 @@ Otherwise respond with ONLY a JSON array (no prose, no code fences) of up to 2 f
           agentName: "ABBY",
           agentColor: abby?.color ?? ABBY_COLOR,
           content:
-            `Solve cycle ${cycle}/${MAX_SOLVE_CYCLES}: goal not yet solved. Corrective round:\n\n` +
+            `Solve round ${solveRoundsUsed + 1}/${MAX_SOLVE_CYCLES}: goal not yet solved. Corrective round:\n\n` +
             followups
               .map((d) => {
                 const c = claws.find((x) => x.id === d.agentId);
@@ -999,6 +1004,7 @@ Otherwise respond with ONLY a JSON array (no prose, no code fences) of up to 2 f
           messageType: "agent",
         });
         const more = await dispatchDirectives(followups, claws, channelId, priority, abby, sourceContext);
+        solveRoundsUsed++;
         if (!more.length) break; // dispatch produced nothing (paused/unknown agents) — stop cycling
         results.push(...more);
       }
@@ -1035,13 +1041,15 @@ Otherwise respond with ONLY a JSON array (no prose, no code fences) of up to 2 f
       // The final output the operator reads must BE a solution to their input.
       // ABBY verifies the briefing against the goal; if it doesn't solve it,
       // the verdict's corrective directives are dispatched and the briefing is
-      // re-synthesized — cycling until it passes or the budget runs out, in
-      // which case the remaining gap is stated honestly in the briefing itself.
+      // re-synthesized — cycling until it passes or the SHARED solve budget
+      // (the same pool the coordinator loop drew from, total ≤ MAX_SOLVE_CYCLES
+      // dispatch rounds including the first) runs out, in which case the
+      // remaining gap is stated honestly in the briefing itself.
       // Skipped for forceAgentId runs (single-shot actions must not repeat).
       if (finalAnswer && !forceAgentId) {
-        let gateCycle = 0;
-        while (gateCycle < MAX_SOLVE_CYCLES && !isSwarmPaused()) {
-          gateCycle++;
+        let gateChecks = 0;
+        while (!isSwarmPaused()) {
+          gateChecks++;
           const gateUser = `Operator input: "${goal}"
 
 Final briefing produced by the swarm:
@@ -1056,29 +1064,31 @@ Respond with ONLY a JSON object (no prose, no code fences) shaped:
           try {
             verdictRaw = await completeChat(model, planSystem, gateUser);
           } catch (e) {
-            logger.error({ e, gateCycle }, "solution gate verification failed");
+            logger.error({ e, gateChecks }, "solution gate verification failed");
             break; // can't verify — ship what we have rather than stall
           }
           const verdict = parseSolutionVerdict(verdictRaw);
           if (verdict.solved) break;
 
           const fixes = parseDirectives(verdictRaw, claws).slice(0, 2);
+          const budgetLeft = solveRoundsUsed < MAX_SOLVE_CYCLES;
           await postMessage({
             channelId,
             agentId: ABBY_ID,
             agentName: "ABBY",
             agentColor: abby?.color ?? ABBY_COLOR,
-            content: `Solution gate ${gateCycle}/${MAX_SOLVE_CYCLES}: briefing does not yet solve the goal — ${verdict.reason || "gap unspecified"}.${fixes.length ? " Dispatching corrective round." : ""}`,
+            content: `Solution gate (round ${solveRoundsUsed}/${MAX_SOLVE_CYCLES} used): briefing does not yet solve the goal — ${verdict.reason || "gap unspecified"}.${budgetLeft && fixes.length ? " Dispatching corrective round." : ""}`,
             messageType: "system",
           });
 
-          if (gateCycle >= MAX_SOLVE_CYCLES || !fixes.length || isSwarmPaused()) {
+          if (!budgetLeft || !fixes.length || isSwarmPaused()) {
             // Budget spent (or no actionable fix): report the gap honestly in
             // the deliverable itself — never present an unsolved goal as solved.
-            finalAnswer += `\n\n---\n⚠️ SOLUTION GATE — NOT FULLY SOLVED after ${gateCycle} verification cycle${gateCycle === 1 ? "" : "s"} (UNVERIFIED): ${verdict.reason || "the briefing does not fully solve the operator's input"}. The above is the swarm's best verified progress, not a complete solution.`;
+            finalAnswer += `\n\n---\n⚠️ SOLUTION GATE — NOT FULLY SOLVED after ${solveRoundsUsed} dispatch round${solveRoundsUsed === 1 ? "" : "s"} (UNVERIFIED): ${verdict.reason || "the briefing does not fully solve the operator's input"}. The above is the swarm's best verified progress, not a complete solution.`;
             break;
           }
           const more = await dispatchDirectives(fixes, claws, channelId, priority, abby, sourceContext);
+          solveRoundsUsed++;
           if (more.length) results.push(...more);
           const redone = await synthesize();
           if (redone) finalAnswer = redone;
