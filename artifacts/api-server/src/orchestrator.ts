@@ -35,6 +35,7 @@ import {
   RESEARCH_PLAYBOOKS,
   SWARM_SAFETY_RULES,
   CODING_LIFECYCLE_DOCTRINE,
+  ACCOUNT_POLICY_DOCTRINE,
   buildVaultCard,
   buildLiveReachCard,
 } from "./routes/ai";
@@ -50,6 +51,7 @@ import {
 } from "./tools";
 import { sendInngestEvent, traceLlmRun, chatRequestFor, llmFetch } from "./lib/integrations";
 import { groundingProof } from "./lib/grounding";
+import { assessActionRisk, policyRefusal } from "./lib/safetyPolicy";
 
 type Agent = typeof agentsTable.$inferSelect;
 
@@ -581,7 +583,7 @@ export async function executeAgentCommand(opts: {
     // tool list plus which integrations are ONLINE/OFFLINE right now — so a
     // dispatched CLAW never "forgets" Tavily/Firecrawl/Composio/E2B exist, and
     // never pretends an offline one works.
-    const system = persona + toolGuide + buildLiveReachCard(agent.id) + EXECUTION_DOCTRINE + RESEARCH_PLAYBOOKS + ANTI_HALLUCINATION_DIRECTIVE + SWARM_SAFETY_RULES + CODING_LIFECYCLE_DOCTRINE + (await buildVaultCard());
+    const system = persona + toolGuide + buildLiveReachCard(agent.id) + EXECUTION_DOCTRINE + RESEARCH_PLAYBOOKS + ANTI_HALLUCINATION_DIRECTIVE + SWARM_SAFETY_RULES + CODING_LIFECYCLE_DOCTRINE + ACCOUNT_POLICY_DOCTRINE + (await buildVaultCard());
 
     const messages: ChatMessage[] = [
       { role: "system", content: system },
@@ -972,6 +974,25 @@ export async function orchestrateGoal(opts: {
 }): Promise<void> {
   const { goal, channelId, priority, sourceContext, forceAgentId } = opts;
   logger.info({ phase: "abby-planning", ...groundingProof(sourceContext) }, "orchestration grounding");
+
+  // Hard safety guardrail: refuse blocked categories (financial account opening,
+  // government-ID/KYC submission) before any planning or dispatch. Enforced in
+  // code so a prompt-injected or mis-reasoned goal can't slip past the doctrine.
+  const goalRisk = assessActionRisk(`${goal}\n${sourceContext ?? ""}`);
+  if (goalRisk.blocked) {
+    logger.warn({ category: goalRisk.category }, "orchestrateGoal blocked by safety policy");
+    await postMessage({
+      channelId,
+      agentId: ABBY_ID,
+      agentName: "ABBY",
+      agentColor: ABBY_COLOR,
+      content: policyRefusal(goalRisk),
+      messageType: "system",
+    }).catch(() => {});
+    void sendInngestEvent("swarm/goal.blocked", { goal, channelId, category: goalRisk.category });
+    return;
+  }
+
   void sendInngestEvent("swarm/goal.received", { goal, channelId, priority });
   try {
     const agents = await db.select().from(agentsTable);
@@ -998,7 +1019,7 @@ export async function orchestrateGoal(opts: {
       .join(", ");
     // ABBY plans with LIVE REACH so directives only lean on integrations that
     // are actually online (e.g. don't direct a CLAW to Firecrawl if it's off).
-    const planSystem = (AGENT_PERSONAS[ABBY_ID] ?? "You are ABBY, the swarm orchestrator.") + buildLiveReachCard(ABBY_ID) + EXECUTION_DOCTRINE + RESEARCH_PLAYBOOKS + SWARM_SAFETY_RULES + CODING_LIFECYCLE_DOCTRINE + (await buildVaultCard());
+    const planSystem = (AGENT_PERSONAS[ABBY_ID] ?? "You are ABBY, the swarm orchestrator.") + buildLiveReachCard(ABBY_ID) + EXECUTION_DOCTRINE + RESEARCH_PLAYBOOKS + SWARM_SAFETY_RULES + CODING_LIFECYCLE_DOCTRINE + ACCOUNT_POLICY_DOCTRINE + (await buildVaultCard());
     const planUser = `Operator goal: "${goal}"
 ${sourceContext && sourceContext.trim() ? `\nThe operator provided this source material to work from (decompose against THIS; the CLAWs will receive it too — do not tell them to search memory for it):\n"""\n${sourceContext.slice(0, 12000)}\n"""\n` : ""}
 Available CLAWs you command: ${roster}.
