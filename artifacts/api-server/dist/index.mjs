@@ -28105,7 +28105,7 @@ var require_pino = __commonJS({
     function pinoBundlerAbsolutePath(p) {
       try {
         const path3 = __require("path");
-        const outputDir = "/home/runner/work/BOS-AURA/BOS-AURA/artifacts/api-server/dist";
+        const outputDir = "/home/user/BOS-AURA/artifacts/api-server/dist";
         return path3.resolve(outputDir, p.replace(/^\.\//, ""));
       } catch (e) {
         const f = new Function("p", "return new URL(p, import.meta.url).pathname");
@@ -88255,6 +88255,52 @@ function pruneArtifactChunks(now = Date.now()) {
 function isTrue(v) {
   return v === true || v === "true" || v === 1 || v === "1";
 }
+function buildBrowserLoginScript(opts) {
+  const j = (v) => JSON.stringify(v ?? "");
+  const userSel = opts.userSelector || "input[type=email], input[name=email], input[name=username], input[id=identifierId], input[type=text]";
+  const passSel = opts.passSelector || "input[type=password], input[name=password]";
+  const submitSel = opts.submitSelector || "button[type=submit], input[type=submit], button#identifierNext, button:has-text('Sign in'), button:has-text('Log in'), button:has-text('Next')";
+  return [
+    "set -e",
+    "pip install playwright -q >/dev/null 2>&1 || pip install playwright -q",
+    "python -m playwright install chromium >/dev/null 2>&1 || python -m playwright install --with-deps chromium >/dev/null 2>&1 || true",
+    `export BL_USER='{{secret:${opts.userSecret}}}'`,
+    `export BL_PASS='{{secret:${opts.passSecret}}}'`,
+    "python3 <<'PYEOF'",
+    "import os, json",
+    "from playwright.sync_api import sync_playwright",
+    `URL = json.loads(${j(j(opts.url))})`,
+    `USEL = json.loads(${j(j(userSel))})`,
+    `PSEL = json.loads(${j(j(passSel))})`,
+    `SSEL = json.loads(${j(j(submitSel))})`,
+    `STEPS = json.loads(${j(j(opts.steps ?? ""))})`,
+    'USER = os.environ.get("BL_USER", ""); PWD = os.environ.get("BL_PASS", "")',
+    "with sync_playwright() as p:",
+    '    browser = p.chromium.launch(args=["--no-sandbox","--disable-dev-shm-usage"])',
+    "    page = browser.new_page()",
+    "    try:",
+    '        page.goto(URL, wait_until="domcontentloaded", timeout=45000)',
+    "        page.fill(USEL, USER, timeout=15000)",
+    "        try:",
+    "            page.fill(PSEL, PWD, timeout=4000)",
+    "        except Exception:",
+    "            # Two-step login (username, then password on the next screen).",
+    "            page.click(SSEL, timeout=5000); page.wait_for_timeout(2000)",
+    "            page.fill(PSEL, PWD, timeout=15000)",
+    "        page.click(SSEL, timeout=8000)",
+    "        page.wait_for_timeout(5000)",
+    '        print("POST_LOGIN_URL:", page.url)',
+    '        print("TITLE:", page.title())',
+    '        print("BODY:", page.inner_text("body")[:1500])',
+    "        if STEPS.strip():",
+    '            exec(STEPS, {"page": page, "browser": browser, "print": print})',
+    "    except Exception as e:",
+    '        print("BROWSER_LOGIN_ERROR:", repr(e)[:400])',
+    "    finally:",
+    "        browser.close()",
+    "PYEOF"
+  ].join("\n");
+}
 function sandboxSecretsBlocked(script) {
   const allow = (process.env["SANDBOX_SECRET_ALLOWLIST"] ?? "").split(",").map((s) => s.trim()).filter(Boolean);
   if (!allow.length) return null;
@@ -88969,6 +89015,54 @@ ${clip3(safe, 4e3)}${hint}`;
           return redactSecrets(await runInSandbox(script), usedSecrets);
         }
       },
+      browser_login: {
+        name: "browser_login",
+        description: "HARD FALLBACK for sites with no connected API: log into a website AS THE OPERATOR using their vaulted credentials, then optionally drive the page. A real headless Chromium (Playwright) navigates to the login URL, fills the username + password from the vault, submits, and runs your optional post-login steps. Pass `url` (the login page), `username_secret` and `password_secret` (the VAULT NAMES, e.g. 'MYSITE_EMAIL' / 'MYSITE_PASSWORD' \u2014 never a raw password; the operator stores these in the vault and you reference the name only). Optionally pass CSS selectors (`username_selector`, `password_selector`, `submit_selector`) if the defaults miss, and `steps`: Python lines that use the Playwright `page` object to do the task after login (e.g. page.goto(...), page.click(...), print(page.inner_text('main'))). PREFER a connected Composio app when one exists \u2014 use this only when there is no API. Note: sites with CAPTCHA or 2FA will block automated login. Never use this to open financial accounts or submit government IDs.",
+        parameters: {
+          type: "object",
+          properties: {
+            url: { type: "string", description: "The login page URL (https://\u2026)." },
+            username_secret: { type: "string", description: "Vault NAME holding the username/email (not the value)." },
+            password_secret: { type: "string", description: "Vault NAME holding the password (not the value)." },
+            username_selector: { type: "string", description: "Optional CSS selector for the username/email field." },
+            password_selector: { type: "string", description: "Optional CSS selector for the password field." },
+            submit_selector: { type: "string", description: "Optional CSS selector for the submit/next button." },
+            steps: { type: "string", description: "Optional Python lines (using the Playwright `page` object) to run after login to perform the task." }
+          },
+          required: ["url", "username_secret", "password_secret"]
+        },
+        run: async (args) => {
+          const url2 = String(args["url"] ?? "").trim();
+          const userSecret = String(args["username_secret"] ?? "").trim();
+          const passSecret = String(args["password_secret"] ?? "").trim();
+          const steps = args["steps"] != null ? String(args["steps"]) : "";
+          if (!url2 || !userSecret || !passSecret) {
+            return "error: url, username_secret, and password_secret (vault names) are all required.";
+          }
+          const urlBlocked = await ssrfGuard(url2);
+          if (urlBlocked) return urlBlocked;
+          const policy = assessActionRisk(`${url2} ${steps}`);
+          if (policy.blocked) return policyRefusal(policy);
+          if (!sandboxConfigured()) return "error: the browser fallback needs the E2B cloud sandbox (set E2B_API_KEY).";
+          const rawScript = buildBrowserLoginScript({
+            url: url2,
+            userSecret,
+            passSecret,
+            userSelector: args["username_selector"] != null ? String(args["username_selector"]) : void 0,
+            passSelector: args["password_selector"] != null ? String(args["password_selector"]) : void 0,
+            submitSelector: args["submit_selector"] != null ? String(args["submit_selector"]) : void 0,
+            steps
+          });
+          const allowBlock = sandboxSecretsBlocked(rawScript);
+          if (allowBlock) return allowBlock;
+          const usedSecrets = /* @__PURE__ */ new Set();
+          const script = await substituteSecrets(rawScript, usedSecrets);
+          if (hasSecretPlaceholder(script)) {
+            return `error: a credential vault name did not resolve \u2014 '${userSecret}' and/or '${passSecret}' are not in the vault. Add them in Settings \u2192 vault, then retry. (Nothing was executed.)`;
+          }
+          return redactSecrets(await runInSandbox(script), usedSecrets);
+        }
+      },
       sandbox_repo_pr: {
         name: "sandbox_repo_pr",
         description: "Work on the OpenClaw (bos-aura) repository for real: clones it into an isolated E2B VM, runs your shell script to make changes and/or run the test suite (cwd = repo root), commits, pushes a branch, and opens a Pull Request for human review. Use this to implement a fix/feature, run the real tests against your changes, and propose them. Scoped to the bos-aura repo only. The GitHub token is handled server-side and never exposed to you.",
@@ -89617,13 +89711,13 @@ ${clip3(res.body, 4e3)}`;
       // ABBY — full authority
       2: ["code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "http_request", "web_scrape", "web_search", "tier1_sources", "memory_search", "memory_write", "vault_list", "save_artifact", "image_generate", "send_message"],
       // FORGE — code
-      3: ["web_scrape", "web_screenshot", "web_search", "tier1_sources", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "save_artifact", "image_generate", "send_message"],
+      3: ["web_scrape", "web_screenshot", "web_search", "tier1_sources", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "sandbox_exec", "browser_login", "save_artifact", "image_generate", "send_message"],
       // CRAWLER — browser
       4: ["memory_write", "memory_search", "web_search", "tier1_sources", "web_scrape", "http_request", "calculator", "vault_list", "save_artifact", "image_generate", "send_message"],
       // VAULT — memory/RAG
-      5: ["http_request", "web_scrape", "web_search", "tier1_sources", "marketing_playbook", "code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_action", "instagram_post", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task", "save_artifact", "image_generate", "render_card", "send_message"],
+      5: ["http_request", "web_scrape", "web_search", "tier1_sources", "marketing_playbook", "code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_action", "instagram_post", "browser_login", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task", "save_artifact", "image_generate", "render_card", "send_message"],
       // WIRE — APIs + scheduling
-      6: ["web_scrape", "web_search", "tier1_sources", "marketing_playbook", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_action", "instagram_post", "save_artifact", "image_generate", "render_card", "send_message"]
+      6: ["web_scrape", "web_search", "tier1_sources", "marketing_playbook", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_action", "instagram_post", "browser_login", "save_artifact", "image_generate", "render_card", "send_message"]
       // MR.NICE — social
     };
     ABBY_ID = 1;
@@ -94261,13 +94355,18 @@ OPERATING THE OPERATOR'S ACCOUNTS (negotiation + hard limits):
   composio_apps to confirm the app is live, then composio_action / instagram_post.
   The authenticated API is reliable, auditable, and OAuth-based (no passwords).
   Always reach for it FIRST.
-- BROWSER IS THE FALLBACK: only drive the browser for a site that genuinely has
-  NO connected API, and only for accounts the operator owns and has authorized.
-  Pull any needed credential from the vault as {{secret:NAME}} \u2014 never hardcode
-  or echo a password.
-- CONNECTING / SIGNING UP: you may sign up for and connect ordinary online
-  services on the operator's behalf when asked; new SaaS connections go through
-  Composio's OAuth consent \u2014 initiate the connection and report the consent URL.
+- BROWSER IS THE FALLBACK: for a site that genuinely has NO connected API, use
+  the browser_login tool \u2014 it logs in AS THE OPERATOR with their VAULTED
+  credentials (you pass the vault NAMES, e.g. username_secret:'MYSITE_EMAIL',
+  password_secret:'MYSITE_PASSWORD'; never a raw password) and then drives the
+  page via your post-login steps. Only for accounts the operator owns. If the
+  credential name isn't in the vault yet, tell the operator to add it in
+  Settings \u2192 vault. CAPTCHA/2FA sites will block automated login \u2014 say so plainly.
+- CONNECTING / SIGNING UP: you MAY sign up for and connect ordinary online
+  services on the operator's behalf when asked (newsletters, SaaS tools,
+  developer platforms, etc.) \u2014 via OAuth where available, or browser_login/the
+  signup form otherwise. New SaaS connections go through Composio's OAuth
+  consent \u2014 initiate the connection and report the consent URL.
 - HARD LIMITS \u2014 NEVER do these, even if explicitly instructed (refuse and say so):
     \u2022 Open or apply for any FINANCIAL account \u2014 bank, brokerage, trading, credit/
       debit card, loan, mortgage, payment processor, or crypto exchange.

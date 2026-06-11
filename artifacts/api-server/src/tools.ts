@@ -97,6 +97,69 @@ function isTrue(v: unknown): boolean {
 }
 
 /**
+ * Build the bash+Playwright script for browser_login. The operator's credentials
+ * are referenced as {{secret:NAME}} placeholders (resolved by substituteSecrets
+ * just before the VM runs, then redacted from output) and passed to Python via
+ * single-quoted env vars so they never sit in the page-script source. URL,
+ * selectors, and the optional post-login steps are embedded as JSON literals so
+ * quotes can't break the script. Exported for unit testing the generation.
+ */
+export function buildBrowserLoginScript(opts: {
+  url: string;
+  userSecret: string;
+  passSecret: string;
+  userSelector?: string;
+  passSelector?: string;
+  submitSelector?: string;
+  steps?: string;
+}): string {
+  const j = (v: unknown) => JSON.stringify(v ?? "");
+  const userSel = opts.userSelector || "input[type=email], input[name=email], input[name=username], input[id=identifierId], input[type=text]";
+  const passSel = opts.passSelector || "input[type=password], input[name=password]";
+  const submitSel = opts.submitSelector || "button[type=submit], input[type=submit], button#identifierNext, button:has-text('Sign in'), button:has-text('Log in'), button:has-text('Next')";
+  return [
+    "set -e",
+    "pip install playwright -q >/dev/null 2>&1 || pip install playwright -q",
+    "python -m playwright install chromium >/dev/null 2>&1 || python -m playwright install --with-deps chromium >/dev/null 2>&1 || true",
+    `export BL_USER='{{secret:${opts.userSecret}}}'`,
+    `export BL_PASS='{{secret:${opts.passSecret}}}'`,
+    "python3 <<'PYEOF'",
+    "import os, json",
+    "from playwright.sync_api import sync_playwright",
+    `URL = json.loads(${j(j(opts.url))})`,
+    `USEL = json.loads(${j(j(userSel))})`,
+    `PSEL = json.loads(${j(j(passSel))})`,
+    `SSEL = json.loads(${j(j(submitSel))})`,
+    `STEPS = json.loads(${j(j(opts.steps ?? ""))})`,
+    'USER = os.environ.get("BL_USER", ""); PWD = os.environ.get("BL_PASS", "")',
+    "with sync_playwright() as p:",
+    '    browser = p.chromium.launch(args=["--no-sandbox","--disable-dev-shm-usage"])',
+    "    page = browser.new_page()",
+    "    try:",
+    '        page.goto(URL, wait_until="domcontentloaded", timeout=45000)',
+    "        page.fill(USEL, USER, timeout=15000)",
+    "        try:",
+    "            page.fill(PSEL, PWD, timeout=4000)",
+    "        except Exception:",
+    "            # Two-step login (username, then password on the next screen).",
+    "            page.click(SSEL, timeout=5000); page.wait_for_timeout(2000)",
+    "            page.fill(PSEL, PWD, timeout=15000)",
+    "        page.click(SSEL, timeout=8000)",
+    "        page.wait_for_timeout(5000)",
+    '        print("POST_LOGIN_URL:", page.url)',
+    '        print("TITLE:", page.title())',
+    '        print("BODY:", page.inner_text("body")[:1500])',
+    "        if STEPS.strip():",
+    '            exec(STEPS, {"page": page, "browser": browser, "print": print})',
+    "    except Exception as e:",
+    '        print("BROWSER_LOGIN_ERROR:", repr(e)[:400])',
+    "    finally:",
+    "        browser.close()",
+    "PYEOF",
+  ].join("\n");
+}
+
+/**
  * Defense-in-depth for the code sandboxes: agent-authored code runs in a VM with
  * full network egress, so a {{secret:NAME}} it injects could be exfiltrated. When
  * SANDBOX_SECRET_ALLOWLIST is set (comma-separated names), only those secrets may
@@ -960,6 +1023,61 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
     },
   },
 
+  browser_login: {
+    name: "browser_login",
+    description:
+      "HARD FALLBACK for sites with no connected API: log into a website AS THE OPERATOR using their vaulted credentials, then optionally drive the page. A real headless Chromium (Playwright) navigates to the login URL, fills the username + password from the vault, submits, and runs your optional post-login steps. " +
+      "Pass `url` (the login page), `username_secret` and `password_secret` (the VAULT NAMES, e.g. 'MYSITE_EMAIL' / 'MYSITE_PASSWORD' — never a raw password; the operator stores these in the vault and you reference the name only). Optionally pass CSS selectors (`username_selector`, `password_selector`, `submit_selector`) if the defaults miss, and `steps`: Python lines that use the Playwright `page` object to do the task after login (e.g. page.goto(...), page.click(...), print(page.inner_text('main'))). " +
+      "PREFER a connected Composio app when one exists — use this only when there is no API. Note: sites with CAPTCHA or 2FA will block automated login. Never use this to open financial accounts or submit government IDs.",
+    parameters: {
+      type: "object",
+      properties: {
+        url: { type: "string", description: "The login page URL (https://…)." },
+        username_secret: { type: "string", description: "Vault NAME holding the username/email (not the value)." },
+        password_secret: { type: "string", description: "Vault NAME holding the password (not the value)." },
+        username_selector: { type: "string", description: "Optional CSS selector for the username/email field." },
+        password_selector: { type: "string", description: "Optional CSS selector for the password field." },
+        submit_selector: { type: "string", description: "Optional CSS selector for the submit/next button." },
+        steps: { type: "string", description: "Optional Python lines (using the Playwright `page` object) to run after login to perform the task." },
+      },
+      required: ["url", "username_secret", "password_secret"],
+    },
+    run: async (args) => {
+      const url = String(args["url"] ?? "").trim();
+      const userSecret = String(args["username_secret"] ?? "").trim();
+      const passSecret = String(args["password_secret"] ?? "").trim();
+      const steps = args["steps"] != null ? String(args["steps"]) : "";
+      if (!url || !userSecret || !passSecret) {
+        return "error: url, username_secret, and password_secret (vault names) are all required.";
+      }
+      const urlBlocked = await ssrfGuard(url);
+      if (urlBlocked) return urlBlocked;
+      // HARD GUARDRAIL: never use the browser to open a financial account or
+      // submit government-ID/KYC identity, regardless of how the steps are framed.
+      const policy = assessActionRisk(`${url} ${steps}`);
+      if (policy.blocked) return policyRefusal(policy);
+      if (!sandboxConfigured()) return "error: the browser fallback needs the E2B cloud sandbox (set E2B_API_KEY).";
+      const rawScript = buildBrowserLoginScript({
+        url,
+        userSecret,
+        passSecret,
+        userSelector: args["username_selector"] != null ? String(args["username_selector"]) : undefined,
+        passSelector: args["password_selector"] != null ? String(args["password_selector"]) : undefined,
+        submitSelector: args["submit_selector"] != null ? String(args["submit_selector"]) : undefined,
+        steps,
+      });
+      const allowBlock = sandboxSecretsBlocked(rawScript);
+      if (allowBlock) return allowBlock;
+      // Inject the vaulted credentials (by name) just-in-time; redact from output.
+      const usedSecrets = new Set<string>();
+      const script = await substituteSecrets(rawScript, usedSecrets);
+      if (hasSecretPlaceholder(script)) {
+        return `error: a credential vault name did not resolve — '${userSecret}' and/or '${passSecret}' are not in the vault. Add them in Settings → vault, then retry. (Nothing was executed.)`;
+      }
+      return redactSecrets(await runInSandbox(script), usedSecrets);
+    },
+  },
+
   sandbox_repo_pr: {
     name: "sandbox_repo_pr",
     description:
@@ -1677,10 +1795,10 @@ const ALL_TOOLS = Object.keys(TOOL_REGISTRY);
 export const AGENT_TOOLS: Record<number, string[]> = {
   1: ALL_TOOLS, // ABBY — full authority
   2: ["code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "http_request", "web_scrape", "web_search", "tier1_sources", "memory_search", "memory_write", "vault_list", "save_artifact", "image_generate", "send_message"], // FORGE — code
-  3: ["web_scrape", "web_screenshot", "web_search", "tier1_sources", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "save_artifact", "image_generate", "send_message"], // CRAWLER — browser
+  3: ["web_scrape", "web_screenshot", "web_search", "tier1_sources", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "sandbox_exec", "browser_login", "save_artifact", "image_generate", "send_message"], // CRAWLER — browser
   4: ["memory_write", "memory_search", "web_search", "tier1_sources", "web_scrape", "http_request", "calculator", "vault_list", "save_artifact", "image_generate", "send_message"], // VAULT — memory/RAG
-  5: ["http_request", "web_scrape", "web_search", "tier1_sources", "marketing_playbook", "code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_action", "instagram_post", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task", "save_artifact", "image_generate", "render_card", "send_message"], // WIRE — APIs + scheduling
-  6: ["web_scrape", "web_search", "tier1_sources", "marketing_playbook", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_action", "instagram_post", "save_artifact", "image_generate", "render_card", "send_message"], // MR.NICE — social
+  5: ["http_request", "web_scrape", "web_search", "tier1_sources", "marketing_playbook", "code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_action", "instagram_post", "browser_login", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task", "save_artifact", "image_generate", "render_card", "send_message"], // WIRE — APIs + scheduling
+  6: ["web_scrape", "web_search", "tier1_sources", "marketing_playbook", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_action", "instagram_post", "browser_login", "save_artifact", "image_generate", "render_card", "send_message"], // MR.NICE — social
 };
 
 export function getToolNamesForAgent(agentId: number): string[] {
