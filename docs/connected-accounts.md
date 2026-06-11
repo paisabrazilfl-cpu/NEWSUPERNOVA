@@ -13,10 +13,31 @@ agent's prompt:
    (Gmail, Calendar, Sheets, Slack, GitHub, Notion, Instagram, …), it uses
    `composio_apps` → `composio_action` / `instagram_post`. OAuth-based, reliable,
    no passwords.
-2. **Browser is the fallback.** Only for a site that has no connected API, and
-   only for accounts you own and have authorized. Any credential is pulled from
-   the encrypted vault as `{{secret:NAME}}` — never hardcoded or echoed.
-3. **New connections** go through Composio's OAuth consent screen.
+2. **Browser is the hard fallback.** For a site with no connected API, the
+   `browser_login` tool drives a real headless Chromium that logs in **as you**
+   using credentials from the vault, then performs the task. Details below.
+3. **New connections / signups.** It can connect existing apps via OAuth and
+   sign up for ordinary online services (newsletters, SaaS, dev tools) on your
+   behalf. Financial accounts and government-ID submission are hard-blocked.
+
+## Browser login fallback (operate sites with your login)
+
+For any site without an API, the swarm uses `browser_login`:
+
+1. **Store the credentials in the vault** (Settings → vault), e.g.
+   `MYSITE_EMAIL` = your username and `MYSITE_PASSWORD` = your password.
+   Never put a password in chat — only the vault.
+2. The swarm calls `browser_login` with the **vault names** (not the values):
+   `url`, `username_secret: "MYSITE_EMAIL"`, `password_secret: "MYSITE_PASSWORD"`,
+   and optional Playwright `steps` to do the task after login.
+3. A headless Chromium logs in and runs the steps; credentials are injected
+   just-in-time and redacted from all output.
+
+**Limits:** sites protected by CAPTCHA or 2FA (including Google) will block
+automated login — the tool reports that plainly rather than pretending. For
+Google/Gmail specifically, use the Composio OAuth connector above, not
+`browser_login`. Live browser execution also depends on the E2B sandbox image
+having a browser runtime available.
 
 ## Connecting Gmail / Google (the safe way — no stored password)
 
