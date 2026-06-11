@@ -108,6 +108,33 @@ note the 401 was an unauthenticated call. Give ONE evidence-based DIRECT ANSWER.
 const MAX_AGENT_STEPS = Number(process.env["MAX_AGENT_STEPS"]) > 0 ? Number(process.env["MAX_AGENT_STEPS"]) : 24;
 
 /**
+ * Loop-accuracy guards. A CLAW that keeps making the SAME call — or makes no
+ * forward progress for several steps — is flailing, not working, and burns the
+ * whole step budget (observed live: ~40 identical web_search/save_artifact
+ * calls on one directive). These bound that:
+ *  - MAX_IDENTICAL_CALL_ATTEMPTS: after this many attempts of the exact same
+ *    (tool + args), the call is refused with a hard stop instead of re-run or
+ *    re-deduplicated, so the model is forced to change approach or conclude.
+ *  - MAX_NO_PROGRESS_STREAK: consecutive steps that produced NO new successful
+ *    tool result (only repeats, truncations, or errors) before the loop breaks
+ *    and the CLAW is told to conclude with what it has.
+ */
+export const MAX_IDENTICAL_CALL_ATTEMPTS = 3;
+export const MAX_NO_PROGRESS_STREAK = 3;
+
+/**
+ * What to do with a tool call given how many times this EXACT call (tool+args)
+ * has now been attempted this run. 1st = run it; 2nd = run/reuse but nudge the
+ * model that it's repeating; 3rd+ = hard stop (refuse to execute). Pure so the
+ * escalation policy is unit-tested and can't silently drift.
+ */
+export function repeatedCallAction(attempts: number): "run" | "nudge" | "stop" {
+  if (attempts >= MAX_IDENTICAL_CALL_ATTEMPTS) return "stop";
+  if (attempts === MAX_IDENTICAL_CALL_ATTEMPTS - 1) return "nudge";
+  return "run";
+}
+
+/**
  * Total solve budget per operator goal, expressed as a multiple of a single
  * run: at most MAX_SOLVE_CYCLES dispatch rounds INCLUDING the initial one, so
  * the default of 4 caps total spend at 4× one single run. The budget is SHARED
@@ -566,6 +593,10 @@ export async function executeAgentCommand(opts: {
     // Track tool failures so the self-learning nudge fires after errors,
     // telling the CLAW to research a fix online before retrying blindly.
     const failedTools = new Set<string>();
+    // Loop-accuracy bookkeeping: how many times each exact (tool+args) call was
+    // attempted, and how many consecutive steps produced no new result.
+    const attemptCounts = new Map<string, number>();
+    let noProgressStreak = 0;
     while (steps < MAX_AGENT_STEPS) {
       steps++;
       const assistant = await completeChatTurn(model, messages, tools);
@@ -611,6 +642,9 @@ export async function executeAgentCommand(opts: {
       });
       await db.update(agentsTable).set({ status: "executing" }).where(eq(agentsTable.id, agent.id));
 
+      // Did any call this step produce a NEW successful result? If not, the
+      // step made no forward progress and counts toward the no-progress streak.
+      let madeProgress = false;
       for (const { call, args: parsedArgs, truncated } of parsed) {
         const name = call.function?.name ?? "unknown";
 
@@ -627,14 +661,37 @@ export async function executeAgentCommand(opts: {
         let toolResult: string;
         let ok = true;
         const callKey = `${name}:${JSON.stringify(parsedArgs)}`;
-        if (truncated) {
-          // The model's arguments were truncated/invalid JSON (usually too large
-          // for one turn). Don't run with empty args — tell it to retry smaller.
+        const attempts = (attemptCounts.get(callKey) ?? 0) + 1;
+        attemptCounts.set(callKey, attempts);
+        const action = repeatedCallAction(attempts);
+        if (action === "stop") {
+          // The CLAW has made this EXACT call too many times — refuse it. Repeating
+          // identical arguments cannot produce a different result; force a change of
+          // approach (or an honest conclusion) instead of burning the budget.
           ok = false;
-          toolResult = `error: your ${name} call was dropped — its arguments were truncated/invalid JSON, almost always because the content was too large for a single turn. Retry ${name} with smaller arguments: write the file/code in sections, or shorten the payload.`;
+          toolResult =
+            `error: STOP REPEATING — you have called ${name} with these exact arguments ${attempts} times. ` +
+            `An identical call cannot return anything new. Do ONE of: (a) call a different tool, ` +
+            `(b) call ${name} with materially different arguments, or (c) if you cannot make progress, ` +
+            `stop calling tools and give your final answer with what you already have (state honestly what is missing).`;
+        } else if (truncated) {
+          // The model's arguments were truncated/invalid JSON (the content was too
+          // large for one turn). Give ACTIONABLE advice that matches a real
+          // capability: save_artifact supports chunked saving, so point there
+          // instead of the impossible "write in sections" for a one-shot tool.
+          ok = false;
+          toolResult =
+            name === "save_artifact"
+              ? `error: your save_artifact call was dropped — the content was too large for a single turn. ` +
+                `Save it in CHUNKS: call save_artifact repeatedly with {"filename":"<same name>","content":"<a slice of the base64>","encoding":"base64","chunk":true} ` +
+                `for each consecutive slice (a few KB each), IN ORDER, then a final call {"filename":"<same name>","done":true} to assemble and store it. Do not resend the whole payload at once.`
+              : `error: your ${name} call was dropped — its arguments were truncated/invalid JSON, almost always because the content was too large for a single turn. Retry ${name} with a SMALLER payload (split the work into more, smaller calls).`;
         } else if (callCache.has(callKey)) {
           // Identical call already executed this run — reuse it, don't pay again.
-          toolResult = `(deduplicated: you already called ${name} with these exact arguments earlier in this run. Reusing that result — do not repeat it. Use it, or call a different tool / different arguments.)\n\n${callCache.get(callKey)}`;
+          const nudge = action === "nudge"
+            ? ` This is repeat #${attempts}; if you call it identically once more it will be REFUSED. Use this result or change your approach now.`
+            : "";
+          toolResult = `(deduplicated: you already called ${name} with these exact arguments earlier in this run. Reusing that result — do not repeat it.${nudge})\n\n${callCache.get(callKey)}`;
         } else {
           try {
             toolResult = await runTool(name, parsedArgs, ctx);
@@ -643,7 +700,7 @@ export async function executeAgentCommand(opts: {
             ok = false;
             toolResult = `error: ${String(e).slice(0, 300)}`;
           }
-          if (ok) callCache.set(callKey, toolResult);
+          if (ok) { callCache.set(callKey, toolResult); madeProgress = true; }
         }
 
         await db
@@ -689,6 +746,27 @@ export async function executeAgentCommand(opts: {
         await db.update(tasksTable).set({ progress }).where(eq(tasksTable.id, taskId));
       }
       await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, agent.id));
+
+      // No-progress circuit breaker: if several steps in a row produced no new
+      // successful result (only repeats, truncations, or errors), the CLAW is
+      // stuck. Stop looping and make it conclude with what it has — far better
+      // than spending the whole budget flailing on the same failing call.
+      noProgressStreak = madeProgress ? 0 : noProgressStreak + 1;
+      if (noProgressStreak >= MAX_NO_PROGRESS_STREAK) {
+        await db.insert(monologueLinesTable).values({
+          agentId: agent.id,
+          text: `No forward progress for ${noProgressStreak} steps — breaking the loop to conclude with current evidence.`,
+          type: "system",
+        });
+        messages.push({
+          role: "user",
+          content:
+            `You have made no forward progress for ${noProgressStreak} steps (only repeated, truncated, or failed calls). ` +
+            `Stop calling tools now and give your final concrete result based on what you already have. ` +
+            `If the goal could not be fully completed, say so honestly and state exactly what is missing and why.`,
+        });
+        break;
+      }
     }
 
     // If the loop hit the step cap mid-tool-use, force a final summary turn.

@@ -73,6 +73,28 @@ function uploadUrl(id: number, download = false): string {
   return `${publicBaseUrl()}/api/uploads/${id}${download ? "?download=1" : ""}`;
 }
 
+// ─── Chunked artifact buffers ────────────────────────────────────────────────
+// A large file (e.g. a base64 PDF) often does not fit in a single tool-call
+// turn — the model's arguments truncate and the save fails repeatedly. To save
+// it accurately, save_artifact accepts the content in ordered slices
+// (chunk:true) which accumulate here, then assembles + stores them on done:true.
+// Keyed per agent+filename; concatenating ordered string slices losslessly
+// reconstructs the original payload regardless of where the model split it.
+interface ArtifactBuffer { parts: string[]; bytes: number; encoding: string; mime?: string; updatedAt: number }
+const artifactChunks = new Map<string, ArtifactBuffer>();
+const ARTIFACT_CHUNK_TTL_MS = 15 * 60_000;
+const ARTIFACT_CHUNK_MAX_CHARS = 30 * 1024 * 1024; // ~22 MB binary once decoded
+
+function pruneArtifactChunks(now = Date.now()): void {
+  for (const [k, v] of artifactChunks) {
+    if (now - v.updatedAt > ARTIFACT_CHUNK_TTL_MS) artifactChunks.delete(k);
+  }
+}
+
+function isTrue(v: unknown): boolean {
+  return v === true || v === "true" || v === 1 || v === "1";
+}
+
 // ─── SSRF guard ──────────────────────────────────────────────────────────────
 // http_request makes outbound calls *from the server runtime*, so an unguarded
 // URL lets a model probe internal services or the cloud metadata endpoint. We
@@ -1050,22 +1072,58 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
     name: "save_artifact",
     description:
       "Save a file you created so the OPERATOR can DOWNLOAD it. Returns a real download URL — use this for any deliverable file (report, CSV, markdown, code, JSON, or a PDF). After saving, you MUST include the returned markdown download link in your final answer so the operator can click it. " +
-      "For text deliverables pass the text in `content` (encoding 'utf8'). For a binary file you generated in sandbox_exec/code_exec (e.g. a PDF), base64-encode it there (`base64 -w0 file.pdf`), print it, then pass that string as `content` with encoding 'base64'. Never claim a file exists without saving it here first.",
+      "For text deliverables pass the text in `content` (encoding 'utf8'). For a binary file you generated in sandbox_exec/code_exec (e.g. a PDF), base64-encode it there (`base64 -w0 file.pdf`), print it, then pass that string as `content` with encoding 'base64'. " +
+      "If the base64 is too large to fit in one call, save it in CHUNKS: call repeatedly with `chunk:true` and a slice of the base64 in `content` (same filename + encoding each time), in order, then a final call with `done:true` (no content needed) to assemble and store the file. Never claim a file exists without saving it here first.",
     parameters: {
       type: "object",
       properties: {
         filename: { type: "string", description: "File name with extension, e.g. 'fl-llc-articles.pdf' or 'market-research.md'." },
-        content: { type: "string", description: "The file content: UTF-8 text, or base64 bytes when encoding='base64'." },
+        content: { type: "string", description: "The file content: UTF-8 text, or base64 bytes when encoding='base64'. For a chunked save, a consecutive slice of the full content." },
         mime: { type: "string", description: "Optional MIME type, e.g. 'application/pdf', 'text/markdown', 'text/csv'. Inferred from the extension if omitted." },
         encoding: { type: "string", enum: ["utf8", "base64"], description: "How `content` is encoded (default 'utf8')." },
+        chunk: { type: "boolean", description: "Set true to APPEND this content slice to a buffer instead of saving immediately (for large files split across calls). Finish with a call where done=true." },
+        done: { type: "boolean", description: "Set true to assemble all previously buffered chunks for this filename and save the file. May include a final content slice." },
       },
-      required: ["filename", "content"],
+      required: ["filename"],
     },
-    run: async (args) => {
+    run: async (args, ctx) => {
+      pruneArtifactChunks();
       const filename = String(args["filename"] ?? "").trim().slice(0, 255) || "artifact";
-      const raw = String(args["content"] ?? "");
-      if (!raw) return "error: content is required.";
+      const chunkMode = isTrue(args["chunk"]);
+      const doneMode = isTrue(args["done"]);
+      const bufKey = `${ctx.agentId}:${filename}`;
       let encoding = String(args["encoding"] ?? "utf8").toLowerCase() === "base64" ? "base64" : "utf8";
+      let raw: string;
+
+      // ── Chunked save: accumulate ordered slices, assemble on done. ──
+      if (chunkMode || doneMode) {
+        const buf = artifactChunks.get(bufKey) ?? { parts: [], bytes: 0, encoding, updatedAt: Date.now() };
+        const slice = String(args["content"] ?? "");
+        if (slice) {
+          if (buf.bytes + slice.length > ARTIFACT_CHUNK_MAX_CHARS) {
+            artifactChunks.delete(bufKey);
+            return "error: chunked artifact exceeded the size limit; aborted. Save a smaller file.";
+          }
+          buf.parts.push(slice);
+          buf.bytes += slice.length;
+          if (String(args["encoding"] ?? "").toLowerCase() === "base64") buf.encoding = "base64";
+          if (args["mime"] != null) buf.mime = String(args["mime"]);
+          buf.updatedAt = Date.now();
+          artifactChunks.set(bufKey, buf);
+        }
+        if (!doneMode) {
+          return `chunk stored for "${filename}" (${buf.parts.length} chunk${buf.parts.length === 1 ? "" : "s"}, ${buf.bytes} chars buffered). Send the next chunk, or call with done:true to assemble and save.`;
+        }
+        // Finalize: assemble buffered chunks, then fall through to the save path.
+        if (buf.parts.length === 0) return "error: no chunks were buffered for this filename — nothing to assemble.";
+        artifactChunks.delete(bufKey);
+        raw = buf.parts.join("");
+        if (buf.mime != null && args["mime"] == null) (args as Record<string, unknown>)["mime"] = buf.mime;
+        encoding = buf.encoding === "base64" ? "base64" : "utf8";
+      } else {
+        raw = String(args["content"] ?? "");
+        if (!raw) return "error: content is required.";
+      }
       // Models routinely pass base64 binary content but forget encoding:'base64'.
       // Stored as utf8 that double-encodes the file — the served "PNG" is base64
       // text Instagram/browsers can't decode (observed live: attachment #476).
@@ -1611,7 +1669,7 @@ export function buildCapabilityCard(agentId: number): string {
     card += `\n\nINTERACTIVE AUTOMATION: web_scrape is read-only and won't render JS-heavy or multi-step pages. When a task needs to actually fill/submit a web form or read a JS-rendered page, use sandbox_exec to run Playwright in the cloud VM (install chromium, navigate, fill, click, submit). To produce or fill official PDF forms (e.g. AcroForm fields), use sandbox_exec with reportlab/fpdf2/fillpdf/pypdf and return the output file path. Generate/prepare documents and demonstrate the flow — never submit a person's legal/financial filing on their behalf.`;
   }
   if (names.includes("save_artifact")) {
-    card += `\n\nDELIVERABLE FILES: whenever you produce a file the operator should keep (report, CSV, code, JSON, or a generated PDF), call save_artifact to store it and get a real download URL, then put that [Download …](url) link in your final answer. Do NOT claim a file exists or name a file you didn't save — an unsaved file is not downloadable and counts as a fabrication. To make a PDF: generate it in sandbox_exec (reportlab/fpdf2), base64 it, then save_artifact with encoding 'base64'.`;
+    card += `\n\nDELIVERABLE FILES: whenever you produce a file the operator should keep (report, CSV, code, JSON, or a generated PDF), call save_artifact to store it and get a real download URL, then put that [Download …](url) link in your final answer. Do NOT claim a file exists or name a file you didn't save, and NEVER invent a download URL (e.g. a storage.googleapis.com link) — only the exact URL save_artifact returns is real; a made-up link is a fabrication. To make a PDF: generate it in sandbox_exec (reportlab/fpdf2), base64 it (\`base64 -w0 file.pdf\`), then save_artifact with encoding 'base64'. If the base64 is large and a single save_artifact call gets truncated, do NOT retry it whole — save it in CHUNKS: repeated calls with chunk:true and a slice of the base64 each, in order, then one call with done:true to assemble and store it.`;
   }
   if (names.includes("image_generate")) {
     card += `\n\nIMAGES: prefer the CHEAP path first. For news/quote/hook/stat cards and any terminal/cyber TEXT visual, call render_card — it draws a real on-brand 1080×1080 PNG by code for ~$0 (no AI image gen) and returns a public image URL. Only call image_generate (paid) when you specifically need a PHOTOREAL picture/logo/illustration/photo. Either way you get a real PNG + a URL to use as image_url; do NOT hand-code SVG or merely describe the image, and only produce SVG if the operator explicitly asks for SVG/vector.`;

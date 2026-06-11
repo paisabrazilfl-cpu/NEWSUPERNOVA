@@ -28105,7 +28105,7 @@ var require_pino = __commonJS({
     function pinoBundlerAbsolutePath(p) {
       try {
         const path3 = __require("path");
-        const outputDir = "/home/runner/work/BOS-AURA/BOS-AURA/artifacts/api-server/dist";
+        const outputDir = "/home/user/BOS-AURA/artifacts/api-server/dist";
         return path3.resolve(outputDir, p.replace(/^\.\//, ""));
       } catch (e) {
         const f = new Function("p", "return new URL(p, import.meta.url).pathname");
@@ -88209,6 +88209,14 @@ function publicBaseUrl() {
 function uploadUrl(id, download = false) {
   return `${publicBaseUrl()}/api/uploads/${id}${download ? "?download=1" : ""}`;
 }
+function pruneArtifactChunks(now = Date.now()) {
+  for (const [k, v] of artifactChunks) {
+    if (now - v.updatedAt > ARTIFACT_CHUNK_TTL_MS) artifactChunks.delete(k);
+  }
+}
+function isTrue(v) {
+  return v === true || v === "true" || v === 1 || v === "1";
+}
 function ipv4IsPrivate(ip) {
   const parts = ip.split(".").map((p) => parseInt(p, 10));
   if (parts.length !== 4 || parts.some((n) => Number.isNaN(n) || n < 0 || n > 255)) return true;
@@ -88605,7 +88613,7 @@ INTERACTIVE AUTOMATION: web_scrape is read-only and won't render JS-heavy or mul
   if (names.includes("save_artifact")) {
     card += `
 
-DELIVERABLE FILES: whenever you produce a file the operator should keep (report, CSV, code, JSON, or a generated PDF), call save_artifact to store it and get a real download URL, then put that [Download \u2026](url) link in your final answer. Do NOT claim a file exists or name a file you didn't save \u2014 an unsaved file is not downloadable and counts as a fabrication. To make a PDF: generate it in sandbox_exec (reportlab/fpdf2), base64 it, then save_artifact with encoding 'base64'.`;
+DELIVERABLE FILES: whenever you produce a file the operator should keep (report, CSV, code, JSON, or a generated PDF), call save_artifact to store it and get a real download URL, then put that [Download \u2026](url) link in your final answer. Do NOT claim a file exists or name a file you didn't save, and NEVER invent a download URL (e.g. a storage.googleapis.com link) \u2014 only the exact URL save_artifact returns is real; a made-up link is a fabrication. To make a PDF: generate it in sandbox_exec (reportlab/fpdf2), base64 it (\`base64 -w0 file.pdf\`), then save_artifact with encoding 'base64'. If the base64 is large and a single save_artifact call gets truncated, do NOT retry it whole \u2014 save it in CHUNKS: repeated calls with chunk:true and a slice of the base64 each, in order, then one call with done:true to assemble and store it.`;
   }
   if (names.includes("image_generate")) {
     card += `
@@ -88648,7 +88656,7 @@ async function runTool(toolName, args, ctx) {
   }
   return sanitizeForStorage(await def.run(args, ctx));
 }
-var STEEL_BASE, FIRECRAWL_BASE, MEMORY_CANDIDATE_LIMIT, INTERNAL_META_RE, CODE_TIMEOUT_MS, CODE_OUTPUT_CAP, sandboxMode, TOOL_REGISTRY, ALL_TOOLS, AGENT_TOOLS, ABBY_ID, SWARM_ROSTER;
+var STEEL_BASE, FIRECRAWL_BASE, artifactChunks, ARTIFACT_CHUNK_TTL_MS, ARTIFACT_CHUNK_MAX_CHARS, MEMORY_CANDIDATE_LIMIT, INTERNAL_META_RE, CODE_TIMEOUT_MS, CODE_OUTPUT_CAP, sandboxMode, TOOL_REGISTRY, ALL_TOOLS, AGENT_TOOLS, ABBY_ID, SWARM_ROSTER;
 var init_tools = __esm({
   "src/tools.ts"() {
     "use strict";
@@ -88669,6 +88677,9 @@ var init_tools = __esm({
     init_postLimit();
     STEEL_BASE = "https://api.steel.dev/v1";
     FIRECRAWL_BASE = "https://api.firecrawl.dev/v1";
+    artifactChunks = /* @__PURE__ */ new Map();
+    ARTIFACT_CHUNK_TTL_MS = 15 * 6e4;
+    ARTIFACT_CHUNK_MAX_CHARS = 30 * 1024 * 1024;
     MEMORY_CANDIDATE_LIMIT = 1e3;
     INTERNAL_META_RE = /(vault[-\s]?(full[-\s]?state|state[-\s]?dump|rag|audit|targeted|secret)|swarm[-\s]?architecture|architecture[-\s]?(consolidated|definitions)|memory[-\s]?(audit|store[-\s]?audit)|rag[-\s]?(sweep|requery|response)|system topology|substrate audit|bundle matrix|sentinel|six[_\s]?zips|_directive_|self[-\s]?audit|abby[-\s]?claw[-\s]?memory)/i;
     CODE_TIMEOUT_MS = 8e3;
@@ -89027,22 +89038,54 @@ ${stored}` : stored);
       },
       save_artifact: {
         name: "save_artifact",
-        description: "Save a file you created so the OPERATOR can DOWNLOAD it. Returns a real download URL \u2014 use this for any deliverable file (report, CSV, markdown, code, JSON, or a PDF). After saving, you MUST include the returned markdown download link in your final answer so the operator can click it. For text deliverables pass the text in `content` (encoding 'utf8'). For a binary file you generated in sandbox_exec/code_exec (e.g. a PDF), base64-encode it there (`base64 -w0 file.pdf`), print it, then pass that string as `content` with encoding 'base64'. Never claim a file exists without saving it here first.",
+        description: "Save a file you created so the OPERATOR can DOWNLOAD it. Returns a real download URL \u2014 use this for any deliverable file (report, CSV, markdown, code, JSON, or a PDF). After saving, you MUST include the returned markdown download link in your final answer so the operator can click it. For text deliverables pass the text in `content` (encoding 'utf8'). For a binary file you generated in sandbox_exec/code_exec (e.g. a PDF), base64-encode it there (`base64 -w0 file.pdf`), print it, then pass that string as `content` with encoding 'base64'. If the base64 is too large to fit in one call, save it in CHUNKS: call repeatedly with `chunk:true` and a slice of the base64 in `content` (same filename + encoding each time), in order, then a final call with `done:true` (no content needed) to assemble and store the file. Never claim a file exists without saving it here first.",
         parameters: {
           type: "object",
           properties: {
             filename: { type: "string", description: "File name with extension, e.g. 'fl-llc-articles.pdf' or 'market-research.md'." },
-            content: { type: "string", description: "The file content: UTF-8 text, or base64 bytes when encoding='base64'." },
+            content: { type: "string", description: "The file content: UTF-8 text, or base64 bytes when encoding='base64'. For a chunked save, a consecutive slice of the full content." },
             mime: { type: "string", description: "Optional MIME type, e.g. 'application/pdf', 'text/markdown', 'text/csv'. Inferred from the extension if omitted." },
-            encoding: { type: "string", enum: ["utf8", "base64"], description: "How `content` is encoded (default 'utf8')." }
+            encoding: { type: "string", enum: ["utf8", "base64"], description: "How `content` is encoded (default 'utf8')." },
+            chunk: { type: "boolean", description: "Set true to APPEND this content slice to a buffer instead of saving immediately (for large files split across calls). Finish with a call where done=true." },
+            done: { type: "boolean", description: "Set true to assemble all previously buffered chunks for this filename and save the file. May include a final content slice." }
           },
-          required: ["filename", "content"]
+          required: ["filename"]
         },
-        run: async (args) => {
+        run: async (args, ctx) => {
+          pruneArtifactChunks();
           const filename = String(args["filename"] ?? "").trim().slice(0, 255) || "artifact";
-          const raw = String(args["content"] ?? "");
-          if (!raw) return "error: content is required.";
+          const chunkMode = isTrue(args["chunk"]);
+          const doneMode = isTrue(args["done"]);
+          const bufKey = `${ctx.agentId}:${filename}`;
           let encoding = String(args["encoding"] ?? "utf8").toLowerCase() === "base64" ? "base64" : "utf8";
+          let raw;
+          if (chunkMode || doneMode) {
+            const buf = artifactChunks.get(bufKey) ?? { parts: [], bytes: 0, encoding, updatedAt: Date.now() };
+            const slice = String(args["content"] ?? "");
+            if (slice) {
+              if (buf.bytes + slice.length > ARTIFACT_CHUNK_MAX_CHARS) {
+                artifactChunks.delete(bufKey);
+                return "error: chunked artifact exceeded the size limit; aborted. Save a smaller file.";
+              }
+              buf.parts.push(slice);
+              buf.bytes += slice.length;
+              if (String(args["encoding"] ?? "").toLowerCase() === "base64") buf.encoding = "base64";
+              if (args["mime"] != null) buf.mime = String(args["mime"]);
+              buf.updatedAt = Date.now();
+              artifactChunks.set(bufKey, buf);
+            }
+            if (!doneMode) {
+              return `chunk stored for "${filename}" (${buf.parts.length} chunk${buf.parts.length === 1 ? "" : "s"}, ${buf.bytes} chars buffered). Send the next chunk, or call with done:true to assemble and save.`;
+            }
+            if (buf.parts.length === 0) return "error: no chunks were buffered for this filename \u2014 nothing to assemble.";
+            artifactChunks.delete(bufKey);
+            raw = buf.parts.join("");
+            if (buf.mime != null && args["mime"] == null) args["mime"] = buf.mime;
+            encoding = buf.encoding === "base64" ? "base64" : "utf8";
+          } else {
+            raw = String(args["content"] ?? "");
+            if (!raw) return "error: content is required.";
+          }
           if (encoding === "utf8" && /^(iVBORw0KGgo|\/9j\/|JVBERi0|UEsDB)[A-Za-z0-9+/=\s]*$/.test(raw.trim().slice(0, 100)) && /^[A-Za-z0-9+/=\s]+$/.test(raw.trim())) {
             encoding = "base64";
           }
@@ -94703,6 +94746,13 @@ deploy id genuinely deployed; another CLAW's 401 from a request sent with no aut
 header is its own mistake, not a contradiction \u2014 state the deploy succeeded and
 note the 401 was an unauthenticated call. Give ONE evidence-based DIRECT ANSWER.`;
 var MAX_AGENT_STEPS = Number(process.env["MAX_AGENT_STEPS"]) > 0 ? Number(process.env["MAX_AGENT_STEPS"]) : 24;
+var MAX_IDENTICAL_CALL_ATTEMPTS = 3;
+var MAX_NO_PROGRESS_STREAK = 3;
+function repeatedCallAction(attempts) {
+  if (attempts >= MAX_IDENTICAL_CALL_ATTEMPTS) return "stop";
+  if (attempts === MAX_IDENTICAL_CALL_ATTEMPTS - 1) return "nudge";
+  return "run";
+}
 var MAX_SOLVE_CYCLES = Number(process.env["MAX_SOLVE_CYCLES"]) > 0 ? Number(process.env["MAX_SOLVE_CYCLES"]) : 4;
 var SOLUTION_GATE_DOCTRINE = `
 SOLUTION GATE (MANDATORY): you are judging whether the final briefing SOLVES the
@@ -94978,6 +95028,8 @@ Execute the directive now. Use your tools for anything requiring real data or co
     let steps = 0;
     const callCache = /* @__PURE__ */ new Map();
     const failedTools = /* @__PURE__ */ new Set();
+    const attemptCounts = /* @__PURE__ */ new Map();
+    let noProgressStreak = 0;
     while (steps < MAX_AGENT_STEPS) {
       steps++;
       const assistant = await completeChatTurn(model, messages, tools);
@@ -95009,6 +95061,7 @@ Execute the directive now. Use your tools for anything requiring real data or co
         }))
       });
       await db.update(agentsTable).set({ status: "executing" }).where(eq(agentsTable.id, agent.id));
+      let madeProgress = false;
       for (const { call, args: parsedArgs, truncated } of parsed) {
         const name = call.function?.name ?? "unknown";
         const [tc] = await db.insert(toolCallsTable).values({ agentId: agent.id, toolName: name, args: JSON.stringify(parsedArgs).slice(0, 2e3), status: "running" }).returning();
@@ -95020,11 +95073,18 @@ Execute the directive now. Use your tools for anything requiring real data or co
         let toolResult;
         let ok = true;
         const callKey = `${name}:${JSON.stringify(parsedArgs)}`;
-        if (truncated) {
+        const attempts = (attemptCounts.get(callKey) ?? 0) + 1;
+        attemptCounts.set(callKey, attempts);
+        const action = repeatedCallAction(attempts);
+        if (action === "stop") {
           ok = false;
-          toolResult = `error: your ${name} call was dropped \u2014 its arguments were truncated/invalid JSON, almost always because the content was too large for a single turn. Retry ${name} with smaller arguments: write the file/code in sections, or shorten the payload.`;
+          toolResult = `error: STOP REPEATING \u2014 you have called ${name} with these exact arguments ${attempts} times. An identical call cannot return anything new. Do ONE of: (a) call a different tool, (b) call ${name} with materially different arguments, or (c) if you cannot make progress, stop calling tools and give your final answer with what you already have (state honestly what is missing).`;
+        } else if (truncated) {
+          ok = false;
+          toolResult = name === "save_artifact" ? `error: your save_artifact call was dropped \u2014 the content was too large for a single turn. Save it in CHUNKS: call save_artifact repeatedly with {"filename":"<same name>","content":"<a slice of the base64>","encoding":"base64","chunk":true} for each consecutive slice (a few KB each), IN ORDER, then a final call {"filename":"<same name>","done":true} to assemble and store it. Do not resend the whole payload at once.` : `error: your ${name} call was dropped \u2014 its arguments were truncated/invalid JSON, almost always because the content was too large for a single turn. Retry ${name} with a SMALLER payload (split the work into more, smaller calls).`;
         } else if (callCache.has(callKey)) {
-          toolResult = `(deduplicated: you already called ${name} with these exact arguments earlier in this run. Reusing that result \u2014 do not repeat it. Use it, or call a different tool / different arguments.)
+          const nudge = action === "nudge" ? ` This is repeat #${attempts}; if you call it identically once more it will be REFUSED. Use this result or change your approach now.` : "";
+          toolResult = `(deduplicated: you already called ${name} with these exact arguments earlier in this run. Reusing that result \u2014 do not repeat it.${nudge})
 
 ${callCache.get(callKey)}`;
         } else {
@@ -95035,7 +95095,10 @@ ${callCache.get(callKey)}`;
             ok = false;
             toolResult = `error: ${String(e).slice(0, 300)}`;
           }
-          if (ok) callCache.set(callKey, toolResult);
+          if (ok) {
+            callCache.set(callKey, toolResult);
+            madeProgress = true;
+          }
         }
         await db.update(toolCallsTable).set({ status: ok ? "success" : "error", result: toolResult.slice(0, 4e3), completedAt: /* @__PURE__ */ new Date() }).where(eq(toolCallsTable.id, tc.id));
         await db.insert(monologueLinesTable).values({
@@ -95067,6 +95130,19 @@ ${toolResult.slice(0, 1400)}${toolResult.length > 1400 ? "\n\u2026" : ""}`,
         await db.update(tasksTable).set({ progress }).where(eq(tasksTable.id, taskId));
       }
       await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, agent.id));
+      noProgressStreak = madeProgress ? 0 : noProgressStreak + 1;
+      if (noProgressStreak >= MAX_NO_PROGRESS_STREAK) {
+        await db.insert(monologueLinesTable).values({
+          agentId: agent.id,
+          text: `No forward progress for ${noProgressStreak} steps \u2014 breaking the loop to conclude with current evidence.`,
+          type: "system"
+        });
+        messages.push({
+          role: "user",
+          content: `You have made no forward progress for ${noProgressStreak} steps (only repeated, truncated, or failed calls). Stop calling tools now and give your final concrete result based on what you already have. If the goal could not be fully completed, say so honestly and state exactly what is missing and why.`
+        });
+        break;
+      }
     }
     if (!finalText) {
       messages.push({
