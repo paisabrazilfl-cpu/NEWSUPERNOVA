@@ -13,7 +13,23 @@ vi.mock("@workspace/db", async (importOriginal) => {
   return { ...actual, db: mockDb };
 });
 
-import { repeatedCallAction, MAX_IDENTICAL_CALL_ATTEMPTS, MAX_NO_PROGRESS_STREAK } from "./orchestrator";
+import { repeatedCallAction, MAX_IDENTICAL_CALL_ATTEMPTS, MAX_NO_PROGRESS_STREAK, stableStringify } from "./orchestrator";
+
+describe("stableStringify — canonical keys so the dedupe/loop guards trigger", () => {
+  it("produces the same string regardless of object key order", () => {
+    expect(stableStringify({ a: 1, b: 2 })).toBe(stableStringify({ b: 2, a: 1 }));
+  });
+
+  it("is stable for nested objects and arrays", () => {
+    expect(stableStringify({ q: "x", opts: { z: 1, a: 2 } })).toBe(
+      stableStringify({ opts: { a: 2, z: 1 }, q: "x" }),
+    );
+  });
+
+  it("distinguishes genuinely different args", () => {
+    expect(stableStringify({ url: "a" })).not.toBe(stableStringify({ url: "b" }));
+  });
+});
 
 describe("repeatedCallAction — escalate identical tool calls", () => {
   it("runs the first attempt normally", () => {
