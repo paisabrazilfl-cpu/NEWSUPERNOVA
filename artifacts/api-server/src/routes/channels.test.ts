@@ -8,6 +8,10 @@ vi.mock("@workspace/db", async (importOriginal) => {
 });
 
 import app from "../app";
+import { issueSessionToken } from "../lib/auth";
+process.env["SESSION_SECRET"] = "test-session-secret";
+process.env["OPERATOR_PASSWORD"] = "test-pass";
+const AUTH = `Bearer ${issueSessionToken()}`;
 import { queueDbResults, resetDbMock } from "../test/dbMock";
 
 const sampleChannel = {
@@ -39,7 +43,7 @@ beforeEach(() => {
 describe("GET /api/channels", () => {
   it("returns 200 with channels (dates serialized)", async () => {
     queueDbResults([sampleChannel]);
-    const res = await request(app).get("/api/channels");
+    const res = await request(app).get("/api/channels").set("Authorization", AUTH);
     expect(res.status).toBe(200);
     expect(res.body[0].createdAt).toBe("2026-01-01T00:00:00.000Z");
     expect(res.body[0].lastActivity).toBe("2026-01-02T00:00:00.000Z");
@@ -47,7 +51,7 @@ describe("GET /api/channels", () => {
 
   it("returns 500 when the database fails", async () => {
     queueDbResults(new Error("db down"));
-    const res = await request(app).get("/api/channels");
+    const res = await request(app).get("/api/channels").set("Authorization", AUTH);
     expect(res.status).toBe(500);
     expect(res.body).toEqual({ error: "Failed to list channels" });
   });
@@ -56,20 +60,20 @@ describe("GET /api/channels", () => {
 describe("POST /api/channels", () => {
   it("returns 201 with the created channel", async () => {
     queueDbResults([sampleChannel]);
-    const res = await request(app).post("/api/channels").send({ name: "general" });
+    const res = await request(app).post("/api/channels").set("Authorization", AUTH).send({ name: "general" });
     expect(res.status).toBe(201);
     expect(res.body.name).toBe("general");
   });
 
   it("returns 400 for invalid channel data", async () => {
-    const res = await request(app).post("/api/channels").send({ type: "general" });
+    const res = await request(app).post("/api/channels").set("Authorization", AUTH).send({ type: "general" });
     expect(res.status).toBe(400);
     expect(res.body).toEqual({ error: "Invalid channel data" });
   });
 
   it("returns 500 when the insert fails", async () => {
     queueDbResults(new Error("insert failed"));
-    const res = await request(app).post("/api/channels").send({ name: "general" });
+    const res = await request(app).post("/api/channels").set("Authorization", AUTH).send({ name: "general" });
     expect(res.status).toBe(500);
     expect(res.body).toEqual({ error: "Failed to create channel" });
   });
@@ -78,20 +82,20 @@ describe("POST /api/channels", () => {
 describe("GET /api/channels/:channelId/messages", () => {
   it("returns 200 with messages (dates serialized)", async () => {
     queueDbResults([sampleMessage]);
-    const res = await request(app).get("/api/channels/1/messages");
+    const res = await request(app).get("/api/channels/1/messages").set("Authorization", AUTH);
     expect(res.status).toBe(200);
     expect(res.body[0].timestamp).toBe("2026-01-03T00:00:00.000Z");
   });
 
   it("returns 400 for a non-numeric channel id", async () => {
-    const res = await request(app).get("/api/channels/abc/messages");
+    const res = await request(app).get("/api/channels/abc/messages").set("Authorization", AUTH);
     expect(res.status).toBe(400);
     expect(res.body).toEqual({ error: "Invalid channel ID" });
   });
 
   it("returns 500 when the lookup fails", async () => {
     queueDbResults(new Error("select failed"));
-    const res = await request(app).get("/api/channels/1/messages");
+    const res = await request(app).get("/api/channels/1/messages").set("Authorization", AUTH);
     expect(res.status).toBe(500);
     expect(res.body).toEqual({ error: "Failed to list messages" });
   });
@@ -102,7 +106,7 @@ describe("POST /api/channels/:channelId/messages", () => {
     // insert message returning, then update channel lastActivity
     queueDbResults([sampleMessage], []);
     const res = await request(app)
-      .post("/api/channels/1/messages")
+      .post("/api/channels/1/messages").set("Authorization", AUTH)
       .send({ content: "hello", agentName: "ABBY" });
     expect(res.status).toBe(201);
     expect(res.body.content).toBe("hello");
@@ -111,7 +115,7 @@ describe("POST /api/channels/:channelId/messages", () => {
 
   it("returns 400 for a non-numeric channel id", async () => {
     const res = await request(app)
-      .post("/api/channels/abc/messages")
+      .post("/api/channels/abc/messages").set("Authorization", AUTH)
       .send({ content: "hello" });
     expect(res.status).toBe(400);
     expect(res.body).toEqual({ error: "Invalid channel ID" });
@@ -119,7 +123,7 @@ describe("POST /api/channels/:channelId/messages", () => {
 
   it("returns 400 for invalid message data", async () => {
     const res = await request(app)
-      .post("/api/channels/1/messages")
+      .post("/api/channels/1/messages").set("Authorization", AUTH)
       .send({ agentName: "ABBY" });
     expect(res.status).toBe(400);
     expect(res.body).toEqual({ error: "Invalid message data" });
@@ -128,7 +132,7 @@ describe("POST /api/channels/:channelId/messages", () => {
   it("returns 500 when the insert fails", async () => {
     queueDbResults(new Error("insert failed"));
     const res = await request(app)
-      .post("/api/channels/1/messages")
+      .post("/api/channels/1/messages").set("Authorization", AUTH)
       .send({ content: "hello" });
     expect(res.status).toBe(500);
     expect(res.body).toEqual({ error: "Failed to send message" });

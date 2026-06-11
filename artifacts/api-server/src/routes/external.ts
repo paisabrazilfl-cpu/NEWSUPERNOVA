@@ -64,7 +64,16 @@ const AGENT_PERSONAS: Record<number, string> = {
 // ─── Auth middleware ─────────────────────────────────────────────────────────
 function apiKeyAuth(req: Request, res: Response, next: NextFunction): void {
   const expectedKey = process.env["OPENCLAW_API_KEY"];
-  if (!expectedKey) { next(); return; }
+  if (!expectedKey) {
+    // FAIL CLOSED: with no key configured the external surface (chat/completions,
+    // messages, twin-lessons, and the Vapi webhook that hands goals straight to
+    // the orchestrator) would otherwise be open to the world — i.e. unauthenticated
+    // command execution against the swarm. Reject unless the operator has
+    // explicitly opted into open mode for local dev.
+    if (process.env["ALLOW_OPEN_EXTERNAL"] === "1") { next(); return; }
+    res.status(503).json({ error: "External API disabled — OPENCLAW_API_KEY is not configured on the server." });
+    return;
+  }
   const provided =
     (req.headers["authorization"] as string | undefined)?.replace(/^Bearer\s+/i, "") ??
     (req.headers["x-api-key"] as string | undefined) ??
@@ -145,8 +154,15 @@ router.post("/external/v1/chat/completions", async (req, res) => {
     model = "abby",
     messages = [],
     stream = false,
-    max_tokens = 1024,
+    max_tokens: maxTokensRaw = 1024,
   } = req.body ?? {};
+
+  // Clamp max_tokens to a sane window so a caller can't drive cost/abuse with a
+  // huge value (or break the provider with a non-numeric one).
+  const max_tokens = Math.min(8192, Math.max(1, Number(maxTokensRaw) || 1024));
+  if (!Array.isArray(messages)) {
+    res.status(400).json({ error: "messages must be an array" }); return;
+  }
 
   const agentId = typeof model === "number"
     ? model
@@ -260,15 +276,24 @@ router.post("/external/v1/messages", async (req, res) => {
   if (!content || typeof content !== "string") {
     res.status(400).json({ error: "content is required" }); return;
   }
+  // Bound and constrain externally-injected content: cap length, whitelist the
+  // message type, coerce the channel to an integer, and force a clear external
+  // label on the displayed author so an external caller can't convincingly
+  // impersonate a real agent (e.g. "ABBY") in the feed or via fed-back history.
+  const ALLOWED_TYPES = new Set(["agent", "user", "system", "tool_output"]);
+  const safeType = ALLOWED_TYPES.has(String(messageType)) ? String(messageType) : "system";
+  const safeChannel = Number.isFinite(Number(channelId)) ? Number(channelId) : 1;
+  const safeName = `${String(agentName).slice(0, 40)} (external)`;
+  const safeContent = content.slice(0, 20_000);
 
   try {
     const [msg] = await db.insert(messagesTable).values({
-      channelId,
+      channelId: safeChannel,
       agentId: null,
-      agentName,
-      agentColor,
-      content,
-      messageType,
+      agentName: safeName,
+      agentColor: String(agentColor).slice(0, 32),
+      content: safeContent,
+      messageType: safeType,
       metadata: JSON.stringify({ source: "external_api" }),
     }).returning();
     res.status(201).json({ message: msg });

@@ -28105,7 +28105,7 @@ var require_pino = __commonJS({
     function pinoBundlerAbsolutePath(p) {
       try {
         const path3 = __require("path");
-        const outputDir = "/home/runner/work/BOS-AURA/BOS-AURA/artifacts/api-server/dist";
+        const outputDir = "/home/user/BOS-AURA/artifacts/api-server/dist";
         return path3.resolve(outputDir, p.replace(/^\.\//, ""));
       } catch (e) {
         const f = new Function("p", "return new URL(p, import.meta.url).pathname");
@@ -88217,6 +88217,16 @@ function pruneArtifactChunks(now = Date.now()) {
 function isTrue(v) {
   return v === true || v === "true" || v === 1 || v === "1";
 }
+function sandboxSecretsBlocked(script) {
+  const allow = (process.env["SANDBOX_SECRET_ALLOWLIST"] ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  if (!allow.length) return null;
+  const referenced = [...script.matchAll(/\{\{secret:([^}]+)\}\}/gi)].map((m) => m[1].trim());
+  const blocked = referenced.filter((n) => !allow.includes(n));
+  if (blocked.length) {
+    return `error: secret(s) ${[...new Set(blocked)].join(", ")} are not permitted in sandbox execution (SANDBOX_SECRET_ALLOWLIST). Nothing was executed.`;
+  }
+  return null;
+}
 function ipv4IsPrivate(ip) {
   const parts = ip.split(".").map((p) => parseInt(p, 10));
   if (parts.length !== 4 || parts.some((n) => Number.isNaN(n) || n < 0 || n > 255)) return true;
@@ -88254,6 +88264,9 @@ async function ssrfGuard(url2) {
   const host = parsed.hostname.toLowerCase();
   if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".internal") || host.endsWith(".local")) {
     return "error: requests to internal hostnames are blocked.";
+  }
+  if (!isIP(host) && /^(0x[0-9a-f]+|\d+|\d{1,3}(\.\d{1,3}){1,2})$/i.test(host)) {
+    return "error: numeric/shorthand IP encodings are blocked.";
   }
   if (isIP(host)) {
     return ipIsPrivate(host) ? "error: requests to private/internal addresses are blocked." : null;
@@ -88809,9 +88822,12 @@ var init_tools = __esm({
           const timer2 = setTimeout(() => ctrl.abort(), 15e3);
           try {
             let currentUrl = url2;
+            const originalOrigin = new URL(url2).origin;
             let r = null;
+            let reqHeaders = headers;
+            let reqBody = body;
             for (let hop = 0; hop < 5; hop++) {
-              r = await fetch(currentUrl, { method, headers, body, signal: ctrl.signal, redirect: "manual" });
+              r = await fetch(currentUrl, { method, headers: reqHeaders, body: reqBody, signal: ctrl.signal, redirect: "manual" });
               if (r.status < 300 || r.status >= 400) break;
               const location2 = r.headers.get("location");
               if (!location2) break;
@@ -88819,6 +88835,12 @@ var init_tools = __esm({
               if (!/^https?:\/\//i.test(next)) return "error: redirect to a non-http(s) target was blocked.";
               const redirectBlocked = await ssrfGuard(next);
               if (redirectBlocked) return `error: redirect blocked \u2014 ${redirectBlocked.replace(/^error: /, "")}`;
+              if (new URL(next).origin !== originalOrigin) {
+                reqHeaders = Object.fromEntries(
+                  Object.entries(reqHeaders).filter(([k]) => !/^(authorization|cookie|x-api-key)$/i.test(k))
+                );
+                reqBody = void 0;
+              }
               currentUrl = next;
               if (hop === 4) return "error: too many redirects.";
             }
@@ -88873,6 +88895,8 @@ ${clip3(safe, 4e3)}${hint}`;
           if (!e2bConfigured()) {
             return "error: E2B cloud sandbox is not configured (set E2B_API_KEY). Use code_exec for local execution instead.";
           }
+          const cloudSecretBlock = sandboxSecretsBlocked(rawSource);
+          if (cloudSecretBlock) return cloudSecretBlock;
           const usedSecrets = /* @__PURE__ */ new Set();
           const source = await substituteSecrets(rawSource, usedSecrets);
           if (hasSecretPlaceholder(source)) {
@@ -88895,6 +88919,8 @@ ${clip3(safe, 4e3)}${hint}`;
           const raw = String(args["script"] ?? "").trim();
           if (!raw) return "error: script is required.";
           if (!sandboxConfigured()) return "error: E2B cloud sandbox is not configured (E2B_API_KEY).";
+          const sandboxSecretBlock = sandboxSecretsBlocked(raw);
+          if (sandboxSecretBlock) return sandboxSecretBlock;
           const usedSecrets = /* @__PURE__ */ new Set();
           let script = await substituteSecrets(raw, usedSecrets);
           if (hasSecretPlaceholder(script)) {
@@ -89058,6 +89084,7 @@ ${stored}` : stored);
           const doneMode = isTrue(args["done"]);
           const bufKey = `${ctx.agentId}:${filename}`;
           let encoding = String(args["encoding"] ?? "utf8").toLowerCase() === "base64" ? "base64" : "utf8";
+          const encodingExplicit = args["encoding"] != null;
           let raw;
           if (chunkMode || doneMode) {
             const buf = artifactChunks.get(bufKey) ?? { parts: [], bytes: 0, encoding, updatedAt: Date.now() };
@@ -89086,7 +89113,7 @@ ${stored}` : stored);
             raw = String(args["content"] ?? "");
             if (!raw) return "error: content is required.";
           }
-          if (encoding === "utf8" && /^(iVBORw0KGgo|\/9j\/|JVBERi0|UEsDB)[A-Za-z0-9+/=\s]*$/.test(raw.trim().slice(0, 100)) && /^[A-Za-z0-9+/=\s]+$/.test(raw.trim())) {
+          if (!encodingExplicit && encoding === "utf8" && /^(iVBORw0KGgo|\/9j\/|JVBERi0|UEsDB)[A-Za-z0-9+/=\s]*$/.test(raw.trim().slice(0, 100)) && /^[A-Za-z0-9+/=\s]+$/.test(raw.trim())) {
             encoding = "base64";
           }
           let base643;
@@ -94753,6 +94780,12 @@ function repeatedCallAction(attempts) {
   if (attempts === MAX_IDENTICAL_CALL_ATTEMPTS - 1) return "nudge";
   return "run";
 }
+function stableStringify(value) {
+  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  const obj = value;
+  return `{${Object.keys(obj).sort().map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k])}`).join(",")}}`;
+}
 var MAX_SOLVE_CYCLES = Number(process.env["MAX_SOLVE_CYCLES"]) > 0 ? Number(process.env["MAX_SOLVE_CYCLES"]) : 4;
 var SOLUTION_GATE_DOCTRINE = `
 SOLUTION GATE (MANDATORY): you are judging whether the final briefing SOLVES the
@@ -95062,6 +95095,7 @@ Execute the directive now. Use your tools for anything requiring real data or co
       });
       await db.update(agentsTable).set({ status: "executing" }).where(eq(agentsTable.id, agent.id));
       let madeProgress = false;
+      const stepFailed = /* @__PURE__ */ new Set();
       for (const { call, args: parsedArgs, truncated } of parsed) {
         const name = call.function?.name ?? "unknown";
         const [tc] = await db.insert(toolCallsTable).values({ agentId: agent.id, toolName: name, args: JSON.stringify(parsedArgs).slice(0, 2e3), status: "running" }).returning();
@@ -95072,7 +95106,7 @@ Execute the directive now. Use your tools for anything requiring real data or co
         });
         let toolResult;
         let ok = true;
-        const callKey = `${name}:${JSON.stringify(parsedArgs)}`;
+        const callKey = `${name}:${stableStringify(parsedArgs)}`;
         const attempts = (attemptCounts.get(callKey) ?? 0) + 1;
         attemptCounts.set(callKey, attempts);
         const action = repeatedCallAction(attempts);
@@ -95115,11 +95149,13 @@ ${toolResult.slice(0, 1400)}${toolResult.length > 1400 ? "\n\u2026" : ""}`,
           messageType: "tool_output"
         });
         messages.push({ role: "tool", tool_call_id: call.id, name, content: toolResult.slice(0, 6e3) });
-        if (!ok) failedTools.add(name);
+        if (!ok) {
+          failedTools.add(name);
+          stepFailed.add(name);
+        }
       }
-      const justFailed = parsed.filter((p) => !callCache.has(`${p.call.function?.name ?? ""}:${JSON.stringify(p.args)}`) && failedTools.has(p.call.function?.name ?? ""));
-      if (justFailed.length > 0) {
-        const failedNames = [...new Set(justFailed.map((p) => p.call.function?.name ?? "unknown"))].join(", ");
+      if (stepFailed.size > 0) {
+        const failedNames = [...stepFailed].join(", ");
         messages.push({
           role: "user",
           content: `[SELF-LEARN] ${failedNames} failed. Before retrying, follow the self-learning protocol: (1) memory_search for a prior lesson about this error, (2) if no lesson found, web_search for how to fix it, then web_scrape the best result, (3) retry with the fix applied, (4) if it works, memory_write the lesson as "PROBLEM \u2192 SOLUTION (evidence)" tagged "lesson,self-learned". Do NOT repeat the exact same failing call without changing something.`
@@ -95241,8 +95277,21 @@ async function dispatchDirectives(directives, claws, channelId, priority, abby, 
     });
     return { name: agent.name, result };
   });
-  const settled = await Promise.all(runs);
-  return settled.filter((r) => r !== null);
+  const settled = await Promise.allSettled(runs);
+  const out = [];
+  settled.forEach((s, i) => {
+    if (s.status === "fulfilled") {
+      if (s.value !== null) out.push(s.value);
+    } else {
+      const agent = claws.find((c) => c.id === directives[i]?.agentId);
+      logger.error({ err: s.reason, agentId: directives[i]?.agentId }, "dispatchDirectives: a CLAW run rejected");
+      out.push({
+        name: agent?.name ?? `agent#${directives[i]?.agentId ?? "?"}`,
+        result: `\u26A0\uFE0F This CLAW could not be dispatched (UNVERIFIED \u2014 infrastructure error): ${String(s.reason).slice(0, 200)}`
+      });
+    }
+  });
+  return out;
 }
 async function orchestrateGoal(opts) {
   const { goal, channelId, priority, sourceContext, forceAgentId } = opts;
@@ -95400,7 +95449,15 @@ Respond with ONLY a JSON object (no prose, no code fences) shaped:
             break;
           }
           const verdict = parseSolutionVerdict(verdictRaw);
-          if (verdict.solved) break;
+          if (verdict.solved) {
+            if (/unparseable/i.test(verdict.reason)) {
+              finalAnswer += `
+
+---
+_Note: the solution-gate verifier returned an unreadable verdict, so this answer was accepted WITHOUT automated verification._`;
+            }
+            break;
+          }
           const fixes = parseDirectives(verdictRaw, claws).slice(0, 2);
           const budgetLeft = solveRoundsUsed < MAX_SOLVE_CYCLES;
           await postMessage({
@@ -95897,6 +95954,7 @@ var commands_default = router8;
 
 // src/routes/steel.ts
 var import_express9 = __toESM(require_express2(), 1);
+init_tools();
 var router9 = (0, import_express9.Router)();
 var STEEL_BASE2 = "https://api.steel.dev/v1";
 function steelHeaders() {
@@ -95983,6 +96041,11 @@ router9.post("/steel/scrape", async (req, res) => {
     res.status(400).json({ error: "url is required" });
     return;
   }
+  const blocked = await ssrfGuard(String(url2));
+  if (blocked) {
+    res.status(400).json({ error: blocked.replace(/^error: /, "") });
+    return;
+  }
   try {
     const body = { url: url2, useProxy };
     if (sessionId) body.sessionId = sessionId;
@@ -96003,6 +96066,11 @@ router9.post("/steel/screenshot", async (req, res) => {
   const { url: url2, sessionId, fullPage = false, useProxy = false } = req.body ?? {};
   if (!url2) {
     res.status(400).json({ error: "url is required" });
+    return;
+  }
+  const blocked = await ssrfGuard(String(url2));
+  if (blocked) {
+    res.status(400).json({ error: blocked.replace(/^error: /, "") });
     return;
   }
   try {
@@ -96030,6 +96098,11 @@ router9.post("/steel/pdf", async (req, res) => {
   const { url: url2, sessionId, useProxy = false } = req.body ?? {};
   if (!url2) {
     res.status(400).json({ error: "url is required" });
+    return;
+  }
+  const blocked = await ssrfGuard(String(url2));
+  if (blocked) {
+    res.status(400).json({ error: blocked.replace(/^error: /, "") });
     return;
   }
   try {
@@ -96327,7 +96400,11 @@ var AGENT_PERSONAS2 = {
 function apiKeyAuth(req, res, next) {
   const expectedKey = process.env["OPENCLAW_API_KEY"];
   if (!expectedKey) {
-    next();
+    if (process.env["ALLOW_OPEN_EXTERNAL"] === "1") {
+      next();
+      return;
+    }
+    res.status(503).json({ error: "External API disabled \u2014 OPENCLAW_API_KEY is not configured on the server." });
     return;
   }
   const provided = req.headers["authorization"]?.replace(/^Bearer\s+/i, "") ?? req.headers["x-api-key"] ?? // Vapi tool servers send their credential in x-vapi-secret.
@@ -96397,8 +96474,13 @@ router11.post("/external/v1/chat/completions", async (req, res) => {
     model = "abby",
     messages = [],
     stream = false,
-    max_tokens = 1024
+    max_tokens: maxTokensRaw = 1024
   } = req.body ?? {};
+  const max_tokens = Math.min(8192, Math.max(1, Number(maxTokensRaw) || 1024));
+  if (!Array.isArray(messages)) {
+    res.status(400).json({ error: "messages must be an array" });
+    return;
+  }
   const agentId = typeof model === "number" ? model : AGENT_NAME_MAP[model.toLowerCase()] ?? 1;
   let agent;
   try {
@@ -96506,14 +96588,19 @@ router11.post("/external/v1/messages", async (req, res) => {
     res.status(400).json({ error: "content is required" });
     return;
   }
+  const ALLOWED_TYPES = /* @__PURE__ */ new Set(["agent", "user", "system", "tool_output"]);
+  const safeType = ALLOWED_TYPES.has(String(messageType)) ? String(messageType) : "system";
+  const safeChannel = Number.isFinite(Number(channelId)) ? Number(channelId) : 1;
+  const safeName = `${String(agentName).slice(0, 40)} (external)`;
+  const safeContent = content.slice(0, 2e4);
   try {
     const [msg] = await db.insert(messagesTable).values({
-      channelId,
+      channelId: safeChannel,
       agentId: null,
-      agentName,
-      agentColor,
-      content,
-      messageType,
+      agentName: safeName,
+      agentColor: String(agentColor).slice(0, 32),
+      content: safeContent,
+      messageType: safeType,
       metadata: JSON.stringify({ source: "external_api" })
     }).returning();
     res.status(201).json({ message: msg });
@@ -96956,7 +97043,7 @@ function kindFor(mime, filename) {
   if (TEXT_MIME_RE.test(mime) || TEXT_EXT_RE.test(filename)) return "text";
   return "other";
 }
-router17.post("/uploads", async (req, res) => {
+router17.post("/uploads", requireOperator, async (req, res) => {
   const { name, mime, dataBase64 } = req.body ?? {};
   if (!dataBase64 || typeof dataBase64 !== "string") {
     res.status(400).json({ error: "dataBase64 is required" });
@@ -97020,7 +97107,9 @@ router17.get("/uploads/:id", async (req, res) => {
       return;
     }
     const buf = Buffer.from(row.data, "base64");
-    const disposition = req.query["download"] != null ? "attachment" : "inline";
+    const isInlineSafe = /^image\//i.test(row.mimeType) || row.mimeType === "application/pdf";
+    const disposition = req.query["download"] != null || !isInlineSafe ? "attachment" : "inline";
+    res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Content-Type", row.mimeType);
     res.setHeader("Content-Length", String(buf.length));
     res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
@@ -97195,21 +97284,21 @@ var world_default = router18;
 // src/routes/index.ts
 var router19 = (0, import_express19.Router)();
 router19.use(health_default);
-router19.use("/agents", agents_default);
-router19.use("/channels", channels_default);
-router19.use("/tasks", tasks_default);
-router19.use(telemetry_default);
-router19.use("/swarm", swarm_default);
-router19.use(commands_default);
-router19.use(steel_default);
-router19.use(ai_default);
-router19.use(uploads_default);
-router19.use(world_default);
-router19.use(neurobuddy_default);
-router19.use(external_default);
-router19.use(integrations_default);
-router19.use(selfCheck_default);
 router19.use(auth_default);
+router19.use(external_default);
+router19.use(world_default);
+router19.use(uploads_default);
+router19.use("/agents", requireOperator, agents_default);
+router19.use("/channels", requireOperator, channels_default);
+router19.use("/tasks", requireOperator, tasks_default);
+router19.use(requireOperator, telemetry_default);
+router19.use("/swarm", requireOperator, swarm_default);
+router19.use(requireOperator, commands_default);
+router19.use(requireOperator, steel_default);
+router19.use(requireOperator, ai_default);
+router19.use(requireOperator, neurobuddy_default);
+router19.use(requireOperator, integrations_default);
+router19.use(requireOperator, selfCheck_default);
 router19.use(requireOperator, vault_default);
 router19.use(requireOperator, social_default);
 var routes_default = router19;
@@ -97536,6 +97625,23 @@ async function runMigrations() {
        WHERE NOT EXISTS (SELECT 1 FROM cron_jobs WHERE name = $2)`,
       [1, NIGHTLY_JOB_NAME, "0 4,5,6 * * *", NIGHTLY_TASK]
     );
+    const INDEXES = [
+      ["idx_messages_channel_id", "messages (channel_id, id)"],
+      ["idx_tool_calls_agent_id", "tool_calls (agent_id, id)"],
+      ["idx_monologue_agent_id", "monologue_lines (agent_id, id)"],
+      ["idx_tasks_status", "tasks (status)"],
+      ["idx_tasks_channel_id", "tasks (channel_id)"],
+      ["idx_agent_commands_status", "agent_commands (status)"],
+      ["idx_agent_commands_to_agent", "agent_commands (to_agent_id)"],
+      ["idx_agent_memory_agent_id", "agent_memory (agent_id, created_at)"],
+      ["idx_agent_memory_tags", "agent_memory (tags)"],
+      ["idx_cron_jobs_enabled_next", "cron_jobs (enabled, next_run_at)"]
+    ];
+    for (const [name, target] of INDEXES) {
+      await client.query(`CREATE INDEX IF NOT EXISTS ${name} ON ${target}`).catch(
+        (e) => logger.warn({ err: e, index: name }, "index creation skipped")
+      );
+    }
   } catch (err) {
     logger.error({ err }, "Migration failed \u2014 continuing anyway");
   } finally {

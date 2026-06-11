@@ -281,6 +281,28 @@ export async function runMigrations(): Promise<void> {
        WHERE NOT EXISTS (SELECT 1 FROM cron_jobs WHERE name = $2)`,
       [1, NIGHTLY_JOB_NAME, "0 4,5,6 * * *", NIGHTLY_TASK],
     );
+
+    // Indexes on the hot polling-read / foreign-key-like columns. The dashboard
+    // polls messages/commands/tasks/telemetry every few seconds, and these
+    // columns were unindexed (sequential scans that grow with table size).
+    // CREATE INDEX IF NOT EXISTS is idempotent and safe to run on every boot.
+    const INDEXES: Array<[string, string]> = [
+      ["idx_messages_channel_id", "messages (channel_id, id)"],
+      ["idx_tool_calls_agent_id", "tool_calls (agent_id, id)"],
+      ["idx_monologue_agent_id", "monologue_lines (agent_id, id)"],
+      ["idx_tasks_status", "tasks (status)"],
+      ["idx_tasks_channel_id", "tasks (channel_id)"],
+      ["idx_agent_commands_status", "agent_commands (status)"],
+      ["idx_agent_commands_to_agent", "agent_commands (to_agent_id)"],
+      ["idx_agent_memory_agent_id", "agent_memory (agent_id, created_at)"],
+      ["idx_agent_memory_tags", "agent_memory (tags)"],
+      ["idx_cron_jobs_enabled_next", "cron_jobs (enabled, next_run_at)"],
+    ];
+    for (const [name, target] of INDEXES) {
+      await client.query(`CREATE INDEX IF NOT EXISTS ${name} ON ${target}`).catch((e: unknown) =>
+        logger.warn({ err: e, index: name }, "index creation skipped"),
+      );
+    }
   } catch (err) {
     logger.error({ err }, "Migration failed — continuing anyway");
   } finally {

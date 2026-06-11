@@ -8,6 +8,10 @@ vi.mock("@workspace/db", async (importOriginal) => {
 });
 
 import app from "../app";
+import { issueSessionToken } from "../lib/auth";
+process.env["SESSION_SECRET"] = "test-session-secret";
+process.env["OPERATOR_PASSWORD"] = "test-pass";
+const AUTH = `Bearer ${issueSessionToken()}`;
 import { queueDbResults, resetDbMock } from "../test/dbMock";
 
 const sampleTask = {
@@ -31,7 +35,7 @@ beforeEach(() => {
 describe("GET /api/tasks", () => {
   it("returns 200 with tasks (dates serialized)", async () => {
     queueDbResults([sampleTask]);
-    const res = await request(app).get("/api/tasks");
+    const res = await request(app).get("/api/tasks").set("Authorization", AUTH);
     expect(res.status).toBe(200);
     expect(res.body[0].createdAt).toBe("2026-01-01T00:00:00.000Z");
     expect(res.body[0].completedAt).toBeNull();
@@ -39,7 +43,7 @@ describe("GET /api/tasks", () => {
 
   it("returns 500 when the database fails", async () => {
     queueDbResults(new Error("db down"));
-    const res = await request(app).get("/api/tasks");
+    const res = await request(app).get("/api/tasks").set("Authorization", AUTH);
     expect(res.status).toBe(500);
     expect(res.body).toEqual({ error: "Failed to list tasks" });
   });
@@ -48,20 +52,20 @@ describe("GET /api/tasks", () => {
 describe("POST /api/tasks", () => {
   it("returns 201 with the created task", async () => {
     queueDbResults([sampleTask]);
-    const res = await request(app).post("/api/tasks").send({ title: "Crawl site" });
+    const res = await request(app).post("/api/tasks").set("Authorization", AUTH).send({ title: "Crawl site" });
     expect(res.status).toBe(201);
     expect(res.body.title).toBe("Crawl site");
   });
 
   it("returns 400 for invalid task data", async () => {
-    const res = await request(app).post("/api/tasks").send({ description: "no title" });
+    const res = await request(app).post("/api/tasks").set("Authorization", AUTH).send({ description: "no title" });
     expect(res.status).toBe(400);
     expect(res.body).toEqual({ error: "Invalid task data" });
   });
 
   it("returns 500 when the insert fails", async () => {
     queueDbResults(new Error("insert failed"));
-    const res = await request(app).post("/api/tasks").send({ title: "Crawl site" });
+    const res = await request(app).post("/api/tasks").set("Authorization", AUTH).send({ title: "Crawl site" });
     expect(res.status).toBe(500);
     expect(res.body).toEqual({ error: "Failed to create task" });
   });
@@ -71,7 +75,7 @@ describe("PATCH /api/tasks/:taskId", () => {
   it("returns 200 with the updated task", async () => {
     queueDbResults([{ ...sampleTask, status: "running", progress: 50 }]);
     const res = await request(app)
-      .patch("/api/tasks/1")
+      .patch("/api/tasks/1").set("Authorization", AUTH)
       .send({ status: "running", progress: 50 });
     expect(res.status).toBe(200);
     expect(res.body.status).toBe("running");
@@ -79,27 +83,27 @@ describe("PATCH /api/tasks/:taskId", () => {
   });
 
   it("returns 400 for a non-numeric id", async () => {
-    const res = await request(app).patch("/api/tasks/abc").send({ status: "running" });
+    const res = await request(app).patch("/api/tasks/abc").set("Authorization", AUTH).send({ status: "running" });
     expect(res.status).toBe(400);
     expect(res.body).toEqual({ error: "Invalid task ID" });
   });
 
   it("returns 400 for an invalid status", async () => {
-    const res = await request(app).patch("/api/tasks/1").send({ status: "bogus" });
+    const res = await request(app).patch("/api/tasks/1").set("Authorization", AUTH).send({ status: "bogus" });
     expect(res.status).toBe(400);
     expect(res.body).toEqual({ error: "Invalid status" });
   });
 
   it("returns 404 when the task is not found", async () => {
     queueDbResults([]);
-    const res = await request(app).patch("/api/tasks/999").send({ status: "running" });
+    const res = await request(app).patch("/api/tasks/999").set("Authorization", AUTH).send({ status: "running" });
     expect(res.status).toBe(404);
     expect(res.body).toEqual({ error: "Task not found" });
   });
 
   it("returns 500 when the update fails", async () => {
     queueDbResults(new Error("update failed"));
-    const res = await request(app).patch("/api/tasks/1").send({ status: "running" });
+    const res = await request(app).patch("/api/tasks/1").set("Authorization", AUTH).send({ status: "running" });
     expect(res.status).toBe(500);
     expect(res.body).toEqual({ error: "Failed to update task" });
   });

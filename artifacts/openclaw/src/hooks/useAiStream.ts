@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { resolveApiUrl } from "@workspace/api-client-react";
 
 export interface AiStreamState {
@@ -22,6 +22,11 @@ export function useAiStream(onComplete?: (agentId: number | null) => void) {
 
   const abortRef = useRef<AbortController | null>(null);
 
+  // Abort any in-flight stream when the component using this hook unmounts, so a
+  // route change mid-response stops the fetch and the read loop instead of
+  // leaking the connection and calling setState on an unmounted component.
+  useEffect(() => () => abortRef.current?.abort(), []);
+
   const send = useCallback(async (opts: {
     message: string;
     agentId?: number | null;
@@ -40,6 +45,7 @@ export function useAiStream(onComplete?: (agentId: number | null) => void) {
       const res = await fetch(resolveApiUrl("/api/ai/chat"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         signal: abort.signal,
         body: JSON.stringify({
           message: opts.message,
@@ -63,6 +69,9 @@ export function useAiStream(onComplete?: (agentId: number | null) => void) {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+        // A newer send() (or unmount) replaced/aborted this controller — stop
+        // reading and stop updating state for a superseded stream.
+        if (abortRef.current !== abort) break;
 
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split("\n");

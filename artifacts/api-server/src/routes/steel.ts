@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { ssrfGuard } from "../tools";
 
 const router = Router();
 const STEEL_BASE = "https://api.steel.dev/v1";
@@ -106,6 +107,8 @@ router.delete("/steel/sessions/:id", async (req, res) => {
 router.post("/steel/scrape", async (req, res) => {
   const { url, sessionId, waitFor, useProxy = false } = req.body ?? {};
   if (!url) { res.status(400).json({ error: "url is required" }); return; }
+  const blocked = await ssrfGuard(String(url));
+  if (blocked) { res.status(400).json({ error: blocked.replace(/^error: /, "") }); return; }
   try {
     const body: Record<string, unknown> = { url, useProxy };
     if (sessionId) body.sessionId = sessionId;
@@ -127,6 +130,8 @@ router.post("/steel/scrape", async (req, res) => {
 router.post("/steel/screenshot", async (req, res) => {
   const { url, sessionId, fullPage = false, useProxy = false } = req.body ?? {};
   if (!url) { res.status(400).json({ error: "url is required" }); return; }
+  const blocked = await ssrfGuard(String(url));
+  if (blocked) { res.status(400).json({ error: blocked.replace(/^error: /, "") }); return; }
   try {
     const body: Record<string, unknown> = { url, fullPage, useProxy };
     if (sessionId) body.sessionId = sessionId;
@@ -154,6 +159,8 @@ router.post("/steel/screenshot", async (req, res) => {
 router.post("/steel/pdf", async (req, res) => {
   const { url, sessionId, useProxy = false } = req.body ?? {};
   if (!url) { res.status(400).json({ error: "url is required" }); return; }
+  const blocked = await ssrfGuard(String(url));
+  if (blocked) { res.status(400).json({ error: blocked.replace(/^error: /, "") }); return; }
   try {
     const body: Record<string, unknown> = { url, useProxy };
     if (sessionId) body.sessionId = sessionId;

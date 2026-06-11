@@ -57,3 +57,6 @@ attached_assets/
 
 # self-test artifacts (screenshots, reports)
 .self-test/
+
+# Scratch/experimental scripts — keep out of version control (may hold raw keys)
+experiments/
