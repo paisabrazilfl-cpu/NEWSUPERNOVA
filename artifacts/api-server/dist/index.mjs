@@ -96225,6 +96225,8 @@ function requireOperator(req, res, next) {
 init_embeddings();
 var router11 = (0, import_express11.Router)();
 var VAULT_AGENT_ID = 4;
+var COMPOSIO_AGENT_ID2 = 5;
+var DEFAULT_CHANNEL_ID3 = 1;
 var AGENT_NAME_MAP = {
   abby: 1,
   forge: 2,
@@ -96252,7 +96254,8 @@ function apiKeyAuth(req, res, next) {
     next();
     return;
   }
-  const provided = req.headers["authorization"]?.replace(/^Bearer\s+/i, "") ?? req.headers["x-api-key"];
+  const provided = req.headers["authorization"]?.replace(/^Bearer\s+/i, "") ?? req.headers["x-api-key"] ?? // Vapi tool servers send their credential in x-vapi-secret.
+  req.headers["x-vapi-secret"];
   if (!provided || !timingSafeStrEqual(provided, expectedKey)) {
     res.status(401).json({ error: "Unauthorized \u2014 provide a valid OPENCLAW_API_KEY" });
     return;
@@ -96486,6 +96489,90 @@ ${content}` : content);
     req.log.error({ err }, "External API: twin-lessons ingest failed");
     res.status(500).json({ error: "Failed to ingest twin lessons", ingested, skipped });
   }
+});
+function parseVapiToolCalls(body) {
+  const message = body?.message;
+  if (!message || message.type !== "tool-calls") return [];
+  const list = Array.isArray(message.toolCallList) ? message.toolCallList : message.toolCalls;
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  for (const item of list) {
+    const rec = item ?? {};
+    const fn = rec["function"] ?? {};
+    const id = String(rec["id"] ?? "").trim();
+    const name = String(rec["name"] ?? fn["name"] ?? "").trim();
+    let rawArgs = rec["arguments"] ?? fn["arguments"] ?? {};
+    if (typeof rawArgs === "string") {
+      try {
+        rawArgs = JSON.parse(rawArgs);
+      } catch {
+        rawArgs = {};
+      }
+    }
+    if (!id || !name) continue;
+    out.push({ id, name, args: rawArgs && typeof rawArgs === "object" ? rawArgs : {} });
+  }
+  return out;
+}
+function voiceify(text2, max = 1200) {
+  return text2.replace(/```[\s\S]*?```/g, " (code omitted) ").replace(/^#{1,6}\s+/gm, "").replace(/[*_`|>]/g, "").replace(/\[(.*?)\]\((.*?)\)/g, "$1").replace(/\s+/g, " ").trim().slice(0, max);
+}
+async function runVapiTool(name, args, log) {
+  switch (name) {
+    case "dispatch_task": {
+      const task = String(args["task"] ?? "").trim();
+      if (!task) return "I need a task description to dispatch. Please say what you want the swarm to do.";
+      const priority = String(args["priority"] ?? "normal") === "high" ? "high" : "normal";
+      const connectedAccount = requestsConnectedAccountAction(task);
+      void orchestrateGoal({
+        goal: task,
+        channelId: DEFAULT_CHANNEL_ID3,
+        priority,
+        ...connectedAccount ? { forceAgentId: COMPOSIO_AGENT_ID2 } : {}
+      }).catch((err) => log.error({ err }, "Vapi dispatch_task: orchestrateGoal crashed"));
+      return `Task dispatched to the swarm: ${task.slice(0, 160)}. ABBY is orchestrating it now. Ask me for the status or the result in a little while.`;
+    }
+    case "check_status": {
+      const [agents, running, recent] = await Promise.all([
+        db.select().from(agentsTable),
+        db.select().from(tasksTable).where(eq(tasksTable.status, "running")).orderBy(desc(tasksTable.id)).limit(5),
+        db.select().from(tasksTable).where(and(eq(tasksTable.status, "completed"))).orderBy(desc(tasksTable.id)).limit(3)
+      ]);
+      const busy = agents.filter((a) => a.status !== "idle").map((a) => `${a.name} is ${a.status}`);
+      const parts = [
+        busy.length ? `${busy.join(", ")}.` : "All agents are idle.",
+        running.length ? `${running.length} task${running.length === 1 ? "" : "s"} running: ${running.map((t) => t.title).join("; ").slice(0, 300)}.` : "No tasks are currently running.",
+        recent.length ? `Recently completed: ${recent.map((t) => t.title).join("; ").slice(0, 200)}.` : ""
+      ];
+      return voiceify(parts.filter(Boolean).join(" "), 800);
+    }
+    case "get_last_result": {
+      const [msg] = await db.select().from(messagesTable).where(and(eq(messagesTable.agentId, 1), eq(messagesTable.messageType, "agent"))).orderBy(desc(messagesTable.id)).limit(1);
+      if (!msg?.content) return "ABBY hasn't reported a final result yet. If you just dispatched a task, give the swarm a little more time.";
+      return voiceify(msg.content);
+    }
+    default:
+      return `error: unknown tool "${name}". Available tools: dispatch_task, check_status, get_last_result.`;
+  }
+}
+router11.post("/external/v1/vapi/webhook", async (req, res) => {
+  const calls = parseVapiToolCalls(req.body);
+  if (calls.length === 0) {
+    res.status(200).json({ results: [] });
+    return;
+  }
+  const results = [];
+  for (const call of calls) {
+    let result;
+    try {
+      result = await runVapiTool(call.name, call.args, req.log);
+    } catch (err) {
+      req.log.error({ err, tool: call.name }, "Vapi tool failed");
+      result = `error: the ${call.name} tool failed \u2014 ${String(err).slice(0, 160)}`;
+    }
+    results.push({ toolCallId: call.id, result });
+  }
+  res.status(200).json({ results });
 });
 var external_default = router11;
 

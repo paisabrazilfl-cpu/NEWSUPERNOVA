@@ -15,22 +15,28 @@
  *   POST /api/external/v1/chat/completions      — OpenAI-format chat → routed to ABBY CLAW agent
  *   POST /api/external/v1/messages              — inject a raw message into OPENCLAW chat feed
  *   POST /api/external/v1/twin-lessons          — quarantined ingest of a twin swarm's verified lessons
+ *   POST /api/external/v1/vapi/webhook          — Vapi voice-assistant tool server (dispatch_task, check_status, get_last_result)
  */
 
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { db } from "@workspace/db";
-import { agentsTable, messagesTable, channelsTable, agentMemoryTable } from "@workspace/db";
-import { eq, desc, like } from "drizzle-orm";
+import { agentsTable, messagesTable, channelsTable, agentMemoryTable, tasksTable } from "@workspace/db";
+import { eq, desc, like, and } from "drizzle-orm";
 import { llmFetch } from "../lib/integrations";
 import { timingSafeStrEqual } from "../lib/auth";
 import { embed } from "../lib/embeddings";
 import { quarantineTags } from "../lib/twinSync";
-import { ANTI_HALLUCINATION_DIRECTIVE, ABBY_DEFAULT_MODEL } from "./ai";
+import { orchestrateGoal } from "../orchestrator";
+import { ANTI_HALLUCINATION_DIRECTIVE, ABBY_DEFAULT_MODEL, requestsConnectedAccountAction } from "./ai";
 
 const router = Router();
 
 // VAULT — the memory/RAG agent; inbound twin lessons are filed under it.
 const VAULT_AGENT_ID = 4;
+// WIRE — holds the Composio/connected-account tools; connected-account voice
+// tasks are forced onto it (same routing the chat path and scheduler use).
+const COMPOSIO_AGENT_ID = 5;
+const DEFAULT_CHANNEL_ID = 1;
 
 const AGENT_NAME_MAP: Record<string, number> = {
   abby:    1,
@@ -61,7 +67,9 @@ function apiKeyAuth(req: Request, res: Response, next: NextFunction): void {
   if (!expectedKey) { next(); return; }
   const provided =
     (req.headers["authorization"] as string | undefined)?.replace(/^Bearer\s+/i, "") ??
-    (req.headers["x-api-key"] as string | undefined);
+    (req.headers["x-api-key"] as string | undefined) ??
+    // Vapi tool servers send their credential in x-vapi-secret.
+    (req.headers["x-vapi-secret"] as string | undefined);
   if (!provided || !timingSafeStrEqual(provided, expectedKey)) {
     res.status(401).json({ error: "Unauthorized — provide a valid OPENCLAW_API_KEY" }); return;
   }
@@ -322,6 +330,144 @@ router.post("/external/v1/twin-lessons", async (req, res) => {
     req.log.error({ err }, "External API: twin-lessons ingest failed");
     res.status(500).json({ error: "Failed to ingest twin lessons", ingested, skipped });
   }
+});
+
+// ─── POST /api/external/v1/vapi/webhook ──────────────────────────────────────
+// Vapi voice-assistant tool server: lets the operator literally phone the swarm
+// and run it by voice. Configure these as custom tools on a Vapi assistant with
+// this URL as the tool server (secret = OPENCLAW_API_KEY; Vapi sends it in
+// x-vapi-secret, which apiKeyAuth accepts).
+//
+// Tools served:
+//   dispatch_task     {task, priority?} — hands the goal to ABBY's orchestrator
+//                     (fire-and-forget, same machinery as the dashboard).
+//   check_status      {}                — voice-sized swarm/tasks status.
+//   get_last_result   {}                — ABBY's most recent final briefing.
+//
+// Request:  { message: { type: "tool-calls", toolCallList: [{ id, name, arguments }] } }
+// Response: { results: [{ toolCallId, result }] }   (per docs.vapi.ai/tools/custom-tools)
+
+export interface VapiToolCall {
+  id: string;
+  name: string;
+  args: Record<string, unknown>;
+}
+
+/**
+ * Tolerant parse of Vapi's tool-call payload. Vapi documents
+ * toolCallList[{id,name,arguments}], but OpenAI-shaped variants
+ * ({id, function:{name, arguments}}, arguments as a JSON string) appear across
+ * versions — accept all of them so a Vapi update can't silently break voice.
+ * Returns [] for any non-tool-call server message (status updates, end-of-call
+ * reports), which the route acknowledges with an empty 200.
+ */
+export function parseVapiToolCalls(body: unknown): VapiToolCall[] {
+  const message = (body as { message?: unknown } | null)?.message as
+    | { type?: unknown; toolCallList?: unknown; toolCalls?: unknown }
+    | undefined;
+  if (!message || message.type !== "tool-calls") return [];
+  const list = (Array.isArray(message.toolCallList) ? message.toolCallList : message.toolCalls) as unknown;
+  if (!Array.isArray(list)) return [];
+  const out: VapiToolCall[] = [];
+  for (const item of list) {
+    const rec = (item ?? {}) as Record<string, unknown>;
+    const fn = (rec["function"] ?? {}) as Record<string, unknown>;
+    const id = String(rec["id"] ?? "").trim();
+    const name = String(rec["name"] ?? fn["name"] ?? "").trim();
+    let rawArgs: unknown = rec["arguments"] ?? fn["arguments"] ?? {};
+    if (typeof rawArgs === "string") {
+      try {
+        rawArgs = JSON.parse(rawArgs);
+      } catch {
+        rawArgs = {};
+      }
+    }
+    if (!id || !name) continue;
+    out.push({ id, name, args: (rawArgs && typeof rawArgs === "object" ? rawArgs : {}) as Record<string, unknown> });
+  }
+  return out;
+}
+
+/** Strip markdown decoration so a result reads naturally when spoken aloud. */
+export function voiceify(text: string, max = 1200): string {
+  return text
+    .replace(/```[\s\S]*?```/g, " (code omitted) ")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/[*_`|>]/g, "")
+    .replace(/\[(.*?)\]\((.*?)\)/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, max);
+}
+
+async function runVapiTool(name: string, args: Record<string, unknown>, log: { error: (o: unknown, m: string) => void }): Promise<string> {
+  switch (name) {
+    case "dispatch_task": {
+      const task = String(args["task"] ?? "").trim();
+      if (!task) return "I need a task description to dispatch. Please say what you want the swarm to do.";
+      const priority = String(args["priority"] ?? "normal") === "high" ? "high" : "normal";
+      // Same connected-account routing the chat path and scheduler use: a
+      // "post to my Instagram"-style goal runs ONCE on WIRE, never fanned out.
+      const connectedAccount = requestsConnectedAccountAction(task);
+      void orchestrateGoal({
+        goal: task,
+        channelId: DEFAULT_CHANNEL_ID,
+        priority,
+        ...(connectedAccount ? { forceAgentId: COMPOSIO_AGENT_ID } : {}),
+      }).catch((err: unknown) => log.error({ err }, "Vapi dispatch_task: orchestrateGoal crashed"));
+      return `Task dispatched to the swarm: ${task.slice(0, 160)}. ABBY is orchestrating it now. Ask me for the status or the result in a little while.`;
+    }
+    case "check_status": {
+      const [agents, running, recent] = await Promise.all([
+        db.select().from(agentsTable),
+        db.select().from(tasksTable).where(eq(tasksTable.status, "running")).orderBy(desc(tasksTable.id)).limit(5),
+        db.select().from(tasksTable).where(and(eq(tasksTable.status, "completed"))).orderBy(desc(tasksTable.id)).limit(3),
+      ]);
+      const busy = agents.filter((a) => a.status !== "idle").map((a) => `${a.name} is ${a.status}`);
+      const parts = [
+        busy.length ? `${busy.join(", ")}.` : "All agents are idle.",
+        running.length
+          ? `${running.length} task${running.length === 1 ? "" : "s"} running: ${running.map((t) => t.title).join("; ").slice(0, 300)}.`
+          : "No tasks are currently running.",
+        recent.length ? `Recently completed: ${recent.map((t) => t.title).join("; ").slice(0, 200)}.` : "",
+      ];
+      return voiceify(parts.filter(Boolean).join(" "), 800);
+    }
+    case "get_last_result": {
+      const [msg] = await db
+        .select()
+        .from(messagesTable)
+        .where(and(eq(messagesTable.agentId, 1), eq(messagesTable.messageType, "agent")))
+        .orderBy(desc(messagesTable.id))
+        .limit(1);
+      if (!msg?.content) return "ABBY hasn't reported a final result yet. If you just dispatched a task, give the swarm a little more time.";
+      return voiceify(msg.content);
+    }
+    default:
+      return `error: unknown tool "${name}". Available tools: dispatch_task, check_status, get_last_result.`;
+  }
+}
+
+router.post("/external/v1/vapi/webhook", async (req, res) => {
+  const calls = parseVapiToolCalls(req.body);
+  // Non-tool-call server messages (status-update, end-of-call-report, …) are
+  // acknowledged so Vapi doesn't retry them.
+  if (calls.length === 0) {
+    res.status(200).json({ results: [] });
+    return;
+  }
+  const results: Array<{ toolCallId: string; result: string }> = [];
+  for (const call of calls) {
+    let result: string;
+    try {
+      result = await runVapiTool(call.name, call.args, req.log);
+    } catch (err) {
+      req.log.error({ err, tool: call.name }, "Vapi tool failed");
+      result = `error: the ${call.name} tool failed — ${String(err).slice(0, 160)}`;
+    }
+    results.push({ toolCallId: call.id, result });
+  }
+  res.status(200).json({ results });
 });
 
 export default router;
