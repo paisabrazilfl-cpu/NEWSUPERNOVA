@@ -377,7 +377,10 @@ export async function customFetch<T = unknown>(
 
   const requestInfo = { method, url: resolveUrl(input) };
 
-  const response = await fetch(input, { ...init, method, headers });
+  // Always send the operator session cookie. Same-origin (production) would
+  // include it by default, but being explicit also makes the documented
+  // cross-origin dev setup work and keeps every authenticated call consistent.
+  const response = await fetch(input, { ...init, method, headers, credentials: "include" });
 
   if (!response.ok) {
     const errorData = await parseErrorBody(response, method);

@@ -11,6 +11,7 @@ import { Router } from "express";
 import { db } from "@workspace/db";
 import { attachmentsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
+import { requireOperator } from "../lib/auth";
 
 const router = Router();
 
@@ -27,8 +28,10 @@ function kindFor(mime: string, filename: string): "image" | "text" | "other" {
   return "other";
 }
 
-// POST /api/uploads  { name, mime, dataBase64 }
-router.post("/uploads", async (req, res) => {
+// POST /api/uploads  { name, mime, dataBase64 } — operator-only write path
+// (the chat UI sends this with the same-origin session cookie). Keeping it
+// unauthenticated would make the server an open, anonymous file host.
+router.post("/uploads", requireOperator, async (req, res) => {
   const { name, mime, dataBase64 } = (req.body ?? {}) as {
     name?: string;
     mime?: string;
@@ -106,8 +109,13 @@ router.get("/uploads/:id", async (req, res) => {
       return;
     }
     const buf = Buffer.from(row.data, "base64");
-    // ?download=1 forces a save-as download; otherwise render inline (images/PDF).
-    const disposition = req.query["download"] != null ? "attachment" : "inline";
+    // Stored-XSS defense: this is served from the app's own origin, so we must
+    // never let an uploaded text/html (or sniffable) file execute as a page
+    // here. Always send nosniff, and only render INLINE for images and PDFs;
+    // everything else (and any ?download=1) is forced to a save-as download.
+    const isInlineSafe = /^image\//i.test(row.mimeType) || row.mimeType === "application/pdf";
+    const disposition = req.query["download"] != null || !isInlineSafe ? "attachment" : "inline";
+    res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Content-Type", row.mimeType);
     res.setHeader("Content-Length", String(buf.length));
     res.setHeader("Cache-Control", "public, max-age=31536000, immutable");

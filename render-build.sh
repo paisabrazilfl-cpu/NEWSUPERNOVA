@@ -39,7 +39,7 @@ print("pnpm-workspace.yaml cleaned successfully")
 PYEOF
 
 echo "=== Installing dependencies ==="
-npx --yes pnpm@9 install --no-frozen-lockfile
+npx --yes pnpm@9 install --frozen-lockfile
 
 echo "=== Building lib packages ==="
 npx --yes pnpm@9 run typecheck:libs

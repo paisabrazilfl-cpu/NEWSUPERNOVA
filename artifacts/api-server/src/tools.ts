@@ -95,6 +95,25 @@ function isTrue(v: unknown): boolean {
   return v === true || v === "true" || v === 1 || v === "1";
 }
 
+/**
+ * Defense-in-depth for the code sandboxes: agent-authored code runs in a VM with
+ * full network egress, so a {{secret:NAME}} it injects could be exfiltrated. When
+ * SANDBOX_SECRET_ALLOWLIST is set (comma-separated names), only those secrets may
+ * be referenced in sandbox/cloud_code_exec scripts; any other placeholder is
+ * refused before execution. Unset = no restriction (preserves authenticated git
+ * push and existing flows). Returns an error string to abort, or null to proceed.
+ */
+function sandboxSecretsBlocked(script: string): string | null {
+  const allow = (process.env["SANDBOX_SECRET_ALLOWLIST"] ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  if (!allow.length) return null;
+  const referenced = [...script.matchAll(/\{\{secret:([^}]+)\}\}/gi)].map((m) => m[1]!.trim());
+  const blocked = referenced.filter((n) => !allow.includes(n));
+  if (blocked.length) {
+    return `error: secret(s) ${[...new Set(blocked)].join(", ")} are not permitted in sandbox execution (SANDBOX_SECRET_ALLOWLIST). Nothing was executed.`;
+  }
+  return null;
+}
+
 // ─── SSRF guard ──────────────────────────────────────────────────────────────
 // http_request makes outbound calls *from the server runtime*, so an unguarded
 // URL lets a model probe internal services or the cloud metadata endpoint. We
@@ -147,6 +166,14 @@ export async function ssrfGuard(url: string): Promise<string | null> {
     host.endsWith(".local")
   ) {
     return "error: requests to internal hostnames are blocked.";
+  }
+  // Reject non-dotted-quad numeric encodings of an IP (decimal e.g. 2130706433,
+  // hex e.g. 0x7f000001, octal, or shorthand 127.1). isIP() returns 0 for these,
+  // so without this they'd skip the IP branch and reach DNS where some resolvers
+  // map them back to 127.0.0.1 — a classic SSRF bypass. If the host has no
+  // letters and isn't a normal dotted IPv4, treat it as a blocked numeric form.
+  if (!isIP(host) && /^(0x[0-9a-f]+|\d+|\d{1,3}(\.\d{1,3}){1,2})$/i.test(host)) {
+    return "error: numeric/shorthand IP encodings are blocked.";
   }
   if (isIP(host)) {
     return ipIsPrivate(host) ? "error: requests to private/internal addresses are blocked." : null;
@@ -796,9 +823,12 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
         // public/open-redirect URL must not be able to bounce us onto an
         // internal target.
         let currentUrl = url;
+        const originalOrigin = new URL(url).origin;
         let r: Response | null = null;
+        let reqHeaders = headers;
+        let reqBody = body;
         for (let hop = 0; hop < 5; hop++) {
-          r = await fetch(currentUrl, { method, headers, body, signal: ctrl.signal, redirect: "manual" });
+          r = await fetch(currentUrl, { method, headers: reqHeaders, body: reqBody, signal: ctrl.signal, redirect: "manual" });
           if (r.status < 300 || r.status >= 400) break;
           const location = r.headers.get("location");
           if (!location) break;
@@ -806,6 +836,16 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
           if (!/^https?:\/\//i.test(next)) return "error: redirect to a non-http(s) target was blocked.";
           const redirectBlocked = await ssrfGuard(next);
           if (redirectBlocked) return `error: redirect blocked — ${redirectBlocked.replace(/^error: /, "")}`;
+          // Cross-origin redirect: strip credentials and the body before following,
+          // exactly as browsers do — otherwise an open-redirect would forward the
+          // operator's Authorization header (incl. injected vault/GitHub/Render
+          // tokens) and request body to an arbitrary attacker host.
+          if (new URL(next).origin !== originalOrigin) {
+            reqHeaders = Object.fromEntries(
+              Object.entries(reqHeaders).filter(([k]) => !/^(authorization|cookie|x-api-key)$/i.test(k)),
+            );
+            reqBody = undefined;
+          }
           currentUrl = next;
           if (hop === 4) return "error: too many redirects.";
         }
@@ -869,6 +909,8 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
       if (!e2bConfigured()) {
         return "error: E2B cloud sandbox is not configured (set E2B_API_KEY). Use code_exec for local execution instead.";
       }
+      const cloudSecretBlock = sandboxSecretsBlocked(rawSource);
+      if (cloudSecretBlock) return cloudSecretBlock;
       // Resolve {{secret:NAME}} placeholders (injected only into the code sent to
       // the remote VM, redacted from the returned output) so code can authenticate.
       const usedSecrets = new Set<string>();
@@ -898,6 +940,8 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
       const raw = String(args["script"] ?? "").trim();
       if (!raw) return "error: script is required.";
       if (!sandboxConfigured()) return "error: E2B cloud sandbox is not configured (E2B_API_KEY).";
+      const sandboxSecretBlock = sandboxSecretsBlocked(raw);
+      if (sandboxSecretBlock) return sandboxSecretBlock;
       // Resolve {{secret:NAME}} placeholders the same way http_request does, so a
       // script can authenticate (e.g. git push to https://{{secret:GITHUB_API_KEY}}@…)
       // without the literal placeholder reaching the shell. Raw values are injected
@@ -1093,6 +1137,7 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
       const doneMode = isTrue(args["done"]);
       const bufKey = `${ctx.agentId}:${filename}`;
       let encoding = String(args["encoding"] ?? "utf8").toLowerCase() === "base64" ? "base64" : "utf8";
+      const encodingExplicit = args["encoding"] != null;
       let raw: string;
 
       // ── Chunked save: accumulate ordered slices, assemble on done. ──
@@ -1129,7 +1174,7 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
       // text Instagram/browsers can't decode (observed live: attachment #476).
       // Detect the well-known binary magic prefixes in their base64 form and
       // auto-correct: iVBORw0KGgo=PNG, /9j/=JPEG, JVBERi0=PDF, UEsDB=ZIP/DOCX.
-      if (encoding === "utf8" && /^(iVBORw0KGgo|\/9j\/|JVBERi0|UEsDB)[A-Za-z0-9+/=\s]*$/.test(raw.trim().slice(0, 100)) && /^[A-Za-z0-9+/=\s]+$/.test(raw.trim())) {
+      if (!encodingExplicit && encoding === "utf8" && /^(iVBORw0KGgo|\/9j\/|JVBERi0|UEsDB)[A-Za-z0-9+/=\s]*$/.test(raw.trim().slice(0, 100)) && /^[A-Za-z0-9+/=\s]+$/.test(raw.trim())) {
         encoding = "base64";
       }
       // Normalize to base64 for storage (the attachments column stores base64).

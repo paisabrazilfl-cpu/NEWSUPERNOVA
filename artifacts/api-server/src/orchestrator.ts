@@ -135,6 +135,19 @@ export function repeatedCallAction(attempts: number): "run" | "nudge" | "stop" {
 }
 
 /**
+ * Deterministic JSON with sorted object keys, so two semantically identical tool
+ * calls whose arguments differ only in key order produce the SAME cache/loop key
+ * (raw JSON.stringify is key-insertion-order dependent across model outputs, which
+ * would silently defeat the dedupe cache and the identical-call stop guard).
+ */
+export function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  const obj = value as Record<string, unknown>;
+  return `{${Object.keys(obj).sort().map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k])}`).join(",")}}`;
+}
+
+/**
  * Total solve budget per operator goal, expressed as a multiple of a single
  * run: at most MAX_SOLVE_CYCLES dispatch rounds INCLUDING the initial one, so
  * the default of 4 caps total spend at 4× one single run. The budget is SHARED
@@ -645,6 +658,10 @@ export async function executeAgentCommand(opts: {
       // Did any call this step produce a NEW successful result? If not, the
       // step made no forward progress and counts toward the no-progress streak.
       let madeProgress = false;
+      // Tools that failed in THIS step only — drives the self-learn nudge. Must
+      // be per-step, not the run-global failedTools (which would keep firing the
+      // nudge for a tool that failed once and then succeeded).
+      const stepFailed = new Set<string>();
       for (const { call, args: parsedArgs, truncated } of parsed) {
         const name = call.function?.name ?? "unknown";
 
@@ -660,7 +677,7 @@ export async function executeAgentCommand(opts: {
 
         let toolResult: string;
         let ok = true;
-        const callKey = `${name}:${JSON.stringify(parsedArgs)}`;
+        const callKey = `${name}:${stableStringify(parsedArgs)}`;
         const attempts = (attemptCounts.get(callKey) ?? 0) + 1;
         attemptCounts.set(callKey, attempts);
         const action = repeatedCallAction(attempts);
@@ -720,15 +737,15 @@ export async function executeAgentCommand(opts: {
         });
 
         messages.push({ role: "tool", tool_call_id: call.id, name, content: toolResult.slice(0, 6000) });
-        if (!ok) failedTools.add(name);
+        if (!ok) { failedTools.add(name); stepFailed.add(name); }
       }
 
-      // Self-learning nudge: when any tool failed this iteration, remind
-      // the CLAW to research a fix (memory_search → web_search → retry)
-      // rather than retrying blindly or giving up.
-      const justFailed = parsed.filter((p) => !callCache.has(`${p.call.function?.name ?? ""}:${JSON.stringify(p.args)}`) && failedTools.has(p.call.function?.name ?? ""));
-      if (justFailed.length > 0) {
-        const failedNames = [...new Set(justFailed.map((p) => p.call.function?.name ?? "unknown"))].join(", ");
+      // Self-learning nudge: when a tool genuinely failed THIS step (and the same
+      // call didn't ultimately succeed/cache this step), remind the CLAW to
+      // research a fix (memory_search → web_search → retry) rather than retrying
+      // blindly or giving up.
+      if (stepFailed.size > 0) {
+        const failedNames = [...stepFailed].join(", ");
         messages.push({
           role: "user",
           content:
@@ -915,8 +932,24 @@ async function dispatchDirectives(
     return { name: agent.name, result };
   });
 
-  const settled = await Promise.all(runs);
-  return settled.filter((r): r is { name: string; result: string } => r !== null);
+  // allSettled, not all: a CLAW's command-insert or executor can reject (DB
+  // blip), and one rejection must NOT discard every sibling's completed work in
+  // the round. Rejected entries become an honest UNVERIFIED line for ABBY.
+  const settled = await Promise.allSettled(runs);
+  const out: Array<{ name: string; result: string }> = [];
+  settled.forEach((s, i) => {
+    if (s.status === "fulfilled") {
+      if (s.value !== null) out.push(s.value);
+    } else {
+      const agent = claws.find((c) => c.id === directives[i]?.agentId);
+      logger.error({ err: s.reason, agentId: directives[i]?.agentId }, "dispatchDirectives: a CLAW run rejected");
+      out.push({
+        name: agent?.name ?? `agent#${directives[i]?.agentId ?? "?"}`,
+        result: `⚠️ This CLAW could not be dispatched (UNVERIFIED — infrastructure error): ${String(s.reason).slice(0, 200)}`,
+      });
+    }
+  });
+  return out;
 }
 
 /**
@@ -1146,7 +1179,15 @@ Respond with ONLY a JSON object (no prose, no code fences) shaped:
             break; // can't verify — ship what we have rather than stall
           }
           const verdict = parseSolutionVerdict(verdictRaw);
-          if (verdict.solved) break;
+          if (verdict.solved) {
+            // Fail-open is deliberate (a flaky judge must not burn the budget),
+            // but an unverifiable verdict is NOT a clean pass — label it so the
+            // operator isn't told "solved" on the strength of unparseable output.
+            if (/unparseable/i.test(verdict.reason)) {
+              finalAnswer += `\n\n---\n_Note: the solution-gate verifier returned an unreadable verdict, so this answer was accepted WITHOUT automated verification._`;
+            }
+            break;
+          }
 
           const fixes = parseDirectives(verdictRaw, claws).slice(0, 2);
           const budgetLeft = solveRoundsUsed < MAX_SOLVE_CYCLES;
