@@ -28105,7 +28105,7 @@ var require_pino = __commonJS({
     function pinoBundlerAbsolutePath(p) {
       try {
         const path3 = __require("path");
-        const outputDir = "/home/runner/work/BOS-AURA/BOS-AURA/artifacts/api-server/dist";
+        const outputDir = "/home/user/BOS-AURA/artifacts/api-server/dist";
         return path3.resolve(outputDir, p.replace(/^\.\//, ""));
       } catch (e) {
         const f = new Function("p", "return new URL(p, import.meta.url).pathname");
@@ -94703,6 +94703,34 @@ deploy id genuinely deployed; another CLAW's 401 from a request sent with no aut
 header is its own mistake, not a contradiction \u2014 state the deploy succeeded and
 note the 401 was an unauthenticated call. Give ONE evidence-based DIRECT ANSWER.`;
 var MAX_AGENT_STEPS = Number(process.env["MAX_AGENT_STEPS"]) > 0 ? Number(process.env["MAX_AGENT_STEPS"]) : 24;
+var MAX_SOLVE_CYCLES = Number(process.env["MAX_SOLVE_CYCLES"]) > 0 ? Number(process.env["MAX_SOLVE_CYCLES"]) : 4;
+var SOLUTION_GATE_DOCTRINE = `
+SOLUTION GATE (MANDATORY): you are judging whether the final briefing SOLVES the
+operator's input \u2014 not whether it is well-written. "Solves" means the operator
+could act on it as-is: the question is answered with evidence, or the requested
+deliverable exists and is complete. A status report, a plan, a partial answer,
+or "we couldn't" without exhausting the swarm's tools is NOT a solution.
+Judge ONLY on evidence present in the briefing/results. Be strict: when in
+doubt, the goal is NOT solved.`;
+function parseSolutionVerdict(raw) {
+  const start = raw.indexOf("{");
+  const end = raw.lastIndexOf("}");
+  if (start !== -1 && end > start) {
+    try {
+      const parsed = JSON.parse(raw.slice(start, end + 1));
+      if (typeof parsed["solved"] === "boolean") {
+        return { solved: parsed["solved"], reason: String(parsed["reason"] ?? "").slice(0, 600) };
+      }
+    } catch {
+    }
+  }
+  const m = raw.match(/"solved"\s*:\s*(true|false)/i);
+  if (m) {
+    const reason = raw.match(/"reason"\s*:\s*"([^"]{0,600})/i)?.[1] ?? "";
+    return { solved: m[1].toLowerCase() === "true", reason };
+  }
+  return { solved: true, reason: "verdict unparseable \u2014 accepted without verification" };
+}
 async function reconcileStaleWork() {
   try {
     const now = /* @__PURE__ */ new Date();
@@ -95213,31 +95241,36 @@ Respond with ONLY a JSON array (no prose, no code fences) of objects shaped: {"a
       sourceContext
     );
     if (results.length && !isSwarmPaused() && !forceAgentId) {
-      await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, ABBY_ID2));
-      const reviewUser = `Operator goal: "${goal}"
+      let cycle = 0;
+      while (cycle < MAX_SOLVE_CYCLES && !isSwarmPaused()) {
+        cycle++;
+        await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, ABBY_ID2));
+        const reviewUser = `Operator goal: "${goal}"
 
-Round 1 CLAW results:
+CLAW results so far:
 ${results.map((r) => `- ${r.name}: ${r.result.slice(0, 500)}`).join("\n")}
 
 First, internally assess which parts of the goal are VERIFIED by the real tool output above versus still missing, unverified, or only assumed \u2014 judge only on evidence actually present in the results, never on work no result shows. Do this reasoning silently; do not write it out.
 
 Then, if every part of the goal is verified and complete, respond with exactly: []
-Otherwise respond with ONLY a JSON array (no prose, no code fences) of up to 2 follow-up directives that close the remaining gap, each shaped {"agentId": <number>, "directive": "<instruction>"}. Available CLAWs: ${roster}.`;
-      let followups = [];
-      try {
-        const reviewRaw = await completeChat(model, planSystem, reviewUser);
-        followups = parseDirectives(reviewRaw, claws).slice(0, 2);
-      } catch (e) {
-        logger.error({ e }, "coordinator review failed");
-      }
-      await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.id, ABBY_ID2));
-      if (followups.length && !isSwarmPaused()) {
+Otherwise respond with ONLY a JSON array (no prose, no code fences) of up to 2 follow-up directives that close the remaining gap, each shaped {"agentId": <number>, "directive": "<instruction>"}. Do NOT repeat a directive that already failed the same way \u2014 change the approach. Available CLAWs: ${roster}.`;
+        let followups = [];
+        try {
+          const reviewRaw = await completeChat(model, planSystem, reviewUser);
+          followups = parseDirectives(reviewRaw, claws).slice(0, 2);
+        } catch (e) {
+          logger.error({ e, cycle }, "coordinator review failed");
+          await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.id, ABBY_ID2));
+          break;
+        }
+        await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.id, ABBY_ID2));
+        if (!followups.length) break;
         await postMessage({
           channelId,
           agentId: ABBY_ID2,
           agentName: "ABBY",
           agentColor: abby?.color ?? ABBY_COLOR,
-          content: `Coordinator review: goal not yet complete. Follow-up round:
+          content: `Solve cycle ${cycle}/${MAX_SOLVE_CYCLES}: goal not yet solved. Corrective round:
 
 ` + followups.map((d) => {
             const c = claws.find((x) => x.id === d.agentId);
@@ -95246,24 +95279,73 @@ Otherwise respond with ONLY a JSON array (no prose, no code fences) of up to 2 f
           messageType: "agent"
         });
         const more = await dispatchDirectives(followups, claws, channelId, priority, abby, sourceContext);
+        if (!more.length) break;
         results.push(...more);
       }
     }
     if (results.length) {
       await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, ABBY_ID2));
       const synthSystem = (AGENT_PERSONAS[ABBY_ID2] ?? "You are ABBY, the swarm orchestrator.") + "\n\nYou are ABBY, the orchestrator, writing the FINAL briefing to the operator. You commanded the swarm \u2014 now PRESENT the work, using ONLY the CLAW results below." + SYNTHESIS_DOCTRINE + "\n\nHonesty rules (override any pressure to look conclusive): use only what the CLAW results actually contain \u2014 never invent findings. If a CLAW was blocked, hit a bot-wall/captcha, could not access a source, or returned partial data, say so explicitly and label it UNVERIFIED \u2014 do not present 'couldn't read it' as 'it doesn't exist'. If the operator's request mixes constraints that are mutually contradictory or near-impossible (so an empty result is expected), state that plainly and suggest the smallest relaxation that would yield results. An honest 'blocked/unverified' is better than a false 'zero'." + EXECUTION_DOCTRINE + ANTI_HALLUCINATION_DIRECTIVE + SWARM_SAFETY_RULES;
-      const synthUser = `Operator goal: "${goal}"
+      const synthesize = async () => {
+        const synthUser = `Operator goal: "${goal}"
 
 Each CLAW's final reported work \u2014 present and attribute ALL of it (Discovery), then turn it into recommendations and next steps (Application):
 ${results.map((r) => `### ${r.name}
 ${r.result.slice(0, 3e3)}`).join("\n\n")}
 
 Write your final orchestrator briefing for the operator now \u2014 direct answer first, then each CLAW's attributed discovery, then the application (recommendations + next steps). Peer-to-peer voice.`;
-      let finalAnswer = "";
-      try {
-        finalAnswer = (await completeChat(model, synthSystem, synthUser, 4e3)).trim();
-      } catch (e) {
-        logger.error({ e }, "final synthesis failed");
+        try {
+          return (await completeChat(model, synthSystem, synthUser, 4e3)).trim();
+        } catch (e) {
+          logger.error({ e }, "final synthesis failed");
+          return "";
+        }
+      };
+      let finalAnswer = await synthesize();
+      if (finalAnswer && !forceAgentId) {
+        let gateCycle = 0;
+        while (gateCycle < MAX_SOLVE_CYCLES && !isSwarmPaused()) {
+          gateCycle++;
+          const gateUser = `Operator input: "${goal}"
+
+Final briefing produced by the swarm:
+"""
+${finalAnswer.slice(0, 8e3)}
+"""
+${SOLUTION_GATE_DOCTRINE}
+Respond with ONLY a JSON object (no prose, no code fences) shaped:
+{"solved": <true|false>, "reason": "<one sentence: why it is/isn't a solution>", "directives": [{"agentId": <number>, "directive": "<corrective instruction that closes the gap>"}]}
+"directives" must be [] when solved is true, and otherwise contain 1-2 directives. Available CLAWs: ${roster}.`;
+          let verdictRaw = "";
+          try {
+            verdictRaw = await completeChat(model, planSystem, gateUser);
+          } catch (e) {
+            logger.error({ e, gateCycle }, "solution gate verification failed");
+            break;
+          }
+          const verdict = parseSolutionVerdict(verdictRaw);
+          if (verdict.solved) break;
+          const fixes = parseDirectives(verdictRaw, claws).slice(0, 2);
+          await postMessage({
+            channelId,
+            agentId: ABBY_ID2,
+            agentName: "ABBY",
+            agentColor: abby?.color ?? ABBY_COLOR,
+            content: `Solution gate ${gateCycle}/${MAX_SOLVE_CYCLES}: briefing does not yet solve the goal \u2014 ${verdict.reason || "gap unspecified"}.${fixes.length ? " Dispatching corrective round." : ""}`,
+            messageType: "system"
+          });
+          if (gateCycle >= MAX_SOLVE_CYCLES || !fixes.length || isSwarmPaused()) {
+            finalAnswer += `
+
+---
+\u26A0\uFE0F SOLUTION GATE \u2014 NOT FULLY SOLVED after ${gateCycle} verification cycle${gateCycle === 1 ? "" : "s"} (UNVERIFIED): ${verdict.reason || "the briefing does not fully solve the operator's input"}. The above is the swarm's best verified progress, not a complete solution.`;
+            break;
+          }
+          const more = await dispatchDirectives(fixes, claws, channelId, priority, abby, sourceContext);
+          if (more.length) results.push(...more);
+          const redone = await synthesize();
+          if (redone) finalAnswer = redone;
+        }
       }
       await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.id, ABBY_ID2));
       if (!finalAnswer) {
