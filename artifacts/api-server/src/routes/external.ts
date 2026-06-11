@@ -14,17 +14,23 @@
  *   GET  /api/external/v1/swarm                 — swarm status snapshot
  *   POST /api/external/v1/chat/completions      — OpenAI-format chat → routed to ABBY CLAW agent
  *   POST /api/external/v1/messages              — inject a raw message into OPENCLAW chat feed
+ *   POST /api/external/v1/twin-lessons          — quarantined ingest of a twin swarm's verified lessons
  */
 
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { db } from "@workspace/db";
-import { agentsTable, messagesTable, channelsTable } from "@workspace/db";
-import { eq, desc } from "drizzle-orm";
+import { agentsTable, messagesTable, channelsTable, agentMemoryTable } from "@workspace/db";
+import { eq, desc, like } from "drizzle-orm";
 import { llmFetch } from "../lib/integrations";
 import { timingSafeStrEqual } from "../lib/auth";
+import { embed } from "../lib/embeddings";
+import { quarantineTags } from "../lib/twinSync";
 import { ANTI_HALLUCINATION_DIRECTIVE, ABBY_DEFAULT_MODEL } from "./ai";
 
 const router = Router();
+
+// VAULT — the memory/RAG agent; inbound twin lessons are filed under it.
+const VAULT_AGENT_ID = 4;
 
 const AGENT_NAME_MAP: Record<string, number> = {
   abby:    1,
@@ -261,6 +267,58 @@ router.post("/external/v1/messages", async (req, res) => {
   } catch (err) {
     req.log.error({ err }, "External API: post message");
     res.status(500).json({ error: "Failed to post message" });
+  }
+});
+
+// ─── POST /api/external/v1/twin-lessons ──────────────────────────────────────
+// Learner side of the twin teaching sync (lib/twinSync.ts is the teacher side).
+// The sibling swarm (AURA ⇄ T800 — same codebase, two deployments) pushes its
+// nightly VERIFIED lessons here. They are stored QUARANTINED: tagged
+// "from-twin,proposed" with the teacher's "self-learned" tag stripped, so a
+// twin lesson is visible to this swarm's agents via memory_search but is never
+// auto-trusted and can never be re-exported as if verified here (no echo loop).
+// Idempotent: each lesson carries a stable sourceId ("aura:<id>"); re-pushes
+// of an already-ingested lesson are skipped via its "src:" tag marker.
+// Body: { source?: string, lessons: [{ sourceId, key?, content, tags?, agentName? }] }
+router.post("/external/v1/twin-lessons", async (req, res) => {
+  const body = (req.body ?? {}) as { source?: unknown; lessons?: unknown };
+  if (!Array.isArray(body.lessons)) {
+    res.status(400).json({ error: "lessons array is required" }); return;
+  }
+  const source = typeof body.source === "string" ? body.source.slice(0, 60) : "twin";
+  const lessons = body.lessons.slice(0, 200);
+  let ingested = 0;
+  let skipped = 0;
+  try {
+    for (const item of lessons) {
+      const rec = (item ?? {}) as Record<string, unknown>;
+      const sourceId = String(rec["sourceId"] ?? "").slice(0, 80);
+      const content = String(rec["content"] ?? "").trim().slice(0, 8000);
+      if (!sourceId || !content) { skipped++; continue; }
+      const [existing] = await db
+        .select({ id: agentMemoryTable.id })
+        .from(agentMemoryTable)
+        .where(like(agentMemoryTable.tags, `%src:${sourceId}%`))
+        .limit(1);
+      if (existing) { skipped++; continue; }
+      const key = rec["key"] != null ? String(rec["key"]).slice(0, 200) : null;
+      // Embed for semantic retrieval (best-effort, same as memory_write).
+      const vector = await embed(key ? `${key}\n${content}` : content);
+      await db.insert(agentMemoryTable).values({
+        agentId: VAULT_AGENT_ID,
+        agentName: `VAULT (via ${source})`,
+        key,
+        content,
+        tags: quarantineTags(sourceId, rec["tags"] != null ? String(rec["tags"]) : null),
+        embedding: vector ? JSON.stringify(vector) : null,
+      });
+      ingested++;
+    }
+    req.log.info({ source, sent: lessons.length, ingested, skipped }, "twin-lessons: ingested quarantined lessons");
+    res.status(200).json({ ingested, skipped });
+  } catch (err) {
+    req.log.error({ err }, "External API: twin-lessons ingest failed");
+    res.status(500).json({ error: "Failed to ingest twin lessons", ingested, skipped });
   }
 });
 

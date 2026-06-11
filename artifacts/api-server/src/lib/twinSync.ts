@@ -21,7 +21,7 @@
  *  - Idempotent on the receiver: each lesson carries a stable source id so a
  *    re-run does not duplicate it in the twin.
  */
-import { and, gte, like, desc } from "drizzle-orm";
+import { and, gte, like, notLike, desc } from "drizzle-orm";
 import { db, agentMemoryTable } from "@workspace/db";
 import { logger } from "./logger";
 
@@ -45,13 +45,37 @@ interface TwinLesson {
   agentName: string | null;
 }
 
+/**
+ * Build the quarantine tag string for an inbound twin lesson. The lesson is
+ * stored visible but NOT auto-trusted ("from-twin,proposed"), carries a stable
+ * `src:` marker for idempotent re-runs, and has the teacher's "self-learned"
+ * tag STRIPPED — combined with the from-twin exclusion in
+ * collectVerifiedLessons, that guarantees a received lesson can never be
+ * re-forwarded as if this swarm had verified it (no echo loops between twins).
+ */
+export function quarantineTags(sourceId: string, tags: string | null): string {
+  const inherited = (tags ?? "")
+    .split(",")
+    .map((t) => t.trim())
+    .filter((t) => t && !/^(self-learned|from-twin|proposed)$/i.test(t) && !/^src:/i.test(t));
+  return ["from-twin", "proposed", `src:${sourceId}`, ...inherited].join(",").slice(0, 300);
+}
+
 /** Collect the verified self-learned lessons written in the recent window. */
 export async function collectVerifiedLessons(now: Date = new Date()): Promise<TwinLesson[]> {
   const since = new Date(now.getTime() - lookbackMs());
   const rows = await db
     .select()
     .from(agentMemoryTable)
-    .where(and(gte(agentMemoryTable.createdAt, since), like(agentMemoryTable.tags, "%self-learned%")))
+    .where(
+      and(
+        gte(agentMemoryTable.createdAt, since),
+        like(agentMemoryTable.tags, "%self-learned%"),
+        // Never re-export lessons that arrived FROM a twin — only lessons this
+        // swarm verified itself leave the box (prevents teacher/learner echo).
+        notLike(agentMemoryTable.tags, "%from-twin%"),
+      ),
+    )
     .orderBy(desc(agentMemoryTable.createdAt))
     .limit(200);
   return rows.map((r: typeof rows[number]) => ({

@@ -95406,9 +95406,21 @@ function lookbackMs() {
   const v = Number(process.env["TWIN_SYNC_LOOKBACK_MS"]);
   return Number.isFinite(v) && v > 0 ? v : 6 * 60 * 6e4;
 }
+function quarantineTags(sourceId, tags) {
+  const inherited = (tags ?? "").split(",").map((t) => t.trim()).filter((t) => t && !/^(self-learned|from-twin|proposed)$/i.test(t) && !/^src:/i.test(t));
+  return ["from-twin", "proposed", `src:${sourceId}`, ...inherited].join(",").slice(0, 300);
+}
 async function collectVerifiedLessons(now = /* @__PURE__ */ new Date()) {
   const since = new Date(now.getTime() - lookbackMs());
-  const rows = await db.select().from(agentMemoryTable).where(and(gte(agentMemoryTable.createdAt, since), like(agentMemoryTable.tags, "%self-learned%"))).orderBy(desc(agentMemoryTable.createdAt)).limit(200);
+  const rows = await db.select().from(agentMemoryTable).where(
+    and(
+      gte(agentMemoryTable.createdAt, since),
+      like(agentMemoryTable.tags, "%self-learned%"),
+      // Never re-export lessons that arrived FROM a twin — only lessons this
+      // swarm verified itself leave the box (prevents teacher/learner echo).
+      notLike(agentMemoryTable.tags, "%from-twin%")
+    )
+  ).orderBy(desc(agentMemoryTable.createdAt)).limit(200);
   return rows.map((r) => ({
     // Stable cross-service id so the twin can dedupe on re-run.
     sourceId: `aura:${r.id}`,
@@ -96210,7 +96222,9 @@ function requireOperator(req, res, next) {
 }
 
 // src/routes/external.ts
+init_embeddings();
 var router11 = (0, import_express11.Router)();
+var VAULT_AGENT_ID = 4;
 var AGENT_NAME_MAP = {
   abby: 1,
   forge: 2,
@@ -96427,6 +96441,50 @@ router11.post("/external/v1/messages", async (req, res) => {
   } catch (err) {
     req.log.error({ err }, "External API: post message");
     res.status(500).json({ error: "Failed to post message" });
+  }
+});
+router11.post("/external/v1/twin-lessons", async (req, res) => {
+  const body = req.body ?? {};
+  if (!Array.isArray(body.lessons)) {
+    res.status(400).json({ error: "lessons array is required" });
+    return;
+  }
+  const source = typeof body.source === "string" ? body.source.slice(0, 60) : "twin";
+  const lessons = body.lessons.slice(0, 200);
+  let ingested = 0;
+  let skipped = 0;
+  try {
+    for (const item of lessons) {
+      const rec = item ?? {};
+      const sourceId = String(rec["sourceId"] ?? "").slice(0, 80);
+      const content = String(rec["content"] ?? "").trim().slice(0, 8e3);
+      if (!sourceId || !content) {
+        skipped++;
+        continue;
+      }
+      const [existing] = await db.select({ id: agentMemoryTable.id }).from(agentMemoryTable).where(like(agentMemoryTable.tags, `%src:${sourceId}%`)).limit(1);
+      if (existing) {
+        skipped++;
+        continue;
+      }
+      const key = rec["key"] != null ? String(rec["key"]).slice(0, 200) : null;
+      const vector2 = await embed(key ? `${key}
+${content}` : content);
+      await db.insert(agentMemoryTable).values({
+        agentId: VAULT_AGENT_ID,
+        agentName: `VAULT (via ${source})`,
+        key,
+        content,
+        tags: quarantineTags(sourceId, rec["tags"] != null ? String(rec["tags"]) : null),
+        embedding: vector2 ? JSON.stringify(vector2) : null
+      });
+      ingested++;
+    }
+    req.log.info({ source, sent: lessons.length, ingested, skipped }, "twin-lessons: ingested quarantined lessons");
+    res.status(200).json({ ingested, skipped });
+  } catch (err) {
+    req.log.error({ err }, "External API: twin-lessons ingest failed");
+    res.status(500).json({ error: "Failed to ingest twin lessons", ingested, skipped });
   }
 });
 var external_default = router11;
