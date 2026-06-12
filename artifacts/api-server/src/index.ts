@@ -15,7 +15,7 @@ if (!rawPort) {
   );
 }
 
-const REQUIRED_KEYS = ["OPENROUTER_API_KEY", "STEEL_API_KEY", "FIRECRAWL_API_KEY"] as const;
+const REQUIRED_KEYS = ["NVIDIA_API_KEY", "STEEL_API_KEY", "FIRECRAWL_API_KEY"] as const;
 const missingKeys = REQUIRED_KEYS.filter((k) => !process.env[k]);
 if (missingKeys.length > 0) {
   logger.warn(

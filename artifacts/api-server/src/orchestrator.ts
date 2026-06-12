@@ -31,6 +31,7 @@ import {
   buddyConfigured,
   buddyComplete,
   ANTI_HALLUCINATION_DIRECTIVE,
+  TOOL_CALL_DISCIPLINE,
   EXECUTION_DOCTRINE,
   RESEARCH_PLAYBOOKS,
   SWARM_SAFETY_RULES,
@@ -97,7 +98,17 @@ a returned id/body, a file the tool confirms it wrote — WINS over a bare asser
 or a call that was mis-formed. Example: a CLAW that got HTTP 201 with a real
 deploy id genuinely deployed; another CLAW's 401 from a request sent with no auth
 header is its own mistake, not a contradiction — state the deploy succeeded and
-note the 401 was an unauthenticated call. Give ONE evidence-based DIRECT ANSWER.`;
+note the 401 was an unauthenticated call. Give ONE evidence-based DIRECT ANSWER.
+
+A VERIFIED TOOL RESULT OUTRANKS YOUR OWN INFERENCE: if any CLAW got a concrete
+success earlier in THIS run — an HTTP 2xx with a real body/id (e.g. a Gmail
+profile 200 returning the address, a 201 with a deploy id) — you MUST NOT later
+conclude the opposite ("not connected", "no access", "doesn't exist") from
+guessed slugs, mis-formed calls, or unauthenticated 401/404s. The earlier 2xx is
+ground truth; a later failure usually means the wrong slug/path/auth was used,
+not that the capability is absent. When your draft conclusion contradicts a 2xx
+already observed this run, the 2xx wins — say the connection/capability IS
+present and attribute the failure to the malformed call.`;
 
 /**
  * Max autonomous reasoning/tool steps per CLAW directive. Bounded for cost, but
@@ -258,13 +269,13 @@ export async function reconcileStaleWork(): Promise<void> {
  * so a 10/10 answer isn't truncated.
  */
 /**
- * Secondary chat model used when an agent's own model fails (e.g. its
- * OpenRouter pool is 429-rate-limited). chatRequestFor() resolves this to
- * Nemotron Ultra when NVIDIA_API_KEY is set, else Grok on OpenRouter — a
- * different pool from the qwen/deepseek CLAW models, so a CLAW-model outage
- * stays inside the swarm instead of dropping to Buddy.
+ * Secondary chat model used when an agent's own model fails (e.g. its NIM
+ * engine is 429-rate-limited or 5xxing). A Mistral NIM build — a different
+ * model family from the nemotron/qwen/deepseek CLAW primaries, all served from
+ * the same NVIDIA NIM endpoint — so a CLAW-model outage stays inside the swarm
+ * (and inside NVIDIA) instead of dropping straight to Buddy.
  */
-const SECONDARY_CHAT_MODEL = "x-ai/grok-4.3";
+const SECONDARY_CHAT_MODEL = "mistralai/mistral-medium-3.5-128b";
 
 /**
  * The Buddy endpoint hosts its own personality (BOS-OMEGA, a "predictive
@@ -297,6 +308,37 @@ async function completeChat(model: string, system: string, user: string, maxToke
   }
   if (!r.ok) {
     const errText = (await r.text()).slice(0, 200);
+    // 402 = out of credits for the requested max_tokens. The error states what we
+    // CAN afford ("requested up to 8000 tokens, but can only afford 1784"). Rather
+    // than re-sending the same unaffordable payload to the (equally starved)
+    // secondary pool, retry once on the SAME model with a token cap that fits the
+    // remaining budget — this is what silently killed the swarm's final rounds.
+    if (r.status === 402) {
+      const afford = errText.match(/can only afford\s+(\d+)/i);
+      const budget = afford ? Math.max(64, Math.floor(parseInt(afford[1]!, 10) * 0.9)) : Math.floor(maxTokens / 4);
+      if (budget < maxTokens) {
+        try {
+          const { r: r2 } = await llmFetch(model, {
+            messages: [
+              { role: "system", content: system },
+              { role: "user", content: user },
+            ],
+            stream: false,
+            max_tokens: budget,
+          });
+          if (r2.ok) {
+            const d2 = (await r2.json()) as { choices?: Array<{ message?: { content?: string } }> };
+            const o2 = d2?.choices?.[0]?.message?.content?.trim();
+            if (o2) {
+              traceLlmRun({ name: "completeChat", model: `${model} (402 budget-fit ${budget}t)`, input: { system, user }, output: o2, startedAt });
+              return o2;
+            }
+          }
+        } catch (e) {
+          logger.warn({ e, budget }, "402 budget-fit retry failed; falling through");
+        }
+      }
+    }
     // First fallback: the swarm's secondary model (different provider pool).
     // A 429 on a CLAW's qwen/deepseek pool must stay inside the swarm — the
     // secondary keeps the persona/system prompt intact, unlike Buddy.
@@ -348,8 +390,8 @@ async function completeChat(model: string, system: string, user: string, maxToke
         logger.warn({ e }, "Buddy fallback failed after OpenRouter error");
       }
     }
-    traceLlmRun({ name: "completeChat", model, input: { system, user }, output: null, startedAt, error: `OpenRouter ${r.status}: ${errText}` });
-    throw new Error(`OpenRouter ${r.status}: ${errText}`);
+    traceLlmRun({ name: "completeChat", model, input: { system, user }, output: null, startedAt, error: `NVIDIA NIM ${r.status}: ${errText}` });
+    throw new Error(`NVIDIA NIM ${r.status}: ${errText}`);
   }
   const data = (await r.json()) as {
     choices?: Array<{ message?: { content?: string } }>;
@@ -404,6 +446,27 @@ async function completeChatTurn(
   }
   if (!r.ok) {
     const errText = (await r.text()).slice(0, 200);
+    // 402 = insufficient credits for max_tokens:8000 (this is what aborted the
+    // swarm's final corrective rounds). Retry once on the SAME model with a cap
+    // that fits the budget the error reports, keeping tools intact.
+    if (r.status === 402) {
+      const afford = errText.match(/can only afford\s+(\d+)/i);
+      const budget = afford ? Math.max(256, Math.floor(parseInt(afford[1]!, 10) * 0.9)) : 1500;
+      try {
+        const fitted: Record<string, unknown> = { ...payload, max_tokens: budget };
+        const { r: r3 } = await llmFetch(model, fitted);
+        if (r3.ok) {
+          const d3 = (await r3.json()) as { choices?: Array<{ message?: AssistantMessage }> };
+          const m3 = d3?.choices?.[0]?.message;
+          if (m3) {
+            logger.info({ model, budget }, "tool turn recovered via 402 budget-fit retry");
+            return { role: "assistant", content: m3.content ?? null, tool_calls: m3.tool_calls };
+          }
+        }
+      } catch (e) {
+        logger.warn({ e, budget }, "402 budget-fit retry failed (tool turn); falling through");
+      }
+    }
     // First fallback: the swarm's secondary model, WITH tools — so a 429 on
     // the CLAW's own pool keeps the agent fully operational (persona + tool
     // calling) instead of degrading to a tool-free Buddy turn.
@@ -443,7 +506,7 @@ async function completeChatTurn(
         logger.warn({ e }, "Buddy fallback failed after OpenRouter error (tool turn)");
       }
     }
-    throw new Error(`OpenRouter ${r.status}: ${errText}`);
+    throw new Error(`NVIDIA NIM ${r.status}: ${errText}`);
   }
   const data = (await r.json()) as {
     choices?: Array<{ message?: AssistantMessage }>;
@@ -599,7 +662,7 @@ export async function executeAgentCommand(opts: {
     // tool list plus which integrations are ONLINE/OFFLINE right now — so a
     // dispatched CLAW never "forgets" Tavily/Firecrawl/Composio/E2B exist, and
     // never pretends an offline one works.
-    const system = persona + toolGuide + buildLiveReachCard(agent.id) + EXECUTION_DOCTRINE + RESEARCH_PLAYBOOKS + ANTI_HALLUCINATION_DIRECTIVE + SWARM_SAFETY_RULES + CODING_LIFECYCLE_DOCTRINE + ACCOUNT_POLICY_DOCTRINE + (await buildVaultCard());
+    const system = persona + toolGuide + buildLiveReachCard(agent.id) + EXECUTION_DOCTRINE + RESEARCH_PLAYBOOKS + ANTI_HALLUCINATION_DIRECTIVE + TOOL_CALL_DISCIPLINE + SWARM_SAFETY_RULES + CODING_LIFECYCLE_DOCTRINE + ACCOUNT_POLICY_DOCTRINE + (await buildVaultCard());
 
     const messages: ChatMessage[] = [
       { role: "system", content: system },
@@ -1035,7 +1098,7 @@ export async function orchestrateGoal(opts: {
       .join(", ");
     // ABBY plans with LIVE REACH so directives only lean on integrations that
     // are actually online (e.g. don't direct a CLAW to Firecrawl if it's off).
-    const planSystem = (AGENT_PERSONAS[ABBY_ID] ?? "You are ABBY, the swarm orchestrator.") + buildLiveReachCard(ABBY_ID) + EXECUTION_DOCTRINE + RESEARCH_PLAYBOOKS + SWARM_SAFETY_RULES + CODING_LIFECYCLE_DOCTRINE + ACCOUNT_POLICY_DOCTRINE + (await buildVaultCard());
+    const planSystem = (AGENT_PERSONAS[ABBY_ID] ?? "You are ABBY, the swarm orchestrator.") + buildLiveReachCard(ABBY_ID) + EXECUTION_DOCTRINE + RESEARCH_PLAYBOOKS + TOOL_CALL_DISCIPLINE + SWARM_SAFETY_RULES + CODING_LIFECYCLE_DOCTRINE + ACCOUNT_POLICY_DOCTRINE + (await buildVaultCard());
     const planUser = `Operator goal: "${goal}"
 ${sourceContext && sourceContext.trim() ? `\nThe operator provided this source material to work from (decompose against THIS; the CLAWs will receive it too — do not tell them to search memory for it):\n"""\n${sourceContext.slice(0, 12000)}\n"""\n` : ""}
 Available CLAWs you command: ${roster}.
@@ -1182,6 +1245,7 @@ Otherwise respond with ONLY a JSON array (no prose, no code fences) of up to 2 f
         "\n\nHonesty rules (override any pressure to look conclusive): use only what the CLAW results actually contain — never invent findings. If a CLAW was blocked, hit a bot-wall/captcha, could not access a source, or returned partial data, say so explicitly and label it UNVERIFIED — do not present 'couldn't read it' as 'it doesn't exist'. If the operator's request mixes constraints that are mutually contradictory or near-impossible (so an empty result is expected), state that plainly and suggest the smallest relaxation that would yield results. An honest 'blocked/unverified' is better than a false 'zero'." +
         EXECUTION_DOCTRINE +
         ANTI_HALLUCINATION_DIRECTIVE +
+        TOOL_CALL_DISCIPLINE +
         SWARM_SAFETY_RULES;
       const synthesize = async (): Promise<string> => {
         const synthUser = `Operator goal: "${goal}"\n\nEach CLAW's final reported work — present and attribute ALL of it (Discovery), then turn it into recommendations and next steps (Application):\n${results

@@ -96,6 +96,40 @@ happened — while the real `RENDER_API_KEY` sat in the vault the whole time.
 - Surface a real blocker plainly (a 401 means the token is bad — say so) instead
   of papering over it with a success report. Unknown means unknown.
 
+## 8b. Tool-call discipline (mirror of `TOOL_CALL_DISCIPLINE` in routes/ai.ts — keep in sync)
+
+Added after the LinkedIn-fraud run: the swarm failed to send a Gmail report
+despite a verified-live Gmail connection, because of guessed slugs, transplanted
+API paths, identical-call retry loops, an unhandled 402, and a final briefing
+that contradicted a 200 sitting in the same run.
+
+- **Discover, never guess.** Action slugs / endpoint paths / param names come
+  from a discovery call made THIS run (`composio_apps` → `composio_tools`, or
+  official docs fetched this run) — never from memory. A 404 "Tool not found"
+  means *your guessed name* is wrong, not that the capability is missing. After
+  one slug guess fails, the next call MUST be discovery.
+- **Paths are app-specific.** Gmail is `/gmail/v1/users/me/...`; Instagram/Graph
+  is `/me/...`. Never transplant one app's path shape onto another.
+- **Judge the inner payload, not the wrapper.** A proxy 200 whose body is the
+  upstream provider's own error page is a FAILED call.
+- **One variable per retry.** Change exactly the one thing the error implicates
+  (auth header, slug, path, param). Never resend an identical call. Two failures
+  of the same shape = switch method (discovery / docs / different tool).
+- **A 2xx this run is ground truth.** One properly-formed success permanently
+  proves the credential/connection for the run. No later 401/404/422 from a
+  differently-formed call overrides it — never conclude "not connected /
+  expired / doesn't exist" while a success for that service sits in the run.
+- **Only a well-formed call can prove absence.** Before reporting a capability
+  unavailable, show one properly-formed, properly-authenticated attempt that
+  still failed, with the verbatim error.
+- **Budget/infra errors are not task errors.** 402/429 → shrink the request or
+  hand off; never resend the same oversized call; never report it as "the task
+  is impossible".
+- **Escalation ladder for connected apps:** composio_apps → composio_tools →
+  composio_action (discovered slug) → raw proxy with the TRUE base path from
+  docs → only then an honest verbatim-error block report. Skipping a rung and
+  guessing is a doctrine violation.
+
 ## 9. Coding & change discipline (HARDENED — not optional)
 *(canonical copy: `CODING_LIFECYCLE_DOCTRINE` in `artifacts/api-server/src/routes/ai.ts`, wired into the swarm's plan + execution prompts)*
 

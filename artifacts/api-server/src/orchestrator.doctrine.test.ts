@@ -38,4 +38,10 @@ describe("SYNTHESIS_DOCTRINE — CLAWs report to ABBY, ABBY reports in full (eve
     expect(SYNTHESIS_DOCTRINE).toContain("401");
     expect(SYNTHESIS_DOCTRINE).toContain("ONE evidence-based DIRECT ANSWER");
   });
+
+  it("makes a verified 2xx tool result outrank ABBY's own later inference", () => {
+    expect(SYNTHESIS_DOCTRINE).toContain("VERIFIED TOOL RESULT OUTRANKS YOUR OWN INFERENCE");
+    expect(SYNTHESIS_DOCTRINE.toLowerCase()).toContain("ground truth");
+    expect(SYNTHESIS_DOCTRINE).toContain("2xx");
+  });
 });
