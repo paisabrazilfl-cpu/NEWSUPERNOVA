@@ -54399,6 +54399,7 @@ function chatRequestFor(model) {
 }
 function nimRequestFor(model, opts) {
   if (!nimConfigured()) throw new Error("NVIDIA_API_KEY is not set");
+  model = NIM_MODEL_BANS[model] ?? model;
   const effectiveModel = isNimModel(model) ? model : NIM_MODEL_FALLBACKS[model] ?? NIM_GENERIC_FALLBACK;
   const healthy = nimHealthy() && !nimDegraded();
   void opts;
@@ -54900,7 +54901,7 @@ function integrationStatus() {
     { key: "image-generation", name: "Image generation (image_generate)", category: "tools", envVar: "OPENAI_API_KEY", configured: has("OPENAI_API_KEY") || has("IMAGE_API_KEY") }
   ];
 }
-var NVIDIA_NIM_BASE, HELICONE_GATEWAY, nimKeyIndex, NIM_AUTH_COOLDOWN_MS, nimDisabledUntil, nimDegradedUntil, MODEL_STALL_COOLDOWN_MS, modelStallUntil, NIM_PREFIXES, NIM_MODEL_FALLBACKS, NIM_GENERIC_FALLBACK, NIM_FAST_MODEL, E2B_PKG, E2B_TIMEOUT_MS;
+var NVIDIA_NIM_BASE, HELICONE_GATEWAY, nimKeyIndex, NIM_AUTH_COOLDOWN_MS, nimDisabledUntil, nimDegradedUntil, MODEL_STALL_COOLDOWN_MS, modelStallUntil, NIM_PREFIXES, NIM_MODEL_FALLBACKS, NIM_GENERIC_FALLBACK, NIM_MODEL_BANS, NIM_FAST_MODEL, E2B_PKG, E2B_TIMEOUT_MS;
 var init_integrations = __esm({
   "src/lib/integrations.ts"() {
     "use strict";
@@ -54930,7 +54931,6 @@ var init_integrations = __esm({
       "openai/"
     ];
     NIM_MODEL_FALLBACKS = {
-      "nvidia/nemotron-3-ultra-550b-a55b": "nvidia/nemotron-3-super-120b-a12b",
       "nvidia/nemotron-3-super-120b-a12b": "qwen/qwen3.5-122b-a10b",
       "deepseek-ai/deepseek-v4-flash": "qwen/qwen3.5-122b-a10b",
       "deepseek-ai/deepseek-v4-pro": "deepseek-ai/deepseek-v4-flash",
@@ -54950,6 +54950,9 @@ var init_integrations = __esm({
       "openai/gpt-oss-120b": "mistralai/mistral-medium-3.5-128b"
     };
     NIM_GENERIC_FALLBACK = "qwen/qwen3.5-122b-a10b";
+    NIM_MODEL_BANS = {
+      "nvidia/nemotron-3-ultra-550b-a55b": "moonshotai/kimi-k2.6"
+    };
     NIM_FAST_MODEL = "moonshotai/kimi-k2.6";
     E2B_PKG = "@e2b/code-interpreter";
     E2B_TIMEOUT_MS = 3e4;
@@ -94577,7 +94580,10 @@ function resolveModel(agentId, agentModel, override) {
 var NIM_FEATURED_MODELS = [
   { id: "moonshotai/kimi-k2.6", name: "Moonshot Kimi K2.6 (NIM, fast)", context_length: 262144 },
   { id: "meta/llama-3.1-8b-instruct", name: "Meta Llama 3.1 8B (NIM, fast)", context_length: 131072 },
-  { id: "nvidia/nemotron-3-ultra-550b-a55b", name: "NVIDIA Nemotron 3 Ultra 550B (NIM)", context_length: 1e6 },
+  // nemotron-3-ultra-550b removed from the catalog 2026-06-12 (operator order):
+  // repeat staller (45-60s zero-byte hangs on 06-10, ~68s on a one-token probe
+  // today). NIM_MODEL_BANS in lib/integrations.ts hard-remaps any residual
+  // selection of it at the request layer.
   { id: "nvidia/nemotron-3-super-120b-a12b", name: "NVIDIA Nemotron 3 Super 120B (NIM)", context_length: 1e6 },
   { id: "deepseek-ai/deepseek-v4-flash", name: "DeepSeek V4 Flash (NIM)", context_length: 1e6 },
   { id: "qwen/qwen3.5-397b-a17b", name: "Qwen 3.5 397B MoE (NIM)", context_length: 262144 },
