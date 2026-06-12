@@ -36,6 +36,18 @@ describe("SOLUTION_GATE_DOCTRINE — solves means solves", () => {
   it("is strict by default — doubt means not solved", () => {
     expect(SOLUTION_GATE_DOCTRINE).toContain("NOT solved");
   });
+
+  it("accepts a verified dead end as a solution instead of forcing fabrication", () => {
+    expect(SOLUTION_GATE_DOCTRINE).toContain("VERIFIED IMPOSSIBILITY IS A SOLUTION");
+    expect(SOLUTION_GATE_DOCTRINE.toLowerCase()).toContain("only the operator holds");
+    expect(SOLUTION_GATE_DOCTRINE.toLowerCase()).toContain("invites fabrication");
+  });
+
+  it("forbids corrective directives the sandbox cannot execute", () => {
+    expect(SOLUTION_GATE_DOCTRINE).toContain("DIRECTIVES MUST BE EXECUTABLE");
+    expect(SOLUTION_GATE_DOCTRINE).toContain("CANNOT see the application");
+    expect(SOLUTION_GATE_DOCTRINE.toLowerCase()).toContain("agent to clone, open, inspect, build, or test local files");
+  });
 });
 
 describe("parseSolutionVerdict — robust against real model output", () => {

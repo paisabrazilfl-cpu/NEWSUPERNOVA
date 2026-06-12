@@ -31,3 +31,15 @@ stdout, never written) and declared them "all created and verified," plus a fake
 - `vault_list` returns secret NAMES only, never values.
 - `cloud_code_exec` honestly reports when the E2B SDK is absent.
 - Memory write→search round-trips (semantic when EMBEDDINGS_API_KEY is set, else keyword).
+
+## The solution gate must not pressure fabrication (2026-06-12)
+In the osint-hub audit run the CLAWs held evidence discipline (404s reported
+verbatim, blocks reported as blocks, UNVERIFIED labelled), but the SOLUTION
+GATE verifier failed the briefing for "not inspecting the local
+/workspace/osint-hub" — a thing the sandbox cannot do — and for "deferring to
+the operator instead of forcing the result". That verdict demanded the exact
+behavior the kernel forbids. `SOLUTION_GATE_DOCTRINE` (orchestrator.ts) now
+states: verified impossibility / an operator-only blocker backed by tool
+evidence IS a solution, and corrective directives must be executable with the
+swarm's real tools (never "clone/inspect/build local files"). Asserted by
+orchestrator.solve.test.ts.
