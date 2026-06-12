@@ -4,8 +4,10 @@ import {
   useCreateChannel,
   useListMessages,
   useSendMessage,
+  useListAgents,
   getListChannelsQueryKey,
   getListMessagesQueryKey,
+  getListAgentsQueryKey,
   resolveApiUrl,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -394,6 +396,7 @@ export default function ChatPage() {
             <Bot className="w-5 h-5 text-primary shrink-0" />
             <h1 className="text-sm font-semibold truncate">{activeChannel?.name ?? "OpenClaw"}</h1>
           </div>
+          <WorkingIndicator />
           <WhatsNewButton />
           <div className="relative">
             <button
@@ -536,6 +539,34 @@ export default function ChatPage() {
 }
 
 // ── Subcomponents ───────────────────────────────────────────────────────────
+
+/**
+ * Small live "agents working" cue in the chat header. Polls agent status every
+ * 3s and shows a pulsing dot + the active agents' names while any are busy
+ * (thinking/executing/waiting); renders nothing when the swarm is idle.
+ */
+function WorkingIndicator() {
+  const { data: agents = [] } = useListAgents({
+    query: { refetchInterval: 3000, queryKey: getListAgentsQueryKey() },
+  });
+  const busy = agents.filter((a) => a.status && a.status !== "idle");
+  if (busy.length === 0) return null;
+  const names = busy.map((a) => a.name).join(", ");
+  return (
+    <div
+      title={busy.map((a) => `${a.name}: ${a.status}`).join(" · ")}
+      className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary shrink-0"
+    >
+      <span className="relative flex h-2 w-2">
+        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-60" />
+        <span className="relative inline-flex rounded-full h-2 w-2 bg-primary" />
+      </span>
+      <span className="text-xs font-medium max-w-[40vw] sm:max-w-[16rem] truncate">
+        {busy.length === 1 ? `${names} working…` : `${busy.length} agents working…`}
+      </span>
+    </div>
+  );
+}
 
 function Avatar({ name, color }: { name: string; color: string }) {
   const initials = name.split(/[\s.]+/).slice(0, 2).map((s) => s[0]).join("").toUpperCase();
