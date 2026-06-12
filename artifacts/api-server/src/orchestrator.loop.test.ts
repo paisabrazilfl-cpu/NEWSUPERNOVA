@@ -13,7 +13,22 @@ vi.mock("@workspace/db", async (importOriginal) => {
   return { ...actual, db: mockDb };
 });
 
-import { repeatedCallAction, MAX_IDENTICAL_CALL_ATTEMPTS, MAX_NO_PROGRESS_STREAK, stableStringify } from "./orchestrator";
+import { repeatedCallAction, MAX_IDENTICAL_CALL_ATTEMPTS, MAX_NO_PROGRESS_STREAK, stableStringify, resultWasBlocked } from "./orchestrator";
+
+describe("resultWasBlocked — ABBY recovers a blocked CLAW, not a real result", () => {
+  it("flags the hard-failure markers a blocked directive emits", () => {
+    expect(resultWasBlocked("⚠️ CRAWLER could not complete its directive (UNVERIFIED — blocked or errored): captcha wall")).toBe(true);
+    expect(resultWasBlocked("error: Composio execution is disabled.")).toBe(true);
+    expect(resultWasBlocked("(no result produced)")).toBe(true);
+    expect(resultWasBlocked("")).toBe(true);
+  });
+
+  it("does NOT flag a real result (so a successful action isn't re-run)", () => {
+    expect(resultWasBlocked("Posted to Instagram: https://instagram.com/p/abc123")).toBe(false);
+    expect(resultWasBlocked("Found 3 competitors; pricing table below. The page returned a 403 for one source, noted.")).toBe(false);
+    expect(resultWasBlocked("Sent the email to the team. Message id 18ab.")).toBe(false);
+  });
+});
 
 describe("stableStringify — canonical keys so the dedupe/loop guards trigger", () => {
   it("produces the same string regardless of object key order", () => {

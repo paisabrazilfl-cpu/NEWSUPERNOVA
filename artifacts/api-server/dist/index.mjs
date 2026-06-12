@@ -28105,7 +28105,7 @@ var require_pino = __commonJS({
     function pinoBundlerAbsolutePath(p) {
       try {
         const path3 = __require("path");
-        const outputDir = "/home/runner/work/BOS-AURA/BOS-AURA/artifacts/api-server/dist";
+        const outputDir = "/home/user/BOS-AURA/artifacts/api-server/dist";
         return path3.resolve(outputDir, p.replace(/^\.\//, ""));
       } catch (e) {
         const f = new Function("p", "return new URL(p, import.meta.url).pathname");
@@ -94980,6 +94980,11 @@ function stableStringify(value) {
   const obj = value;
   return `{${Object.keys(obj).sort().map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k])}`).join(",")}}`;
 }
+function resultWasBlocked(result) {
+  const r = (result ?? "").trim();
+  if (!r || r === "(no result produced)" || r === "(no response)") return true;
+  return /could not complete its directive|UNVERIFIED — blocked or errored/i.test(r) || /^error:/i.test(r);
+}
 var MAX_SOLVE_CYCLES = Number(process.env["MAX_SOLVE_CYCLES"]) > 0 ? Number(process.env["MAX_SOLVE_CYCLES"]) : 4;
 var SOLUTION_GATE_DOCTRINE = `
 SOLUTION GATE (MANDATORY): you are judging whether the final briefing SOLVES the
@@ -95576,18 +95581,23 @@ Respond with ONLY a JSON array (no prose, no code fences) of objects shaped: {"a
       sourceContext
     );
     let solveRoundsUsed = 1;
-    if (results.length && !isSwarmPaused() && !forceAgentId) {
+    const initiallyBlocked = results.some((r) => resultWasBlocked(r.result));
+    if (results.length && !isSwarmPaused() && (!forceAgentId || initiallyBlocked)) {
       while (solveRoundsUsed < MAX_SOLVE_CYCLES && !isSwarmPaused()) {
         await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, ABBY_ID2));
+        const blocked = results.filter((r) => resultWasBlocked(r.result));
+        const triage = blocked.length ? `
+These CLAWs reported back BLOCKED \u2014 they could not do their work: ${[...new Set(blocked.map((b) => b.name))].join(", ")}. For EACH, decide the RECOVERY and issue it as a follow-up directive: (a) RE-ROUTE the same objective to a DIFFERENT, more-capable CLAW (use the roster \u2014 e.g. a browser/API task that one CLAW couldn't do may suit another); (b) CHANGE the approach or tool and retry (a different method, source, or smaller scope); or (c) if it is genuinely impossible (hard auth/2FA wall, contradictory request), leave it \u2014 it will be reported honestly. Do NOT re-issue the SAME directive to the SAME CLAW unchanged.
+` : "";
         const reviewUser = `Operator goal: "${goal}"
 
 CLAW results so far:
 ${results.map((r) => `- ${r.name}: ${r.result.slice(0, 500)}`).join("\n")}
-
-First, internally assess which parts of the goal are VERIFIED by the real tool output above versus still missing, unverified, or only assumed \u2014 judge only on evidence actually present in the results, never on work no result shows. Do this reasoning silently; do not write it out.
+${triage}
+First, internally assess which parts of the goal are VERIFIED by the real tool output above versus still missing, unverified, blocked, or only assumed \u2014 judge only on evidence actually present in the results, never on work no result shows. Do this reasoning silently; do not write it out.
 
 Then, if every part of the goal is verified and complete, respond with exactly: []
-Otherwise respond with ONLY a JSON array (no prose, no code fences) of up to 2 follow-up directives that close the remaining gap, each shaped {"agentId": <number>, "directive": "<instruction>"}. Do NOT repeat a directive that already failed the same way \u2014 change the approach. Available CLAWs: ${roster}.`;
+Otherwise respond with ONLY a JSON array (no prose, no code fences) of up to 2 follow-up directives that close the remaining gap OR recover a blocked CLAW, each shaped {"agentId": <number>, "directive": "<instruction>"}. Do NOT repeat a directive that already failed the same way \u2014 change the approach or the agent. Available CLAWs: ${roster}.`;
         let followups = [];
         try {
           const reviewRaw = await completeChat(model, planSystem, reviewUser);
@@ -95599,14 +95609,17 @@ Otherwise respond with ONLY a JSON array (no prose, no code fences) of up to 2 f
         }
         await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.id, ABBY_ID2));
         if (!followups.length) break;
+        const recovering = blocked.length > 0;
         await postMessage({
           channelId,
           agentId: ABBY_ID2,
           agentName: "ABBY",
           agentColor: abby?.color ?? ABBY_COLOR,
-          content: `Solve round ${solveRoundsUsed + 1}/${MAX_SOLVE_CYCLES}: goal not yet solved. Corrective round:
+          content: (recovering ? `Recovery round ${solveRoundsUsed + 1}/${MAX_SOLVE_CYCLES}: ${[...new Set(blocked.map((b) => b.name))].join(", ")} reported blocked \u2014 re-routing / changing approach:
 
-` + followups.map((d) => {
+` : `Solve round ${solveRoundsUsed + 1}/${MAX_SOLVE_CYCLES}: goal not yet solved. Corrective round:
+
+`) + followups.map((d) => {
             const c = claws.find((x) => x.id === d.agentId);
             return `\u2192 ${c?.name ?? `agent#${d.agentId}`}: ${d.directive}`;
           }).join("\n"),
