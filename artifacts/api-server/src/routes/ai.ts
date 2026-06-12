@@ -2,7 +2,7 @@ import { Router } from "express";
 import { db } from "@workspace/db";
 import { agentsTable, messagesTable, attachmentsTable } from "@workspace/db";
 import { eq, and, inArray, desc } from "drizzle-orm";
-import { heliconeHeaders, integrationStatus, llmFetch, providerLabel } from "../lib/integrations";
+import { heliconeHeaders, integrationStatus, llmFetch, llmMaxTokens, providerLabel } from "../lib/integrations";
 import { listSecretNames } from "../lib/vault";
 import { buildCapabilityCard, getToolNamesForAgent } from "../tools";
 import { orchestrateGoal } from "../orchestrator";
@@ -677,7 +677,7 @@ router.post("/ai/chat", async (req, res) => {
       const { r: decRes } = await llmFetch(model, {
         messages: [{ role: "system", content: decisionSystem }, ...history],
         stream: false,
-        max_tokens: 800,
+        max_tokens: llmMaxTokens(),
         response_format: { type: "json_object" },
       });
       if (decRes.ok) {
@@ -736,7 +736,7 @@ router.post("/ai/chat", async (req, res) => {
     let { r: orRes, req: llmReq } = await llmFetch(model, {
       stream: true,
       messages: chatMessages,
-      max_tokens: 700,
+      max_tokens: llmMaxTokens(),
     });
 
     // A throttled/5xx primary must not kill the conversation: retry once on
@@ -747,7 +747,7 @@ router.post("/ai/chat", async (req, res) => {
       ({ r: orRes, req: llmReq } = await llmFetch(SECONDARY_CHAT_MODEL, {
         stream: true,
         messages: chatMessages,
-        max_tokens: 700,
+        max_tokens: llmMaxTokens(),
       }));
     }
 
@@ -842,10 +842,10 @@ router.post("/ai/complete", async (req, res) => {
   ];
 
   try {
-    let { r, req: llmReq } = await llmFetch(model, { messages, max_tokens: 512 });
+    let { r, req: llmReq } = await llmFetch(model, { messages, max_tokens: llmMaxTokens() });
     // Same one-shot secondary retry as the streaming chat path.
     if (!r.ok && llmReq.model !== SECONDARY_CHAT_MODEL) {
-      ({ r, req: llmReq } = await llmFetch(SECONDARY_CHAT_MODEL, { messages, max_tokens: 512 }));
+      ({ r, req: llmReq } = await llmFetch(SECONDARY_CHAT_MODEL, { messages, max_tokens: llmMaxTokens() }));
     }
     if (!r.ok) {
       const errText = (await r.text()).slice(0, 200);

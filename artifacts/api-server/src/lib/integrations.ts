@@ -204,6 +204,12 @@ const NIM_PREFIXES = [
   "minimaxai/",
   "stepfun-ai/",
   "qwen/qwen3.5-",
+  // 2026-06-12 key-pool expansion: families live-verified on
+  // integrate.api.nvidia.com (one-token completion, HTTP 200) this session.
+  // microsoft/phi-4-multimodal is deliberately NOT listed — it answered 400 on
+  // a plain chat call, so it remaps to the generic fallback instead of dying.
+  "meta/",
+  "openai/",
 ];
 
 export function isNimModel(model: string): boolean {
@@ -223,8 +229,29 @@ export const NIM_MODEL_FALLBACKS: Record<string, string> = {
   "qwen/qwen3.5-122b-a10b": "nvidia/nemotron-3-super-120b-a12b",
   "mistralai/mistral-medium-3.5-128b": "qwen/qwen3.5-122b-a10b",
   "z-ai/glm-5.1": "qwen/qwen3.5-122b-a10b",
+  // 2026-06-12 roster expansion — each entry live-verified (HTTP 200) today.
+  // kimi-k2.6 was 429-throttled during verification (pool rotation's job);
+  // nemotron-3-ultra answered in ~68s and deepseek-v4-pro timed out at 90s,
+  // so both stay behind the existing stall breaker.
+  "mistralai/mistral-small-4-119b-2603": "mistralai/mistral-medium-3.5-128b",
+  "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning": "meta/llama-3.1-8b-instruct",
+  "nvidia/llama-3.1-nemotron-nano-vl-8b-v1": "meta/llama-3.1-8b-instruct",
+  "nvidia/ising-calibration-1-35b-a3b": "meta/llama-3.1-8b-instruct",
+  "meta/llama-3.1-8b-instruct": "qwen/qwen3.5-122b-a10b",
+  "openai/gpt-oss-120b": "mistralai/mistral-medium-3.5-128b",
 };
 const NIM_GENERIC_FALLBACK = "qwen/qwen3.5-122b-a10b";
+
+// Global completion budget — operator directive 2026-06-12: max_tokens 8000 on
+// every model. Applies to chat, routing, planning, CLAW turns, and synthesis.
+// Deliberate exceptions (short-form by design): the voice loop's spoken turns
+// and the ambient world flavor text. Tunable via LLM_MAX_TOKENS without a
+// redeploy; the 402 shrink-and-retry logic still fits the budget downward when
+// credits demand it.
+export function llmMaxTokens(): number {
+  const v = Number(process.env["LLM_MAX_TOKENS"]);
+  return Number.isFinite(v) && v > 0 ? v : 8000;
+}
 
 // NOTE deliberately NO reverse legacy→NIM upgrade at request time. There used
 // to be one (built from NIM_MODEL_FALLBACKS) and it broke the safety net live

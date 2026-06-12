@@ -22,7 +22,7 @@ import { Router, type Request, type Response, type NextFunction } from "express"
 import { db } from "@workspace/db";
 import { agentsTable, messagesTable, channelsTable, agentMemoryTable, tasksTable } from "@workspace/db";
 import { eq, desc, like, and } from "drizzle-orm";
-import { llmFetch } from "../lib/integrations";
+import { llmFetch, llmMaxTokens } from "../lib/integrations";
 import { timingSafeStrEqual } from "../lib/auth";
 import { embed } from "../lib/embeddings";
 import { quarantineTags } from "../lib/twinSync";
@@ -295,13 +295,13 @@ router.post("/external/v1/chat/completions", async (req, res) => {
     model = "abby",
     messages = [],
     stream = false,
-    max_tokens: maxTokensRaw = 1024,
+    max_tokens: maxTokensRaw = llmMaxTokens(),
     tools: callerTools,
   } = req.body ?? {};
 
   // Clamp max_tokens to a sane window so a caller can't drive cost/abuse with a
   // huge value (or break the provider with a non-numeric one).
-  const max_tokens = Math.min(8192, Math.max(1, Number(maxTokensRaw) || 1024));
+  const max_tokens = Math.min(8192, Math.max(1, Number(maxTokensRaw) || llmMaxTokens()));
   if (!Array.isArray(messages)) {
     res.status(400).json({ error: "messages must be an array" }); return;
   }

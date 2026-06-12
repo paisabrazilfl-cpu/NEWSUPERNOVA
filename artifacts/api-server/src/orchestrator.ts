@@ -52,7 +52,7 @@ import {
   sanitizeForStorage,
   type ToolContext,
 } from "./tools";
-import { sendInngestEvent, traceLlmRun, chatRequestFor, llmFetch } from "./lib/integrations";
+import { sendInngestEvent, traceLlmRun, chatRequestFor, llmFetch, llmMaxTokens } from "./lib/integrations";
 import { groundingProof } from "./lib/grounding";
 import { assessActionRisk, policyRefusal } from "./lib/safetyPolicy";
 
@@ -324,7 +324,7 @@ export async function reconcileStaleWork(): Promise<void> {
  * (imported from ./routes/ai).
  */
 
-async function completeChat(model: string, system: string, user: string, maxTokens = 800): Promise<string> {
+async function completeChat(model: string, system: string, user: string, maxTokens = llmMaxTokens()): Promise<string> {
   const startedAt = new Date();
   let r: Response;
   try {
@@ -472,7 +472,7 @@ async function completeChatTurn(
   messages: ChatMessage[],
   tools: Array<Record<string, unknown>>,
 ): Promise<AssistantMessage> {
-  const payload: Record<string, unknown> = { messages, stream: false, max_tokens: 8000 };
+  const payload: Record<string, unknown> = { messages, stream: false, max_tokens: llmMaxTokens() };
   if (tools.length) {
     payload["tools"] = tools;
     payload["tool_choice"] = "auto";
@@ -515,7 +515,7 @@ async function completeChatTurn(
     try {
       const fb = chatRequestFor(SECONDARY_CHAT_MODEL);
       if (fb.model !== llmReq.model || fb.url !== llmReq.url) {
-        const fbBody: Record<string, unknown> = { ...fb.bodyExtras, model: fb.model, messages, stream: false, max_tokens: 8000 };
+        const fbBody: Record<string, unknown> = { ...fb.bodyExtras, model: fb.model, messages, stream: false, max_tokens: llmMaxTokens() };
         if (tools.length) {
           fbBody["tools"] = tools;
           fbBody["tool_choice"] = "auto";
@@ -1277,7 +1277,7 @@ Otherwise respond with ONLY a JSON array (no prose, no code fences) of up to 2 f
         try {
           // Generous budget: this is the operator-facing deliverable, so it must
           // not be truncated the way an 800-token planning call would be.
-          return (await completeChat(model, synthSystem, synthUser, 4000)).trim();
+          return (await completeChat(model, synthSystem, synthUser, llmMaxTokens())).trim();
         } catch (e) {
           logger.error({ e }, "final synthesis failed");
           return "";
