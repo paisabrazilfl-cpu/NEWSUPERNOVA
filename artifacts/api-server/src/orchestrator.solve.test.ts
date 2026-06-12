@@ -14,7 +14,7 @@ vi.mock("@workspace/db", async (importOriginal) => {
   return { ...actual, db: mockDb };
 });
 
-import { parseSolutionVerdict, MAX_SOLVE_CYCLES, SOLUTION_GATE_DOCTRINE } from "./orchestrator";
+import { parseSolutionVerdict, directiveIsExecutable, MAX_SOLVE_CYCLES, SOLUTION_GATE_DOCTRINE } from "./orchestrator";
 
 describe("MAX_SOLVE_CYCLES — the system cycles, it doesn't one-shot", () => {
   it("allows multiple solve cycles by default", () => {
@@ -47,6 +47,32 @@ describe("SOLUTION_GATE_DOCTRINE — solves means solves", () => {
     expect(SOLUTION_GATE_DOCTRINE).toContain("DIRECTIVES MUST BE EXECUTABLE");
     expect(SOLUTION_GATE_DOCTRINE).toContain("CANNOT see the application");
     expect(SOLUTION_GATE_DOCTRINE.toLowerCase()).toContain("agent to clone, open, inspect, build, or test local files");
+  });
+});
+
+describe("directiveIsExecutable — code-level guard against impossible gate directives", () => {
+  it("rejects the verbatim osint-hub incident verdict", () => {
+    expect(
+      directiveIsExecutable(
+        "The briefing fails to exhaust the swarm's tools—it did not attempt to clone or inspect the local `/workspace/osint-hub` (if it exists in the operator's environment) or verify the operator's GitHub access for private repos, and it defers to the operator instead of forcing the result.",
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects cloning, local paths, filesystem access, and toolchain runs", () => {
+    expect(directiveIsExecutable("Clone the repository and audit src/")).toBe(false);
+    expect(directiveIsExecutable("Inspect /workspace/osint-hub for backend files")).toBe(false);
+    expect(directiveIsExecutable("Check the local filesystem for the project")).toBe(false);
+    expect(directiveIsExecutable("Run pnpm test in the repo to confirm the build")).toBe(false);
+    expect(directiveIsExecutable("Read the local files on the operator's machine")).toBe(false);
+    expect(directiveIsExecutable("Audit the codebase for the missing route")).toBe(false);
+  });
+
+  it("accepts directives the swarm's real tools can perform", () => {
+    expect(directiveIsExecutable("Use web_search to find the canonical osint-hub repository on GitHub")).toBe(true);
+    expect(directiveIsExecutable("Call the GitHub API via http_request to verify whether luis-osint/osint-hub exists")).toBe(true);
+    expect(directiveIsExecutable("Scrape the repository page and list the files it shows")).toBe(true);
+    expect(directiveIsExecutable("Write the verified findings to shared memory and post the briefing")).toBe(true);
   });
 });
 

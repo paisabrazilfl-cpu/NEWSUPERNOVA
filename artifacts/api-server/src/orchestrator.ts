@@ -224,6 +224,33 @@ repository, the operator's filesystem, or any local path — never direct an
 agent to clone, open, inspect, build, or test local files or the codebase.`;
 
 /**
+ * Code-level enforcement of "DIRECTIVES MUST BE EXECUTABLE". The doctrine above
+ * tells the verifier model not to demand repo/local-filesystem access, but a
+ * prompt is advice — this filter is law. In the osint-hub incident the gate
+ * burned all 4 dispatch rounds insisting the swarm "clone or inspect the local
+ * /workspace/osint-hub", an action no CLAW tool can perform; every round
+ * re-pressured agents toward the fabrication failure mode the kernel directive
+ * exists to prevent. A directive (or verdict reason) matching these patterns is
+ * structurally impossible for the sandbox and must never be dispatched.
+ */
+const OUT_OF_SCOPE_DIRECTIVE_PATTERNS: RegExp[] = [
+  /\bclone\b/i, // git clone — no git, no filesystem
+  /\blocal\s+(file|files|path|paths|director(?:y|ies)|repo|repository|environment|machine|filesystem)\b/i,
+  /\bfilesystem\b/i,
+  /(^|[\s"'`(])\/workspace\//, // sandbox-relative paths that do not exist
+  /\b(?:operator|user)'s\s+(?:machine|environment|filesystem|computer|laptop)\b/i,
+  /\b(?:pnpm|npm|yarn|tsc|vitest|playwright)\b/i, // toolchain runs against the repo
+  /\b(?:inspect|read|open|audit|browse|modify|edit|patch|fix|build|test)\b[^.]*\bcodebase\b/i,
+  /\bcodebase\b[^.]*\b(?:inspect|read|open|audit|browse|modify|edit|patch|fix|build|test)\b/i,
+  /\brun\s+the\s+(?:build|tests?)\b/i,
+];
+
+/** True when a corrective directive is achievable with the swarm's real tools. */
+export function directiveIsExecutable(text: string): boolean {
+  return !OUT_OF_SCOPE_DIRECTIVE_PATTERNS.some((re) => re.test(text));
+}
+
+/**
  * Parse the solution-gate verifier's verdict. The verifier replies with a JSON
  * object {"solved": boolean, "reason": string, "directives": [...]}; models
  * wrap JSON in prose/fences often enough that this is regex-hardened. An
@@ -1299,7 +1326,26 @@ Respond with ONLY a JSON object (no prose, no code fences) shaped:
             break;
           }
 
-          const fixes = parseDirectives(verdictRaw, claws).slice(0, 2);
+          const proposed = parseDirectives(verdictRaw, claws).slice(0, 2);
+          const fixes = proposed.filter((f) => directiveIsExecutable(f.directive));
+          // Out-of-scope verdict override — enforced in code, not just prompt.
+          // If the verifier's objection, or every fix it proposed, demands a
+          // capability no CLAW tool has (cloning/inspecting local files or the
+          // codebase), the verdict is structurally invalid: dispatching it
+          // would pressure agents to fabricate results (the osint-hub
+          // incident). The briefing stands as the swarm's verified answer.
+          if (!directiveIsExecutable(verdict.reason) || (proposed.length > 0 && fixes.length === 0)) {
+            await postMessage({
+              channelId,
+              agentId: ABBY_ID,
+              agentName: "ABBY",
+              agentColor: abby?.color ?? ABBY_COLOR,
+              content: `Solution gate verdict overridden: the verifier demanded actions outside the swarm's toolset (no repo or local-filesystem access) — "${(verdict.reason || "unspecified").slice(0, 300)}". Accepting the briefing as the verified answer.`,
+              messageType: "system",
+            });
+            finalAnswer += `\n\n---\n_Solution-gate note: the verifier objected that the swarm should have done something outside its real toolset (it has no access to the repository or any local filesystem), so that objection was overridden. The briefing above is the swarm's verified answer; any remaining blocker is stated in it and is the operator's to resolve._`;
+            break;
+          }
           const budgetLeft = solveRoundsUsed < MAX_SOLVE_CYCLES;
           await postMessage({
             channelId,
