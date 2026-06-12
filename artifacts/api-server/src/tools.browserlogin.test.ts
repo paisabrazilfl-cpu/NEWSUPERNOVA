@@ -17,6 +17,7 @@ import { assessActionRisk } from "./lib/safetyPolicy";
 
 describe("buildBrowserLoginScript", () => {
   const script = buildBrowserLoginScript({
+    cdpUrl: "wss://connect.steel.dev?apiKey=SECRETKEY&sessionId=sess123",
     url: "https://example.com/login",
     userSecret: "MYSITE_EMAIL",
     passSecret: "MYSITE_PASSWORD",
@@ -34,9 +35,11 @@ describe("buildBrowserLoginScript", () => {
     expect(script).toContain('os.environ.get("BL_USER"');
   });
 
-  it("installs and drives Playwright chromium", () => {
-    expect(script).toContain("playwright install chromium");
-    expect(script).toContain("sync_playwright");
+  it("connects to the remote Steel browser over CDP (no local chromium install)", () => {
+    expect(script).toContain("connect_over_cdp(CDP)");
+    expect(script).toContain("CDP = json.loads(");
+    expect(script).not.toContain("playwright install chromium");
+    expect(script).toContain("pip install playwright");
   });
 
   it("embeds url and steps as JSON so quotes can't break the script", () => {
@@ -46,6 +49,7 @@ describe("buildBrowserLoginScript", () => {
     // line is `STEPS = json.loads(<jsLiteral>)` where <jsLiteral> is a valid
     // double-encoded JSON string. The raw step text must NOT appear unescaped.
     const tricky = buildBrowserLoginScript({
+      cdpUrl: "wss://connect.steel.dev?apiKey=K&sessionId=s",
       url: "https://x.test",
       userSecret: "U",
       passSecret: "P",
