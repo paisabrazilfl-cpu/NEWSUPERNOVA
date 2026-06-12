@@ -27,7 +27,7 @@ import { timingSafeStrEqual } from "../lib/auth";
 import { embed } from "../lib/embeddings";
 import { quarantineTags } from "../lib/twinSync";
 import { orchestrateGoal } from "../orchestrator";
-import { ANTI_HALLUCINATION_DIRECTIVE, ABBY_DEFAULT_MODEL, requestsConnectedAccountAction } from "./ai";
+import { ANTI_HALLUCINATION_DIRECTIVE, ABBY_DEFAULT_MODEL, SECONDARY_CHAT_MODEL, requestsConnectedAccountAction } from "./ai";
 
 const router = Router();
 
@@ -351,13 +351,21 @@ router.post("/external/v1/chat/completions", async (req, res) => {
       const working: Array<Record<string, unknown>> = [...orMessages];
       let finalText = "";
       for (let round = 0; round < 4; round++) {
-        const { r } = await llmFetch(agentModel, {
+        const turnPayload = {
           messages: working,
           tools: VOICE_TOOLS,
           tool_choice: "auto",
           stream: false,
           max_tokens: Math.min(max_tokens, 400),
-        });
+        };
+        let { r } = await llmFetch(agentModel, turnPayload);
+        // A throttled/5xx primary must not end the call in an apology: retry
+        // the round once on the secondary pool, persona and tools intact.
+        if (!r.ok) {
+          const primaryErr = (await r.text()).slice(0, 200);
+          req.log.warn({ status: r.status, model: agentModel, primaryErr }, "Voice turn: primary model failed; retrying on secondary");
+          ({ r } = await llmFetch(SECONDARY_CHAT_MODEL, turnPayload));
+        }
         if (!r.ok) {
           const errText = (await r.text()).slice(0, 200);
           req.log.error({ status: r.status, errText }, "Voice turn: provider error");
@@ -441,7 +449,11 @@ router.post("/external/v1/chat/completions", async (req, res) => {
     };
 
     try {
-      const { r: orRes } = await llmFetch(agentModel, { stream: true, messages: orMessages, max_tokens, ...passthroughTools });
+      let { r: orRes } = await llmFetch(agentModel, { stream: true, messages: orMessages, max_tokens, ...passthroughTools });
+      if (!orRes.ok) {
+        // One-shot secondary retry, same as the voice and dashboard chat paths.
+        ({ r: orRes } = await llmFetch(SECONDARY_CHAT_MODEL, { stream: true, messages: orMessages, max_tokens, ...passthroughTools }));
+      }
 
       if (!orRes.ok) {
         const errText = await orRes.text();
@@ -483,7 +495,10 @@ router.post("/external/v1/chat/completions", async (req, res) => {
 
   // ── Non-streaming response ───────────────────────────────────────────────
   try {
-    const { r: orRes } = await llmFetch(agentModel, { messages: orMessages, max_tokens, ...passthroughTools });
+    let { r: orRes } = await llmFetch(agentModel, { messages: orMessages, max_tokens, ...passthroughTools });
+    if (!orRes.ok) {
+      ({ r: orRes } = await llmFetch(SECONDARY_CHAT_MODEL, { messages: orMessages, max_tokens, ...passthroughTools }));
+    }
     const data = await orRes.json() as {
       choices?: { message?: { content?: string; tool_calls?: unknown[] } }[];
       usage?: object;

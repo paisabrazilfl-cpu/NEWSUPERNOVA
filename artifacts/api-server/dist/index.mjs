@@ -96746,13 +96746,19 @@ router10.post("/external/v1/chat/completions", async (req, res) => {
       const working = [...orMessages];
       let finalText = "";
       for (let round = 0; round < 4; round++) {
-        const { r } = await llmFetch(agentModel, {
+        const turnPayload = {
           messages: working,
           tools: VOICE_TOOLS,
           tool_choice: "auto",
           stream: false,
           max_tokens: Math.min(max_tokens, 400)
-        });
+        };
+        let { r } = await llmFetch(agentModel, turnPayload);
+        if (!r.ok) {
+          const primaryErr = (await r.text()).slice(0, 200);
+          req.log.warn({ status: r.status, model: agentModel, primaryErr }, "Voice turn: primary model failed; retrying on secondary");
+          ({ r } = await llmFetch(SECONDARY_CHAT_MODEL, turnPayload));
+        }
         if (!r.ok) {
           const errText = (await r.text()).slice(0, 200);
           req.log.error({ status: r.status, errText }, "Voice turn: provider error");
@@ -96836,7 +96842,10 @@ router10.post("/external/v1/chat/completions", async (req, res) => {
 `);
     };
     try {
-      const { r: orRes } = await llmFetch(agentModel, { stream: true, messages: orMessages, max_tokens, ...passthroughTools });
+      let { r: orRes } = await llmFetch(agentModel, { stream: true, messages: orMessages, max_tokens, ...passthroughTools });
+      if (!orRes.ok) {
+        ({ r: orRes } = await llmFetch(SECONDARY_CHAT_MODEL, { stream: true, messages: orMessages, max_tokens, ...passthroughTools }));
+      }
       if (!orRes.ok) {
         const errText = await orRes.text();
         sendSSE({ error: errText.slice(0, 300) });
@@ -96882,7 +96891,10 @@ router10.post("/external/v1/chat/completions", async (req, res) => {
     return;
   }
   try {
-    const { r: orRes } = await llmFetch(agentModel, { messages: orMessages, max_tokens, ...passthroughTools });
+    let { r: orRes } = await llmFetch(agentModel, { messages: orMessages, max_tokens, ...passthroughTools });
+    if (!orRes.ok) {
+      ({ r: orRes } = await llmFetch(SECONDARY_CHAT_MODEL, { messages: orMessages, max_tokens, ...passthroughTools }));
+    }
     const data = await orRes.json();
     const message = data.choices?.[0]?.message;
     const content = message?.content ?? "";
