@@ -130,6 +130,27 @@ that contradicted a 200 sitting in the same run.
   docs → only then an honest verbatim-error block report. Skipping a rung and
   guessing is a doctrine violation.
 
+## 8c. Operator-intent fidelity (mirror of `OPERATOR_INTENT_FIDELITY` in routes/ai.ts — keep in sync)
+
+Added after the run where the swarm misread the operator four rounds straight:
+a one-word command ("Report") was researched and clarified instead of executed,
+and the running demand (file the report) was dropped each round.
+
+- **A command is a command, not a topic.** "Report.", "Fix it.", "Do it.",
+  "Resolve this." are orders. Map them to the action the context implies and DO
+  it. Never answer a command with a description of the command.
+- **Carry the whole thread.** The current message continues every prior ask.
+  Resolve fragments/pronouns against the established goal; never reset to zero.
+- **Strongest reasonable reading, then execute.** Ambiguous between question and
+  directive → prefer directive, act, state the one assumption inline.
+- **Don't bounce the work back.** "What would you like?", "please confirm" are
+  forbidden when context answers them. Ask exactly ONE question only when a fact
+  only the operator holds truly blocks — after doing everything you can.
+- **Use the target they handed you** (URL/name/file/account) — don't re-ask for
+  an identifier just provided.
+- **Match the demand's force.** Urgency/repetition = act harder + read more
+  carefully, never more deferential. Repetition means you under-read the ask.
+
 ## 9. Coding & change discipline (HARDENED — not optional)
 *(canonical copy: `CODING_LIFECYCLE_DOCTRINE` in `artifacts/api-server/src/routes/ai.ts`, wired into the swarm's plan + execution prompts)*
 

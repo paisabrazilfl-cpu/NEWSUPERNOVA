@@ -13,6 +13,7 @@ import {
   AGENT_PERSONAS,
   ABBY_ID,
   EXECUTION_DOCTRINE,
+  OPERATOR_INTENT_FIDELITY,
   ANTI_HALLUCINATION_DIRECTIVE,
   RESEARCH_PLAYBOOKS,
   SWARM_SAFETY_RULES,
@@ -199,6 +200,33 @@ describe("buildLiveReachCard — every agent sees its tools + live integrations"
     // CLAW execution prompt and ABBY's planning prompt must both carry LIVE REACH.
     expect(src).toMatch(/const system = persona \+ toolGuide \+ buildLiveReachCard\(agent\.id\)/);
     expect(src).toMatch(/planSystem = [^;]*buildLiveReachCard\(ABBY_ID\)/);
+  });
+});
+
+describe("OPERATOR_INTENT_FIDELITY — read commands as commands, act, don't bounce work back", () => {
+  it("treats short/blunt operator messages as orders, not topics", () => {
+    expect(OPERATOR_INTENT_FIDELITY).toContain("A COMMAND IS A COMMAND, NOT A TOPIC");
+    expect(OPERATOR_INTENT_FIDELITY.toLowerCase()).toContain("orders to act now");
+  });
+
+  it("carries the whole conversation thread and resolves fragments against the goal", () => {
+    expect(OPERATOR_INTENT_FIDELITY).toContain("CARRY THE WHOLE THREAD");
+    expect(OPERATOR_INTENT_FIDELITY.toLowerCase()).toContain("never reset to zero");
+  });
+
+  it("forbids bouncing the work back when context already answers it", () => {
+    expect(OPERATOR_INTENT_FIDELITY).toContain("DON'T BOUNCE THE WORK BACK");
+    expect(OPERATOR_INTENT_FIDELITY).toContain("FORBIDDEN");
+    expect(OPERATOR_INTENT_FIDELITY.toLowerCase()).toContain("ask the operator exactly one question only");
+  });
+
+  it("uses a supplied target instead of re-asking for an identifier already given", () => {
+    expect(OPERATOR_INTENT_FIDELITY).toContain("WHEN THEY HAND YOU A TARGET, USE IT");
+  });
+
+  it("reads operator urgency/repetition as a signal to act harder, not to defer", () => {
+    expect(OPERATOR_INTENT_FIDELITY).toContain("MATCH THE DEMAND'S FORCE");
+    expect(OPERATOR_INTENT_FIDELITY.toLowerCase()).toContain("under-read");
   });
 });
 
