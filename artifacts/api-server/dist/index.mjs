@@ -89083,8 +89083,8 @@ ${clip3(safe, 4e3)}${hint}`;
             }
             return redactSecrets(await runInSandbox(script), usedSecrets);
           } finally {
-            await fetch(`${STEEL_BASE}/sessions/${sessionId}/release`, {
-              method: "POST",
+            await fetch(`${STEEL_BASE}/sessions/${sessionId}`, {
+              method: "DELETE",
               headers: { Authorization: `Bearer ${steelKey}` }
             }).catch(() => {
             });
