@@ -94471,6 +94471,15 @@ EXECUTION STANDARD (hold to this on every task):
 - SELF-LEARN ON FAILURE (mandatory when a tool or task fails): when you cannot perform a task or a tool returns an error, do NOT give up. Follow this loop: (1) DIAGNOSE \u2014 read the error carefully and identify what went wrong; (2) SEARCH MEMORY \u2014 memory_search for a prior lesson about this exact problem; (3) RESEARCH ONLINE \u2014 if memory has no answer, web_search for how to solve it, then web_scrape the most relevant result to learn the technique; (4) RETRY \u2014 apply what you learned and retry the failed operation; (5) STORE THE LESSON \u2014 if the retry succeeds, memory_write the fix as "PROBLEM \u2192 SOLUTION (evidence)" with tags "lesson,self-learned,{topic}". This loop runs up to 3 research-retry cycles per failure. If after 3 cycles the task still fails, report the failure honestly with what you tried and learned \u2014 but never give up without researching first. You are a SELF-IMPROVING agent: every failure is a chance to learn something new and make the swarm permanently smarter.
 - RELENTLESS PERSISTENCE (you are a swarm worker, not a chat assistant): a directive is an outcome to FORCE into existence, not a question to attempt once. When one road fails, take another: a different tool for the same job (web_scrape fails \u2192 http_request the underlying API \u2192 sandbox_exec with curl/Playwright; one data source dies \u2192 a second independent source; an API rejects \u2192 reread its docs and fix the call), a different angle, a different decomposition. Declaring yourself blocked is only legitimate after you have exhausted EVERY distinct approach your toolbox offers, and the block report must LIST each approach attempted with its exact error \u2014 "blocked" with fewer than 2 distinct approaches tried is a doctrine violation. Never downgrade the goal to an easier deliverable, never return a plan/outline/draft where the directive demanded the finished thing, and never hand work back to the operator that your tools could do.
 - DEFINITION OF DONE: before you stop, verify the result satisfies the FULL objective end-to-end. If any part is unmet, state exactly which and why \u2014 never present incomplete work as finished.`;
+var OPERATOR_INTENT_FIDELITY = `
+
+OPERATOR INTENT \u2014 READ IT RIGHT, THEN ACT (mandatory):
+- A COMMAND IS A COMMAND, NOT A TOPIC. Short, blunt, or one-word operator messages ("Report.", "Fix it.", "Send it.", "Do it.", "Resolve this.") are ORDERS to act now, not prompts to research, define, or discuss. Map the command to the concrete action the running context already implies and DO it. Never answer a command with a description of the command.
+- CARRY THE WHOLE THREAD. The operator's current message continues everything they have asked in this conversation. Resolve pronouns and fragments against the established goal: if the thread is "report this scammer" and they then say "Report" or "you have Gmail," the goal is still FILE THE REPORT \u2014 using the tool they named. Never reset to zero or treat each turn as a brand-new, context-free request.
+- TAKE THE STRONGEST REASONABLE READING, THEN EXECUTE. When a message could be a question or a directive, prefer the directive and act \u2014 operators are here to get work done, not to chat. Pick the most capable available path (a named connected tool, the operator's own account, the API over the browser) and complete the task. State the one assumption you made inline; do not stop to confirm it.
+- DON'T BOUNCE THE WORK BACK. "What would you like me to do?", "please confirm," and "let me know how to proceed" are FORBIDDEN when the context already answers them. Ask the operator exactly ONE question only when the task genuinely cannot proceed without a fact only they hold (a missing target URL, a real either/or with materially different outcomes) \u2014 and even then, do every part you CAN do first, then ask the single blocking question at the end. An operator repeating themselves or adding emphasis ("you CAN do this") means you have under-read the ask: re-examine for the tool/path you missed, don't re-explain why you "can't."
+- WHEN THEY HAND YOU A TARGET, USE IT. If the operator supplies a URL, name, file, or account, that IS the input \u2014 act on it immediately; do not ask them to "provide an identifier" they just provided.
+- MATCH THE DEMAND'S FORCE. Urgency, repetition, or frustration from the operator is a signal to ACT harder and read more carefully \u2014 never to become more cautious, more deferential, or to add more disclaimers. Deliver the outcome they demanded.`;
 var RESEARCH_PLAYBOOKS = `
 
 RESEARCH PLAYBOOKS (apply the matching method, and deliver the finished artifact \u2014 not notes):
@@ -94603,7 +94612,7 @@ router7.post("/ai/chat", async (req, res) => {
   }
   const model = resolveModel(resolvedAgentId, agent.model, overrideModel);
   const persona = AGENT_PERSONAS[resolvedAgentId] ?? `You are ${agent.name}, an AI agent in the ABBY CLAW swarm.`;
-  const systemPrompt = persona + CHAT_MODE_DIRECTIVE + buildCapabilityCard(resolvedAgentId) + buildLiveReachCard(resolvedAgentId) + RESEARCH_PLAYBOOKS + ANTI_HALLUCINATION_DIRECTIVE + TOOL_CALL_DISCIPLINE + SWARM_SAFETY_RULES + await buildVaultCard();
+  const systemPrompt = persona + CHAT_MODE_DIRECTIVE + buildCapabilityCard(resolvedAgentId) + buildLiveReachCard(resolvedAgentId) + OPERATOR_INTENT_FIDELITY + RESEARCH_PLAYBOOKS + ANTI_HALLUCINATION_DIRECTIVE + TOOL_CALL_DISCIPLINE + SWARM_SAFETY_RULES + await buildVaultCard();
   let attachments = [];
   if (Array.isArray(attachmentIds) && attachmentIds.length) {
     const ids = attachmentIds.map((n) => Number(n)).filter((n) => Number.isFinite(n)).slice(0, 8);
@@ -95018,7 +95027,13 @@ could act on it as-is: the question is answered with evidence, or the requested
 deliverable exists and is complete. A status report, a plan, a partial answer,
 or "we couldn't" without exhausting the swarm's tools is NOT a solution.
 Judge ONLY on evidence present in the briefing/results. Be strict: when in
-doubt, the goal is NOT solved.`;
+doubt, the goal is NOT solved.
+A briefing that bounces the work back to the operator \u2014 asking what they want,
+asking them to confirm, or asking for an input they ALREADY provided \u2014 when a
+connected tool or named account could have done the task is an automatic FAIL:
+the swarm under-read a command as a question. The operator's short or repeated
+commands ("Report", "do it", "you have the tool") are orders; a briefing that
+answers them with a question instead of the completed action does NOT solve.`;
 function parseSolutionVerdict(raw) {
   const start = raw.indexOf("{");
   const end = raw.lastIndexOf("}");
@@ -95304,7 +95319,7 @@ ${scraped.slice(0, 1400)}${scraped.length > 1400 ? "\n\u2026" : ""}`,
     const toolGuide = toolNames.length ? `
 
 You are an autonomous tool-using agent. Call tools to gather real data and perform real work instead of guessing \u2014 chain multiple calls when needed, and avoid repeating a call that already returned (it wastes time and budget). When the directive is fully satisfied, stop calling tools and reply with your final concrete result (no preamble).${buildCapabilityCard(agent.id)}` : "";
-    const system = persona + toolGuide + buildLiveReachCard(agent.id) + EXECUTION_DOCTRINE + RESEARCH_PLAYBOOKS + ANTI_HALLUCINATION_DIRECTIVE + TOOL_CALL_DISCIPLINE + SWARM_SAFETY_RULES + CODING_LIFECYCLE_DOCTRINE + ACCOUNT_POLICY_DOCTRINE + await buildVaultCard();
+    const system = persona + toolGuide + buildLiveReachCard(agent.id) + EXECUTION_DOCTRINE + OPERATOR_INTENT_FIDELITY + RESEARCH_PLAYBOOKS + ANTI_HALLUCINATION_DIRECTIVE + TOOL_CALL_DISCIPLINE + SWARM_SAFETY_RULES + CODING_LIFECYCLE_DOCTRINE + ACCOUNT_POLICY_DOCTRINE + await buildVaultCard();
     const messages = [
       { role: "system", content: system },
       {
@@ -95598,7 +95613,7 @@ ${sourceContext ?? ""}`);
     }
     await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, ABBY_ID2));
     const roster = claws.map((c) => `${c.id}=${c.name} (${c.role ?? "agent"})`).join(", ");
-    const planSystem = (AGENT_PERSONAS[ABBY_ID2] ?? "You are ABBY, the swarm orchestrator.") + buildLiveReachCard(ABBY_ID2) + EXECUTION_DOCTRINE + RESEARCH_PLAYBOOKS + TOOL_CALL_DISCIPLINE + SWARM_SAFETY_RULES + CODING_LIFECYCLE_DOCTRINE + ACCOUNT_POLICY_DOCTRINE + await buildVaultCard();
+    const planSystem = (AGENT_PERSONAS[ABBY_ID2] ?? "You are ABBY, the swarm orchestrator.") + buildLiveReachCard(ABBY_ID2) + EXECUTION_DOCTRINE + OPERATOR_INTENT_FIDELITY + RESEARCH_PLAYBOOKS + TOOL_CALL_DISCIPLINE + SWARM_SAFETY_RULES + CODING_LIFECYCLE_DOCTRINE + ACCOUNT_POLICY_DOCTRINE + await buildVaultCard();
     const planUser = `Operator goal: "${goal}"
 ${sourceContext && sourceContext.trim() ? `
 The operator provided this source material to work from (decompose against THIS; the CLAWs will receive it too \u2014 do not tell them to search memory for it):
@@ -95702,7 +95717,7 @@ Otherwise respond with ONLY a JSON array (no prose, no code fences) of up to 2 f
     }
     if (results.length) {
       await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, ABBY_ID2));
-      const synthSystem = (AGENT_PERSONAS[ABBY_ID2] ?? "You are ABBY, the swarm orchestrator.") + "\n\nYou are ABBY, the orchestrator, writing the FINAL briefing to the operator. You commanded the swarm \u2014 now PRESENT the work, using ONLY the CLAW results below." + SYNTHESIS_DOCTRINE + "\n\nHonesty rules (override any pressure to look conclusive): use only what the CLAW results actually contain \u2014 never invent findings. If a CLAW was blocked, hit a bot-wall/captcha, could not access a source, or returned partial data, say so explicitly and label it UNVERIFIED \u2014 do not present 'couldn't read it' as 'it doesn't exist'. If the operator's request mixes constraints that are mutually contradictory or near-impossible (so an empty result is expected), state that plainly and suggest the smallest relaxation that would yield results. An honest 'blocked/unverified' is better than a false 'zero'." + EXECUTION_DOCTRINE + ANTI_HALLUCINATION_DIRECTIVE + TOOL_CALL_DISCIPLINE + SWARM_SAFETY_RULES;
+      const synthSystem = (AGENT_PERSONAS[ABBY_ID2] ?? "You are ABBY, the swarm orchestrator.") + "\n\nYou are ABBY, the orchestrator, writing the FINAL briefing to the operator. You commanded the swarm \u2014 now PRESENT the work, using ONLY the CLAW results below." + SYNTHESIS_DOCTRINE + "\n\nHonesty rules (override any pressure to look conclusive): use only what the CLAW results actually contain \u2014 never invent findings. If a CLAW was blocked, hit a bot-wall/captcha, could not access a source, or returned partial data, say so explicitly and label it UNVERIFIED \u2014 do not present 'couldn't read it' as 'it doesn't exist'. If the operator's request mixes constraints that are mutually contradictory or near-impossible (so an empty result is expected), state that plainly and suggest the smallest relaxation that would yield results. An honest 'blocked/unverified' is better than a false 'zero'." + EXECUTION_DOCTRINE + OPERATOR_INTENT_FIDELITY + ANTI_HALLUCINATION_DIRECTIVE + TOOL_CALL_DISCIPLINE + SWARM_SAFETY_RULES;
       const synthesize = async () => {
         const synthUser = `Operator goal: "${goal}"
 
