@@ -43,6 +43,7 @@ import {
   composioExecuteEnabled,
   composioExecute,
   composioListConnections,
+  composioListTools,
 } from "./lib/integrations";
 import { embed, embeddingsConfigured, cosineSimilarity, parseEmbedding } from "./lib/embeddings";
 import { pineconeConfigured, pineconeUpsert, pineconeQuery } from "./lib/pinecone";
@@ -1519,10 +1520,51 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
     },
   },
 
+  composio_tools: {
+    name: "composio_tools",
+    description:
+      "List the REAL action slugs available for a connected app (e.g. gmail → GMAIL_SEND_EMAIL, GMAIL_CREATE_EMAIL_DRAFT). Call this BEFORE composio_action whenever you are unsure of the exact slug — do NOT guess slugs from memory (guesses like GMAIL_DRAFT_EMAIL or GET_PROFILE return 404 and waste the run). Pass `toolkit` (the app slug) and optionally `search` to filter (e.g. 'send', 'draft').",
+    parameters: {
+      type: "object",
+      properties: {
+        toolkit: { type: "string", description: "App slug to list tools for, e.g. 'gmail', 'github', 'notion'." },
+        search: { type: "string", description: "Optional case-insensitive filter on slug/name, e.g. 'send' or 'draft'." },
+      },
+      required: ["toolkit"],
+    },
+    run: async (args: Record<string, unknown>) => {
+      if (!composioConfigured()) return "error: Composio is not configured (set COMPOSIO_API_KEY).";
+      const tk = args["toolkit"] != null ? String(args["toolkit"]) : "";
+      if (!tk) return "error: composio_tools needs a `toolkit` (app slug like 'gmail').";
+      let tools: Awaited<ReturnType<typeof composioListTools>>;
+      try {
+        tools = await composioListTools(tk);
+      } catch (e) {
+        return `error: could not list Composio tools for '${tk}': ${String(e).slice(0, 200)}`;
+      }
+      const q = args["search"] != null ? String(args["search"]).toLowerCase() : "";
+      const filtered = q
+        ? tools.filter((t) => t.slug.toLowerCase().includes(q) || t.name.toLowerCase().includes(q))
+        : tools;
+      if (!filtered.length) {
+        return `No Composio tools matched${q ? ` "${q}"` : ""} for toolkit '${tk}'. Try composio_tools with no search, or check the app slug via composio_apps.`;
+      }
+      const lines = filtered
+        .slice(0, 60)
+        .map((t) => `${t.slug} — ${t.name}${t.required.length ? ` (required: ${t.required.join(", ")})` : ""}`);
+      return [
+        `Composio '${tk}' tools (${filtered.length}${q ? ` matching "${q}"` : ""}):`,
+        ...lines,
+        "",
+        "Call composio_action with toolkit + action=<one of these slugs> + arguments={...the required fields...}.",
+      ].join("\n");
+    },
+  },
+
   composio_action: {
     name: "composio_action",
     description:
-      "Execute an authenticated action on a connected SaaS app (Gmail, Slack, GitHub, Notion, Calendar, Sheets, Instagram, …) via Composio. Call composio_apps FIRST to confirm the app is live; the connected account is auto-resolved from the toolkit. TWO modes: (1) NAMED action — pass `toolkit` + `action` (a Composio tool slug like GMAIL_SEND_EMAIL) + `arguments`. (2) RAW PROXY — pass `toolkit` + `endpoint` (the app's API path) + `method` (GET/POST/…); put call data in `arguments` (a key/value object) and it is sent as query parameters. Example — publish an Instagram post (2 steps): first endpoint:'/me/media', method:'POST', arguments:{image_url:'https://…public.png', caption:'…'} → returns a creation id; then endpoint:'/me/media_publish', method:'POST', arguments:{creation_id:'<that id>'}. Use proxy mode for Instagram/Graph-API. Disabled unless the operator enabled execution.",
+      "Execute an authenticated action on a connected SaaS app (Gmail, Slack, GitHub, Notion, Calendar, Sheets, Instagram, …) via Composio. Call composio_apps FIRST to confirm the app is live; if unsure of the exact action slug, call composio_tools to look it up — NEVER guess a slug from memory (guesses 404 and waste the run). The connected account is auto-resolved from the toolkit. TWO modes: (1) NAMED action (PREFERRED) — pass `toolkit` + `action` (a real Composio slug, e.g. GMAIL_SEND_EMAIL, GMAIL_CREATE_EMAIL_DRAFT) + `arguments` (the action's documented fields). (2) RAW PROXY — pass `toolkit` + `endpoint` (the app's FULL native API path) + `method`; arguments become query params. Proxy paths are app-specific and NOT interchangeable: Gmail uses '/gmail/v1/users/me/...', Instagram/Graph uses '/me/media' — reusing one app's path shape on another is why '/me/messages' 404s on Gmail. For Gmail PREFER the NAMED action GMAIL_SEND_EMAIL over a hand-built proxy path. Disabled unless the operator enabled execution.",
     parameters: {
       type: "object",
       properties: {
@@ -1835,8 +1877,8 @@ export const AGENT_TOOLS: Record<number, string[]> = {
   2: ["code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "http_request", "web_scrape", "web_search", "tier1_sources", "memory_search", "memory_write", "vault_list", "save_artifact", "image_generate", "send_message"], // FORGE — code
   3: ["web_scrape", "web_screenshot", "web_search", "tier1_sources", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "sandbox_exec", "browser_login", "save_artifact", "image_generate", "send_message"], // CRAWLER — browser
   4: ["memory_write", "memory_search", "web_search", "tier1_sources", "web_scrape", "http_request", "calculator", "vault_list", "save_artifact", "image_generate", "send_message"], // VAULT — memory/RAG
-  5: ["http_request", "web_scrape", "web_search", "tier1_sources", "marketing_playbook", "code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_action", "instagram_post", "browser_login", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task", "save_artifact", "image_generate", "render_card", "send_message"], // WIRE — APIs + scheduling
-  6: ["web_scrape", "web_search", "tier1_sources", "marketing_playbook", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_action", "instagram_post", "browser_login", "save_artifact", "image_generate", "render_card", "send_message"], // MR.NICE — social
+  5: ["http_request", "web_scrape", "web_search", "tier1_sources", "marketing_playbook", "code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_tools", "composio_action", "instagram_post", "browser_login", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task", "save_artifact", "image_generate", "render_card", "send_message"], // WIRE — APIs + scheduling
+  6: ["web_scrape", "web_search", "tier1_sources", "marketing_playbook", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_tools", "composio_action", "instagram_post", "browser_login", "save_artifact", "image_generate", "render_card", "send_message"], // MR.NICE — social
 };
 
 export function getToolNamesForAgent(agentId: number): string[] {

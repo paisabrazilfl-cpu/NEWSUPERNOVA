@@ -882,6 +882,37 @@ export async function composioListToolkits(search?: string, limit = 50): Promise
   });
 }
 
+export interface ComposioTool {
+  slug: string;
+  name: string;
+  description: string;
+  required: string[];
+}
+
+/**
+ * List the REAL action slugs for a toolkit (e.g. gmail → GMAIL_SEND_EMAIL,
+ * GMAIL_CREATE_EMAIL_DRAFT, …). Agents otherwise guess slugs from memory and
+ * 404 (the swarm tried GMAIL_DRAFT_EMAIL / GET_PROFILE — neither exists). This
+ * hits Composio's authoritative `/tools?toolkit_slug=` endpoint so a CLAW can
+ * pick a slug that actually exists before calling composio_action.
+ * NOTE: the query param is snake_case `toolkit_slug`; `toolkitSlug` is ignored
+ * by the API and returns the entire (unfiltered) tool catalog.
+ */
+export async function composioListTools(toolkitSlug: string, limit = 100): Promise<ComposioTool[]> {
+  const params = new URLSearchParams({ toolkit_slug: toolkitSlug.toLowerCase(), limit: String(limit) });
+  const data = await composioApi("GET", `/tools?${params.toString()}`);
+  const items = (data["items"] as Array<Record<string, unknown>>) ?? [];
+  return items.map((t) => {
+    const ip = (t["input_parameters"] as Record<string, unknown>) ?? {};
+    return {
+      slug: String(t["slug"] ?? ""),
+      name: String(t["name"] ?? ""),
+      description: String(t["description"] ?? ""),
+      required: (ip["required"] as string[]) ?? [],
+    };
+  });
+}
+
 export interface ComposioConnection {
   id: string;
   toolkit: string;

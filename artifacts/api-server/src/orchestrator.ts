@@ -97,7 +97,17 @@ a returned id/body, a file the tool confirms it wrote — WINS over a bare asser
 or a call that was mis-formed. Example: a CLAW that got HTTP 201 with a real
 deploy id genuinely deployed; another CLAW's 401 from a request sent with no auth
 header is its own mistake, not a contradiction — state the deploy succeeded and
-note the 401 was an unauthenticated call. Give ONE evidence-based DIRECT ANSWER.`;
+note the 401 was an unauthenticated call. Give ONE evidence-based DIRECT ANSWER.
+
+A VERIFIED TOOL RESULT OUTRANKS YOUR OWN INFERENCE: if any CLAW got a concrete
+success earlier in THIS run — an HTTP 2xx with a real body/id (e.g. a Gmail
+profile 200 returning the address, a 201 with a deploy id) — you MUST NOT later
+conclude the opposite ("not connected", "no access", "doesn't exist") from
+guessed slugs, mis-formed calls, or unauthenticated 401/404s. The earlier 2xx is
+ground truth; a later failure usually means the wrong slug/path/auth was used,
+not that the capability is absent. When your draft conclusion contradicts a 2xx
+already observed this run, the 2xx wins — say the connection/capability IS
+present and attribute the failure to the malformed call.`;
 
 /**
  * Max autonomous reasoning/tool steps per CLAW directive. Bounded for cost, but
@@ -297,6 +307,37 @@ async function completeChat(model: string, system: string, user: string, maxToke
   }
   if (!r.ok) {
     const errText = (await r.text()).slice(0, 200);
+    // 402 = out of credits for the requested max_tokens. The error states what we
+    // CAN afford ("requested up to 8000 tokens, but can only afford 1784"). Rather
+    // than re-sending the same unaffordable payload to the (equally starved)
+    // secondary pool, retry once on the SAME model with a token cap that fits the
+    // remaining budget — this is what silently killed the swarm's final rounds.
+    if (r.status === 402) {
+      const afford = errText.match(/can only afford\s+(\d+)/i);
+      const budget = afford ? Math.max(64, Math.floor(parseInt(afford[1]!, 10) * 0.9)) : Math.floor(maxTokens / 4);
+      if (budget < maxTokens) {
+        try {
+          const { r: r2 } = await llmFetch(model, {
+            messages: [
+              { role: "system", content: system },
+              { role: "user", content: user },
+            ],
+            stream: false,
+            max_tokens: budget,
+          });
+          if (r2.ok) {
+            const d2 = (await r2.json()) as { choices?: Array<{ message?: { content?: string } }> };
+            const o2 = d2?.choices?.[0]?.message?.content?.trim();
+            if (o2) {
+              traceLlmRun({ name: "completeChat", model: `${model} (402 budget-fit ${budget}t)`, input: { system, user }, output: o2, startedAt });
+              return o2;
+            }
+          }
+        } catch (e) {
+          logger.warn({ e, budget }, "402 budget-fit retry failed; falling through");
+        }
+      }
+    }
     // First fallback: the swarm's secondary model (different provider pool).
     // A 429 on a CLAW's qwen/deepseek pool must stay inside the swarm — the
     // secondary keeps the persona/system prompt intact, unlike Buddy.
@@ -404,6 +445,27 @@ async function completeChatTurn(
   }
   if (!r.ok) {
     const errText = (await r.text()).slice(0, 200);
+    // 402 = insufficient credits for max_tokens:8000 (this is what aborted the
+    // swarm's final corrective rounds). Retry once on the SAME model with a cap
+    // that fits the budget the error reports, keeping tools intact.
+    if (r.status === 402) {
+      const afford = errText.match(/can only afford\s+(\d+)/i);
+      const budget = afford ? Math.max(256, Math.floor(parseInt(afford[1]!, 10) * 0.9)) : 1500;
+      try {
+        const fitted: Record<string, unknown> = { ...payload, max_tokens: budget };
+        const { r: r3 } = await llmFetch(model, fitted);
+        if (r3.ok) {
+          const d3 = (await r3.json()) as { choices?: Array<{ message?: AssistantMessage }> };
+          const m3 = d3?.choices?.[0]?.message;
+          if (m3) {
+            logger.info({ model, budget }, "tool turn recovered via 402 budget-fit retry");
+            return { role: "assistant", content: m3.content ?? null, tool_calls: m3.tool_calls };
+          }
+        }
+      } catch (e) {
+        logger.warn({ e, budget }, "402 budget-fit retry failed (tool turn); falling through");
+      }
+    }
     // First fallback: the swarm's secondary model, WITH tools — so a 429 on
     // the CLAW's own pool keeps the agent fully operational (persona + tool
     // calling) instead of degrading to a tool-free Buddy turn.
