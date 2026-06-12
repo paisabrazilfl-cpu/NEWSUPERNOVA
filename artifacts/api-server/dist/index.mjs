@@ -54390,6 +54390,10 @@ function reportModelStall(model) {
 function isNimModel(model) {
   return NIM_PREFIXES.some((p) => model.startsWith(p));
 }
+function llmMaxTokens() {
+  const v = Number(process.env["LLM_MAX_TOKENS"]);
+  return Number.isFinite(v) && v > 0 ? v : 8e3;
+}
 function chatRequestFor(model) {
   return nimRequestFor(model);
 }
@@ -54917,7 +54921,13 @@ var init_integrations = __esm({
       "moonshotai/",
       "minimaxai/",
       "stepfun-ai/",
-      "qwen/qwen3.5-"
+      "qwen/qwen3.5-",
+      // 2026-06-12 key-pool expansion: families live-verified on
+      // integrate.api.nvidia.com (one-token completion, HTTP 200) this session.
+      // microsoft/phi-4-multimodal is deliberately NOT listed — it answered 400 on
+      // a plain chat call, so it remaps to the generic fallback instead of dying.
+      "meta/",
+      "openai/"
     ];
     NIM_MODEL_FALLBACKS = {
       "nvidia/nemotron-3-ultra-550b-a55b": "nvidia/nemotron-3-super-120b-a12b",
@@ -54927,7 +54937,17 @@ var init_integrations = __esm({
       "qwen/qwen3.5-397b-a17b": "qwen/qwen3.5-122b-a10b",
       "qwen/qwen3.5-122b-a10b": "nvidia/nemotron-3-super-120b-a12b",
       "mistralai/mistral-medium-3.5-128b": "qwen/qwen3.5-122b-a10b",
-      "z-ai/glm-5.1": "qwen/qwen3.5-122b-a10b"
+      "z-ai/glm-5.1": "qwen/qwen3.5-122b-a10b",
+      // 2026-06-12 roster expansion — each entry live-verified (HTTP 200) today.
+      // kimi-k2.6 was 429-throttled during verification (pool rotation's job);
+      // nemotron-3-ultra answered in ~68s and deepseek-v4-pro timed out at 90s,
+      // so both stay behind the existing stall breaker.
+      "mistralai/mistral-small-4-119b-2603": "mistralai/mistral-medium-3.5-128b",
+      "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning": "meta/llama-3.1-8b-instruct",
+      "nvidia/llama-3.1-nemotron-nano-vl-8b-v1": "meta/llama-3.1-8b-instruct",
+      "nvidia/ising-calibration-1-35b-a3b": "meta/llama-3.1-8b-instruct",
+      "meta/llama-3.1-8b-instruct": "qwen/qwen3.5-122b-a10b",
+      "openai/gpt-oss-120b": "mistralai/mistral-medium-3.5-128b"
     };
     NIM_GENERIC_FALLBACK = "qwen/qwen3.5-122b-a10b";
     NIM_FAST_MODEL = "moonshotai/kimi-k2.6";
@@ -94740,7 +94760,7 @@ PUBLIC-POST SAFEGUARD (critical): a public post must be built ONLY from content 
       const { r: decRes } = await llmFetch(model, {
         messages: [{ role: "system", content: decisionSystem }, ...history],
         stream: false,
-        max_tokens: 800,
+        max_tokens: llmMaxTokens(),
         response_format: { type: "json_object" }
       });
       if (decRes.ok) {
@@ -94791,7 +94811,7 @@ The agents are starting now; their work and results will stream into this channe
     let { r: orRes, req: llmReq } = await llmFetch(model, {
       stream: true,
       messages: chatMessages,
-      max_tokens: 700
+      max_tokens: llmMaxTokens()
     });
     if (!orRes.ok && llmReq.model !== SECONDARY_CHAT_MODEL) {
       const primaryErr = (await orRes.text()).slice(0, 200);
@@ -94799,7 +94819,7 @@ The agents are starting now; their work and results will stream into this channe
       ({ r: orRes, req: llmReq } = await llmFetch(SECONDARY_CHAT_MODEL, {
         stream: true,
         messages: chatMessages,
-        max_tokens: 700
+        max_tokens: llmMaxTokens()
       }));
     }
     if (!orRes.ok) {
@@ -94883,9 +94903,9 @@ router7.post("/ai/complete", async (req, res) => {
     { role: "user", content: message }
   ];
   try {
-    let { r, req: llmReq } = await llmFetch(model, { messages, max_tokens: 512 });
+    let { r, req: llmReq } = await llmFetch(model, { messages, max_tokens: llmMaxTokens() });
     if (!r.ok && llmReq.model !== SECONDARY_CHAT_MODEL) {
-      ({ r, req: llmReq } = await llmFetch(SECONDARY_CHAT_MODEL, { messages, max_tokens: 512 }));
+      ({ r, req: llmReq } = await llmFetch(SECONDARY_CHAT_MODEL, { messages, max_tokens: llmMaxTokens() }));
     }
     if (!r.ok) {
       const errText = (await r.text()).slice(0, 200);
@@ -95060,7 +95080,7 @@ async function reconcileStaleWork() {
     logger.error({ err }, "reconcileStaleWork failed");
   }
 }
-async function completeChat(model, system, user, maxTokens = 800) {
+async function completeChat(model, system, user, maxTokens = llmMaxTokens()) {
   const startedAt = /* @__PURE__ */ new Date();
   let r;
   try {
@@ -95160,7 +95180,7 @@ function normalizeAssistantMessage(msg) {
   return { role: "assistant", content, tool_calls: toolCalls };
 }
 async function completeChatTurn(model, messages, tools) {
-  const payload = { messages, stream: false, max_tokens: 8e3 };
+  const payload = { messages, stream: false, max_tokens: llmMaxTokens() };
   if (tools.length) {
     payload["tools"] = tools;
     payload["tool_choice"] = "auto";
@@ -95194,7 +95214,7 @@ async function completeChatTurn(model, messages, tools) {
     try {
       const fb = chatRequestFor(SECONDARY_CHAT_MODEL);
       if (fb.model !== llmReq.model || fb.url !== llmReq.url) {
-        const fbBody = { ...fb.bodyExtras, model: fb.model, messages, stream: false, max_tokens: 8e3 };
+        const fbBody = { ...fb.bodyExtras, model: fb.model, messages, stream: false, max_tokens: llmMaxTokens() };
         if (tools.length) {
           fbBody["tools"] = tools;
           fbBody["tool_choice"] = "auto";
@@ -95699,7 +95719,7 @@ ${r.result.slice(0, 3e3)}`).join("\n\n")}
 
 Write your final orchestrator briefing for the operator now \u2014 direct answer first, then each CLAW's attributed discovery, then the application (recommendations + next steps). Peer-to-peer voice.`;
         try {
-          return (await completeChat(model, synthSystem, synthUser, 4e3)).trim();
+          return (await completeChat(model, synthSystem, synthUser, llmMaxTokens())).trim();
         } catch (e) {
           logger.error({ e }, "final synthesis failed");
           return "";
@@ -96739,10 +96759,10 @@ router10.post("/external/v1/chat/completions", async (req, res) => {
     model = "abby",
     messages = [],
     stream = false,
-    max_tokens: maxTokensRaw = 1024,
+    max_tokens: maxTokensRaw = llmMaxTokens(),
     tools: callerTools
   } = req.body ?? {};
-  const max_tokens = Math.min(8192, Math.max(1, Number(maxTokensRaw) || 1024));
+  const max_tokens = Math.min(8192, Math.max(1, Number(maxTokensRaw) || llmMaxTokens()));
   if (!Array.isArray(messages)) {
     res.status(400).json({ error: "messages must be an array" });
     return;
