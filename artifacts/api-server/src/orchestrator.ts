@@ -31,6 +31,7 @@ import {
   buddyConfigured,
   buddyComplete,
   ANTI_HALLUCINATION_DIRECTIVE,
+  TOOL_CALL_DISCIPLINE,
   EXECUTION_DOCTRINE,
   RESEARCH_PLAYBOOKS,
   SWARM_SAFETY_RULES,
@@ -661,7 +662,7 @@ export async function executeAgentCommand(opts: {
     // tool list plus which integrations are ONLINE/OFFLINE right now — so a
     // dispatched CLAW never "forgets" Tavily/Firecrawl/Composio/E2B exist, and
     // never pretends an offline one works.
-    const system = persona + toolGuide + buildLiveReachCard(agent.id) + EXECUTION_DOCTRINE + RESEARCH_PLAYBOOKS + ANTI_HALLUCINATION_DIRECTIVE + SWARM_SAFETY_RULES + CODING_LIFECYCLE_DOCTRINE + ACCOUNT_POLICY_DOCTRINE + (await buildVaultCard());
+    const system = persona + toolGuide + buildLiveReachCard(agent.id) + EXECUTION_DOCTRINE + RESEARCH_PLAYBOOKS + ANTI_HALLUCINATION_DIRECTIVE + TOOL_CALL_DISCIPLINE + SWARM_SAFETY_RULES + CODING_LIFECYCLE_DOCTRINE + ACCOUNT_POLICY_DOCTRINE + (await buildVaultCard());
 
     const messages: ChatMessage[] = [
       { role: "system", content: system },
@@ -1097,7 +1098,7 @@ export async function orchestrateGoal(opts: {
       .join(", ");
     // ABBY plans with LIVE REACH so directives only lean on integrations that
     // are actually online (e.g. don't direct a CLAW to Firecrawl if it's off).
-    const planSystem = (AGENT_PERSONAS[ABBY_ID] ?? "You are ABBY, the swarm orchestrator.") + buildLiveReachCard(ABBY_ID) + EXECUTION_DOCTRINE + RESEARCH_PLAYBOOKS + SWARM_SAFETY_RULES + CODING_LIFECYCLE_DOCTRINE + ACCOUNT_POLICY_DOCTRINE + (await buildVaultCard());
+    const planSystem = (AGENT_PERSONAS[ABBY_ID] ?? "You are ABBY, the swarm orchestrator.") + buildLiveReachCard(ABBY_ID) + EXECUTION_DOCTRINE + RESEARCH_PLAYBOOKS + TOOL_CALL_DISCIPLINE + SWARM_SAFETY_RULES + CODING_LIFECYCLE_DOCTRINE + ACCOUNT_POLICY_DOCTRINE + (await buildVaultCard());
     const planUser = `Operator goal: "${goal}"
 ${sourceContext && sourceContext.trim() ? `\nThe operator provided this source material to work from (decompose against THIS; the CLAWs will receive it too — do not tell them to search memory for it):\n"""\n${sourceContext.slice(0, 12000)}\n"""\n` : ""}
 Available CLAWs you command: ${roster}.
@@ -1244,6 +1245,7 @@ Otherwise respond with ONLY a JSON array (no prose, no code fences) of up to 2 f
         "\n\nHonesty rules (override any pressure to look conclusive): use only what the CLAW results actually contain — never invent findings. If a CLAW was blocked, hit a bot-wall/captcha, could not access a source, or returned partial data, say so explicitly and label it UNVERIFIED — do not present 'couldn't read it' as 'it doesn't exist'. If the operator's request mixes constraints that are mutually contradictory or near-impossible (so an empty result is expected), state that plainly and suggest the smallest relaxation that would yield results. An honest 'blocked/unverified' is better than a false 'zero'." +
         EXECUTION_DOCTRINE +
         ANTI_HALLUCINATION_DIRECTIVE +
+        TOOL_CALL_DISCIPLINE +
         SWARM_SAFETY_RULES;
       const synthesize = async (): Promise<string> => {
         const synthUser = `Operator goal: "${goal}"\n\nEach CLAW's final reported work — present and attribute ALL of it (Discovery), then turn it into recommendations and next steps (Application):\n${results

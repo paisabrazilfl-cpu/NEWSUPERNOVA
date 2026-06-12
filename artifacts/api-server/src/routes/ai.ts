@@ -56,6 +56,29 @@ EVIDENCE DISCIPLINE (non-negotiable):
 - If a tool fails or returns an error, report it verbatim. Never convert a failure into success.
 - If something is not verified, say "unverified" or "unknown". Never guess and present it as fact. Any estimate, score, or matrix you produce must be labelled as an estimate — never reported as a measured result.`;
 
+// Hardened tool-call discipline. Added after the LinkedIn-fraud run where the
+// swarm failed to send a Gmail report DESPITE a verified-live Gmail connection:
+// CLAWs guessed action slugs from memory (GMAIL_DRAFT_EMAIL, GET_PROFILE — 404),
+// transplanted Instagram's /me/... path shape onto Gmail (/me/messages — Google
+// 404 inside a Composio 200), repeated identical failing calls until the dedup
+// guard refused them, burned the final rounds re-sending an unaffordable
+// max_tokens after a 402, and ABBY's briefing concluded "Gmail is not connected"
+// while an HTTP-200 profile call sat in the same run. Appended to EVERY agent
+// prompt (chat, plan, CLAW execution, final synthesis) so these rules bind at
+// the model level. Mirror of the "Tool-call discipline" section in
+// .agents/RULES.md — keep the two in sync.
+export const TOOL_CALL_DISCIPLINE = `
+
+TOOL-CALL DISCIPLINE (non-negotiable — how to form, retry, and interpret tool calls):
+- DISCOVER, NEVER GUESS: tool/action slugs, endpoint paths, and parameter names come from a DISCOVERY call made THIS run (composio_apps → composio_tools for Composio; the service's official docs fetched via web_scrape/http_request otherwise) — never from memory. A 404 "Tool not found" means YOUR GUESSED NAME is wrong, not that the capability is missing. After ONE slug guess fails, the next call MUST be discovery, not another guess.
+- PATHS ARE APP-SPECIFIC: never transplant one app's path shape onto another. Gmail is '/gmail/v1/users/me/...'; Instagram/Graph is '/me/...'; they are not interchangeable. If a proxy call returns the upstream provider's own 404/error page, the path was wrong for THAT app — look the real path up, do not mutate blindly.
+- JUDGE THE INNER PAYLOAD, NOT THE WRAPPER: a proxy wrapper returning HTTP 200 whose BODY is an upstream error (e.g. a Google "Error 404" HTML page inside a Composio 200) is a FAILED call. Read the payload before claiming success.
+- ONE VARIABLE PER RETRY: when a call fails, read the error and change exactly ONE thing it implicates — add the missing auth header, correct the slug, fix the path, fix a param name. NEVER resend an identical call: an identical call cannot return a different result. Two failures of the same shape = STOP and switch method (discovery call, docs lookup, different tool) — do not produce a third variation of the same guess.
+- A 2xx THIS RUN IS GROUND TRUTH: one properly-formed call that succeeded (2xx with a real body/id) PERMANENTLY proves, for this run, that the credential works and the connection/capability exists. No later 401/404/422 from a differently-formed call overrides it. Never conclude "not connected", "expired", "invalid key", or "doesn't exist" while a success for that same service sits earlier in the run — the later failure is YOUR malformed call.
+- ONLY A WELL-FORMED CALL CAN PROVE ABSENCE: a failure from a call that was missing auth, used a guessed slug, or used a wrong path proves NOTHING about the service. Before reporting a capability as unavailable, you must show ONE properly-formed, properly-authenticated attempt (correct slug from discovery, correct path from docs) that still failed — and report that exact error verbatim.
+- BUDGET/INFRA ERRORS ARE NOT TASK ERRORS: a 402 (insufficient credits) or 429 (rate limit) means shrink the request (smaller max_tokens, smaller batch, fewer items) or wait/hand off — never resend the same oversized request, and never let an infra error masquerade as "the task is impossible". Report it as an infrastructure condition with the exact figure from the error.
+- ESCALATION LADDER FOR CONNECTED APPS, in order: (1) composio_apps — is it live? (2) composio_tools — what are the REAL slugs? (3) composio_action with a discovered slug + its documented arguments. (4) Only if no named action fits: raw proxy with the app's TRUE base path looked up from official docs this run. (5) Only after a properly-formed attempt fails: report the verbatim error and what was tried. Skipping a rung and guessing is a doctrine violation.`;
+
 // Hardened operating guardrails for the whole swarm. Added after the STOCKVAULT
 // incident where CLAWs leaked raw credentials in plaintext, force-pushed a
 // destructive diff (-12,947 lines), dropped a foreign Flask stack into a
@@ -430,7 +453,7 @@ router.post("/ai/chat", async (req, res) => {
   // Live-reach scan is appended on EVERY turn so the agent always knows its
   // real, current tools + which integrations are online.
   const systemPrompt =
-    persona + CHAT_MODE_DIRECTIVE + buildCapabilityCard(resolvedAgentId) + buildLiveReachCard(resolvedAgentId) + RESEARCH_PLAYBOOKS + ANTI_HALLUCINATION_DIRECTIVE + SWARM_SAFETY_RULES + (await buildVaultCard());
+    persona + CHAT_MODE_DIRECTIVE + buildCapabilityCard(resolvedAgentId) + buildLiveReachCard(resolvedAgentId) + RESEARCH_PLAYBOOKS + ANTI_HALLUCINATION_DIRECTIVE + TOOL_CALL_DISCIPLINE + SWARM_SAFETY_RULES + (await buildVaultCard());
 
   // A user turn may carry uploaded files. Images are sent to the model as vision
   // input (which also reads text in the image — i.e. OCR); text-like files have
@@ -827,7 +850,7 @@ router.post("/ai/complete", async (req, res) => {
   }
 
   const model = resolveModel(resolvedAgentId, agent?.model, overrideModel);
-  const systemPrompt = (resolvedAgentId ? (AGENT_PERSONAS[resolvedAgentId] ?? "") : "") + buildCapabilityCard(resolvedAgentId) + ANTI_HALLUCINATION_DIRECTIVE + SWARM_SAFETY_RULES;
+  const systemPrompt = (resolvedAgentId ? (AGENT_PERSONAS[resolvedAgentId] ?? "") : "") + buildCapabilityCard(resolvedAgentId) + ANTI_HALLUCINATION_DIRECTIVE + TOOL_CALL_DISCIPLINE + SWARM_SAFETY_RULES;
 
   const messages = [
     ...(systemPrompt ? [{ role: "system", content: systemPrompt }] : []),

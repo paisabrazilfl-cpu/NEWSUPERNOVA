@@ -16,6 +16,7 @@ import {
   ANTI_HALLUCINATION_DIRECTIVE,
   RESEARCH_PLAYBOOKS,
   SWARM_SAFETY_RULES,
+  TOOL_CALL_DISCIPLINE,
   CODING_LIFECYCLE_DOCTRINE,
   requestsDownloadableArtifact,
   requestsImage,
@@ -319,6 +320,53 @@ describe("EXECUTION_DOCTRINE — self-learning on failure", () => {
 describe("ANTI_HALLUCINATION_DIRECTIVE — still intact alongside the doctrine", () => {
   it("keeps the evidence-discipline guardrail", () => {
     expect(ANTI_HALLUCINATION_DIRECTIVE).toContain("EVIDENCE DISCIPLINE");
+  });
+});
+
+describe("TOOL_CALL_DISCIPLINE — hardened rules from the LinkedIn-fraud run", () => {
+  it("forbids guessing slugs and mandates discovery-first", () => {
+    expect(TOOL_CALL_DISCIPLINE).toContain("DISCOVER, NEVER GUESS");
+    expect(TOOL_CALL_DISCIPLINE).toContain("composio_tools");
+    expect(TOOL_CALL_DISCIPLINE.toLowerCase()).toContain("your guessed name");
+  });
+
+  it("forbids transplanting one app's path shape onto another", () => {
+    expect(TOOL_CALL_DISCIPLINE).toContain("PATHS ARE APP-SPECIFIC");
+    expect(TOOL_CALL_DISCIPLINE).toContain("/gmail/v1/users/me/");
+    expect(TOOL_CALL_DISCIPLINE).toContain("/me/");
+  });
+
+  it("makes agents judge the inner payload, not the proxy wrapper status", () => {
+    expect(TOOL_CALL_DISCIPLINE).toContain("JUDGE THE INNER PAYLOAD");
+    expect(TOOL_CALL_DISCIPLINE.toLowerCase()).toContain("failed call");
+  });
+
+  it("bans identical-call retries — one variable per retry, then switch method", () => {
+    expect(TOOL_CALL_DISCIPLINE).toContain("ONE VARIABLE PER RETRY");
+    expect(TOOL_CALL_DISCIPLINE.toLowerCase()).toContain("never resend an identical call");
+  });
+
+  it("makes a 2xx this run permanent ground truth a later malformed failure cannot override", () => {
+    expect(TOOL_CALL_DISCIPLINE).toContain("A 2xx THIS RUN IS GROUND TRUTH");
+    expect(TOOL_CALL_DISCIPLINE.toLowerCase()).toContain("not connected");
+    expect(TOOL_CALL_DISCIPLINE.toLowerCase()).toContain("malformed call");
+  });
+
+  it("requires a well-formed authenticated attempt before reporting a capability absent", () => {
+    expect(TOOL_CALL_DISCIPLINE).toContain("ONLY A WELL-FORMED CALL CAN PROVE ABSENCE");
+    expect(TOOL_CALL_DISCIPLINE.toLowerCase()).toContain("verbatim");
+  });
+
+  it("treats 402/429 as infrastructure conditions: shrink, never resend the same oversized call", () => {
+    expect(TOOL_CALL_DISCIPLINE).toContain("BUDGET/INFRA ERRORS ARE NOT TASK ERRORS");
+    expect(TOOL_CALL_DISCIPLINE).toContain("402");
+    expect(TOOL_CALL_DISCIPLINE).toContain("429");
+  });
+
+  it("encodes the connected-app escalation ladder", () => {
+    expect(TOOL_CALL_DISCIPLINE).toContain("ESCALATION LADDER");
+    expect(TOOL_CALL_DISCIPLINE).toContain("composio_apps");
+    expect(TOOL_CALL_DISCIPLINE).toContain("composio_action");
   });
 });
 
