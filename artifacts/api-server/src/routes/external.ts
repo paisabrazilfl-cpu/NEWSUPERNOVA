@@ -27,7 +27,7 @@ import { timingSafeStrEqual } from "../lib/auth";
 import { embed } from "../lib/embeddings";
 import { quarantineTags } from "../lib/twinSync";
 import { orchestrateGoal } from "../orchestrator";
-import { ANTI_HALLUCINATION_DIRECTIVE, ABBY_DEFAULT_MODEL, SECONDARY_CHAT_MODEL, requestsConnectedAccountAction } from "./ai";
+import { ANTI_HALLUCINATION_DIRECTIVE, ABBY_DEFAULT_MODEL, SECONDARY_CHAT_MODEL, rescueRawToolCalls, requestsConnectedAccountAction } from "./ai";
 
 const router = Router();
 
@@ -328,6 +328,12 @@ router.post("/external/v1/chat/completions", async (req, res) => {
   const orMessages = [{ role: "system", content: systemPrompt }, ...sanitized];
 
   // ── VOICE MODE — a live Vapi phone call ────────────────────────────────────
+  // Latency-first: the model round is STREAMED and every content token is
+  // forwarded to Vapi the moment it arrives, so TTS starts speaking on the
+  // first sentence instead of waiting for the full completion. Tool calls are
+  // intercepted from the stream and executed inline, then the next round
+  // continues speaking. Channel/transcript DB writes run in parallel with the
+  // model call — they never sit in front of the caller.
   const callId = extractVapiCallId(req.body);
   if (callId) {
     const sendSSE = (payload: object | "[DONE]") => {
@@ -341,13 +347,69 @@ router.post("/external/v1/chat/completions", async (req, res) => {
       res.setHeader("X-Accel-Buffering", "no");
       res.flushHeaders();
     }
-    let channelId = DEFAULT_CHANNEL_ID;
-    try {
-      channelId = await channelForVapiCall(callId);
-      const lastUser = [...sanitized].reverse().find((m) => m["role"] === "user");
-      if (lastUser) await logVoiceTurn(channelId, { role: "user", content: String(lastUser["content"] ?? "") });
 
-      // Inline agentic loop: short turns, the call's own channel for dispatch.
+    // Kick the DB work off WITHOUT awaiting — the model round starts now.
+    const channelPromise = channelForVapiCall(callId).catch(() => DEFAULT_CHANNEL_ID);
+    const lastUser = [...sanitized].reverse().find((m) => m["role"] === "user");
+    if (lastUser) void channelPromise.then((ch) => logVoiceTurn(ch, { role: "user", content: String(lastUser["content"] ?? "") }));
+
+    const chunkId = `chatcmpl-voice-${Date.now()}`;
+    const chunkOf = (delta: object, finish: string | null = null) => ({
+      id: chunkId, object: "chat.completion.chunk", created: Math.floor(Date.now() / 1000), model,
+      choices: [{ index: 0, delta, finish_reason: finish }],
+    });
+    let sentRole = false;
+    let spoken = ""; // everything already forwarded to the caller's ear
+    const speak = (piece: string) => {
+      if (!stream || !piece) return;
+      if (!sentRole) { sendSSE(chunkOf({ role: "assistant" })); sentRole = true; }
+      sendSSE(chunkOf({ content: piece }));
+      spoken += piece;
+    };
+
+    /** Read one OpenAI SSE stream: forward safe content live, assemble tool calls. */
+    const readChatStream = async (body: ReadableStream<Uint8Array>): Promise<{ content: string; toolCalls: Array<{ id: string; function: { name: string; arguments: string } }> }> => {
+      const reader = body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let content = "";
+      let withhold = false; // stop live-forwarding once raw tool-token markup appears
+      const acc = new Map<number, { id: string; name: string; args: string }>();
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const raw of lines) {
+          const t = raw.trim();
+          if (!t.startsWith("data: ") || t === "data: [DONE]") continue;
+          let delta: { content?: string; tool_calls?: Array<{ index?: number; id?: string; function?: { name?: string; arguments?: string } }> } | undefined;
+          try { delta = (JSON.parse(t.slice(6)) as { choices?: Array<{ delta?: typeof delta }> }).choices?.[0]?.delta; } catch { continue; }
+          if (!delta) continue;
+          if (typeof delta.content === "string" && delta.content) {
+            content += delta.content;
+            if (!withhold && /<\|/.test(content)) withhold = true;
+            if (!withhold) speak(delta.content);
+          }
+          for (const frag of delta.tool_calls ?? []) {
+            const idx = frag.index ?? 0;
+            const cur = acc.get(idx) ?? { id: "", name: "", args: "" };
+            if (frag.id) cur.id = frag.id;
+            if (frag.function?.name) cur.name += frag.function.name;
+            if (frag.function?.arguments) cur.args += frag.function.arguments;
+            acc.set(idx, cur);
+          }
+        }
+      }
+      const toolCalls = [...acc.values()]
+        .filter((c) => c.name)
+        .map((c, i) => ({ id: c.id || `stream_tc_${i}`, function: { name: c.name, arguments: c.args || "{}" } }));
+      return { content, toolCalls };
+    };
+
+    try {
+      // Inline agentic loop: short streamed turns, tools executed in-place.
       const working: Array<Record<string, unknown>> = [...orMessages];
       let finalText = "";
       for (let round = 0; round < 4; round++) {
@@ -355,8 +417,8 @@ router.post("/external/v1/chat/completions", async (req, res) => {
           messages: working,
           tools: VOICE_TOOLS,
           tool_choice: "auto",
-          stream: false,
-          max_tokens: Math.min(max_tokens, 400),
+          stream: true,
+          max_tokens: Math.min(max_tokens, 300),
         };
         let { r } = await llmFetch(agentModel, turnPayload);
         // A throttled/5xx primary must not end the call in an apology: retry
@@ -366,60 +428,66 @@ router.post("/external/v1/chat/completions", async (req, res) => {
           req.log.warn({ status: r.status, model: agentModel, primaryErr }, "Voice turn: primary model failed; retrying on secondary");
           ({ r } = await llmFetch(SECONDARY_CHAT_MODEL, turnPayload));
         }
-        if (!r.ok) {
-          const errText = (await r.text()).slice(0, 200);
+        if (!r.ok || !r.body) {
+          const errText = r.ok ? "no body" : (await r.text()).slice(0, 200);
           req.log.error({ status: r.status, errText }, "Voice turn: provider error");
           finalText = "I hit a model provider error just now. Give me a second and ask again.";
           break;
         }
-        const data = (await r.json()) as { choices?: Array<{ message?: { content?: string | null; tool_calls?: Array<{ id: string; function?: { name?: string; arguments?: string } }> } }> };
-        const msg = data.choices?.[0]?.message;
-        const toolCalls = Array.isArray(msg?.tool_calls) ? msg.tool_calls : [];
+        const turn = await readChatStream(r.body);
+        let toolCalls = turn.toolCalls;
+        let turnText = turn.content;
+        // Rescue raw Kimi tool-token markup the provider failed to parse —
+        // the live forwarder withheld it from the caller's ear already.
+        if (toolCalls.length === 0 && turnText.includes("<|tool_call")) {
+          const rescued = rescueRawToolCalls(turnText);
+          toolCalls = rescued.calls.map((c, i) => ({ id: `rescued_${Date.now()}_${i}`, function: { name: c.name, arguments: c.arguments } }));
+          turnText = rescued.clean;
+        }
         if (toolCalls.length === 0) {
-          finalText = (msg?.content ?? "").trim();
+          finalText = turnText.trim();
           break;
         }
-        working.push({ role: "assistant", content: msg?.content ?? "", tool_calls: toolCalls });
+        working.push({ role: "assistant", content: turnText, tool_calls: toolCalls.map((tc) => ({ id: tc.id, type: "function", function: tc.function })) });
+        const channelId = await channelPromise;
         for (const tc of toolCalls.slice(0, 3)) {
-          const name = String(tc.function?.name ?? "");
           let args: Record<string, unknown> = {};
-          try { args = JSON.parse(tc.function?.arguments || "{}") as Record<string, unknown>; } catch { /* leave {} */ }
-          const result = await runVapiTool(name, args, req.log, { channelId });
+          try { args = JSON.parse(tc.function.arguments || "{}") as Record<string, unknown>; } catch { /* leave {} */ }
+          const result = await runVapiTool(tc.function.name, args, req.log, { channelId });
           working.push({ role: "tool", tool_call_id: tc.id, content: result });
-          await logVoiceTurn(channelId, { role: "system", content: `🛠 ${name}${args["task"] ? `: ${String(args["task"]).slice(0, 200)}` : ""} → ${result.slice(0, 300)}` });
+          void logVoiceTurn(channelId, { role: "system", content: `🛠 ${tc.function.name}${args["task"] ? `: ${String(args["task"]).slice(0, 200)}` : ""} → ${result.slice(0, 300)}` });
         }
       }
-      if (!finalText) finalText = "Done. Anything else?";
-      finalText = voiceify(finalText, 1200);
-      await logVoiceTurn(channelId, { role: "assistant", content: finalText, agent: { id: agent.id, name: agent.name, color: agent.color } });
 
+      // Whatever was streamed live IS the reply; finalText only fills gaps
+      // (errors, withheld markup, models that answered without streaming text).
+      const remainder = spoken ? "" : voiceify(finalText || "Done. Anything else?", 1200);
       if (stream) {
-        const id = `chatcmpl-voice-${Date.now()}`;
-        const chunk = (delta: object, finish: string | null = null) => ({
-          id, object: "chat.completion.chunk", created: Math.floor(Date.now() / 1000), model,
-          choices: [{ index: 0, delta, finish_reason: finish }],
-        });
-        sendSSE(chunk({ role: "assistant" }));
-        // Sentence-sized chunks so TTS starts speaking without waiting for the tail.
-        for (const piece of finalText.match(/[^.!?]+[.!?]*\s*/g) ?? [finalText]) sendSSE(chunk({ content: piece }));
-        sendSSE(chunk({}, "stop"));
+        if (remainder) for (const piece of remainder.match(/[^.!?]+[.!?]*\s*/g) ?? [remainder]) speak(piece);
+        if (!sentRole) sendSSE(chunkOf({ role: "assistant" }));
+        sendSSE(chunkOf({}, "stop"));
         sendSSE("[DONE]");
         res.end();
       } else {
         res.json({
-          id: `chatcmpl-voice-${Date.now()}`,
+          id: chunkId,
           object: "chat.completion",
           created: Math.floor(Date.now() / 1000),
           model,
-          choices: [{ index: 0, message: { role: "assistant", content: finalText }, finish_reason: "stop" }],
+          choices: [{ index: 0, message: { role: "assistant", content: voiceify(finalText || "Done. Anything else?", 1200) }, finish_reason: "stop" }],
           usage: {},
         });
       }
+      const said = voiceify((spoken || finalText).trim(), 1200);
+      void channelPromise.then((ch) => logVoiceTurn(ch, { role: "assistant", content: said, agent: { id: agent.id, name: agent.name, color: agent.color } }));
     } catch (err) {
       req.log.error({ err, callId }, "Voice turn failed");
       if (stream) {
-        sendSSE({ id: "chatcmpl-voice-err", object: "chat.completion.chunk", created: Math.floor(Date.now() / 1000), model, choices: [{ index: 0, delta: { role: "assistant", content: "Something broke on my side — try that again." }, finish_reason: null }] });
-        sendSSE({ id: "chatcmpl-voice-err", object: "chat.completion.chunk", created: Math.floor(Date.now() / 1000), model, choices: [{ index: 0, delta: {}, finish_reason: "stop" }] });
+        if (!spoken) {
+          if (!sentRole) sendSSE(chunkOf({ role: "assistant" }));
+          sendSSE(chunkOf({ content: "Something broke on my side — try that again." }));
+        }
+        sendSSE(chunkOf({}, "stop"));
         sendSSE("[DONE]");
         res.end();
       } else {
