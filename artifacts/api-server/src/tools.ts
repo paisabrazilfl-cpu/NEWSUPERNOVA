@@ -1107,8 +1107,9 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
         return redactSecrets(await runInSandbox(script), usedSecrets);
       } finally {
         // 3) Always release the Steel session (single-run, no lingering browser).
-        await fetch(`${STEEL_BASE}/sessions/${sessionId}/release`, {
-          method: "POST",
+        //    DELETE /sessions/{id} is the release method used elsewhere in this codebase.
+        await fetch(`${STEEL_BASE}/sessions/${sessionId}`, {
+          method: "DELETE",
           headers: { Authorization: `Bearer ${steelKey}` },
         }).catch(() => {});
       }
