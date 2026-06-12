@@ -13,9 +13,10 @@ agent's prompt:
    (Gmail, Calendar, Sheets, Slack, GitHub, Notion, Instagram, …), it uses
    `composio_apps` → `composio_action` / `instagram_post`. OAuth-based, reliable,
    no passwords.
-2. **Browser is the hard fallback.** For a site with no connected API, the
-   `browser_login` tool drives a real headless Chromium that logs in **as you**
-   using credentials from the vault, then performs the task. Details below.
+2. **Browser is the hard fallback (on Steel).** For a site with no connected
+   API, the `browser_login` tool runs a browser on **Steel** (managed, stealth,
+   residential proxy + CAPTCHA-solving) and logs in **as you** using credentials
+   from the vault, then performs the task. Details below.
 3. **New connections / signups.** It can connect existing apps via OAuth and
    sign up for ordinary online services (newsletters, SaaS, dev tools) on your
    behalf. Financial accounts and government-ID submission are hard-blocked.
@@ -30,14 +31,17 @@ For any site without an API, the swarm uses `browser_login`:
 2. The swarm calls `browser_login` with the **vault names** (not the values):
    `url`, `username_secret: "MYSITE_EMAIL"`, `password_secret: "MYSITE_PASSWORD"`,
    and optional Playwright `steps` to do the task after login.
-3. A headless Chromium logs in and runs the steps; credentials are injected
-   just-in-time and redacted from all output.
+3. A Steel-hosted browser logs in and runs the steps; credentials and the Steel
+   key are injected just-in-time and redacted from all output. The session runs
+   single-use and is released immediately after.
 
-**Limits:** sites protected by CAPTCHA or 2FA (including Google) will block
-automated login — the tool reports that plainly rather than pretending. For
-Google/Gmail specifically, use the Composio OAuth connector above, not
-`browser_login`. Live browser execution also depends on the E2B sandbox image
-having a browser runtime available.
+**How it runs:** the browser lives on Steel (so it gets stealth, a residential
+proxy, and CAPTCHA-solving); Playwright connects to it over CDP from the E2B
+sandbox, which only needs `pip install playwright` — no local Chromium. Requires
+`STEEL_API_KEY` and `E2B_API_KEY` (both set).
+
+**Limit:** sites that force a 2FA challenge may still stop an automated login.
+For Google/Gmail specifically, prefer the Composio OAuth connector above.
 
 ## Connecting Gmail / Google (the safe way — no stored password)
 

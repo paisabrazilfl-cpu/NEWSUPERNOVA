@@ -97,14 +97,18 @@ function isTrue(v: unknown): boolean {
 }
 
 /**
- * Build the bash+Playwright script for browser_login. The operator's credentials
- * are referenced as {{secret:NAME}} placeholders (resolved by substituteSecrets
- * just before the VM runs, then redacted from output) and passed to Python via
- * single-quoted env vars so they never sit in the page-script source. URL,
- * selectors, and the optional post-login steps are embedded as JSON literals so
- * quotes can't break the script. Exported for unit testing the generation.
+ * Build the bash+Playwright script for browser_login. The browser itself runs on
+ * STEEL (managed, stealth, proxy + CAPTCHA-capable) — Playwright connects to it
+ * over CDP, so the sandbox only needs `pip install playwright` (no local Chromium
+ * or system deps). The operator's credentials are referenced as {{secret:NAME}}
+ * placeholders (resolved by substituteSecrets just before the VM runs, then
+ * redacted) and passed to Python via single-quoted env vars so they never sit in
+ * the page-script source. The Steel CDP URL (which carries the Steel API key) is
+ * embedded as a JSON literal and redacted from output. URL/selectors/steps are
+ * JSON-embedded so quotes can't break the script. Exported for unit testing.
  */
 export function buildBrowserLoginScript(opts: {
+  cdpUrl: string;
   url: string;
   userSecret: string;
   passSecret: string;
@@ -120,12 +124,12 @@ export function buildBrowserLoginScript(opts: {
   return [
     "set -e",
     "pip install playwright -q >/dev/null 2>&1 || pip install playwright -q",
-    "python -m playwright install chromium >/dev/null 2>&1 || python -m playwright install --with-deps chromium >/dev/null 2>&1 || true",
     `export BL_USER='{{secret:${opts.userSecret}}}'`,
     `export BL_PASS='{{secret:${opts.passSecret}}}'`,
     "python3 <<'PYEOF'",
     "import os, json",
     "from playwright.sync_api import sync_playwright",
+    `CDP = json.loads(${j(j(opts.cdpUrl))})`,
     `URL = json.loads(${j(j(opts.url))})`,
     `USEL = json.loads(${j(j(userSel))})`,
     `PSEL = json.loads(${j(j(passSel))})`,
@@ -133,8 +137,9 @@ export function buildBrowserLoginScript(opts: {
     `STEPS = json.loads(${j(j(opts.steps ?? ""))})`,
     'USER = os.environ.get("BL_USER", ""); PWD = os.environ.get("BL_PASS", "")',
     "with sync_playwright() as p:",
-    '    browser = p.chromium.launch(args=["--no-sandbox","--disable-dev-shm-usage"])',
-    "    page = browser.new_page()",
+    "    browser = p.chromium.connect_over_cdp(CDP)",  // remote Steel browser
+    "    context = browser.contexts[0] if browser.contexts else browser.new_context()",
+    "    page = context.pages[0] if context.pages else context.new_page()",
     "    try:",
     '        page.goto(URL, wait_until="domcontentloaded", timeout=45000)',
     "        page.fill(USEL, USER, timeout=15000)",
@@ -150,7 +155,7 @@ export function buildBrowserLoginScript(opts: {
     '        print("TITLE:", page.title())',
     '        print("BODY:", page.inner_text("body")[:1500])',
     "        if STEPS.strip():",
-    '            exec(STEPS, {"page": page, "browser": browser, "print": print})',
+    '            exec(STEPS, {"page": page, "context": context, "browser": browser, "print": print})',
     "    except Exception as e:",
     '        print("BROWSER_LOGIN_ERROR:", repr(e)[:400])',
     "    finally:",
@@ -1026,9 +1031,9 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
   browser_login: {
     name: "browser_login",
     description:
-      "HARD FALLBACK for sites with no connected API: log into a website AS THE OPERATOR using their vaulted credentials, then optionally drive the page. A real headless Chromium (Playwright) navigates to the login URL, fills the username + password from the vault, submits, and runs your optional post-login steps. " +
+      "HARD FALLBACK for sites with no connected API: log into a website AS THE OPERATOR using their vaulted credentials, then optionally drive the page. The browser runs on STEEL (managed, stealth, residential proxy + CAPTCHA-solving) and Playwright connects to it over CDP. " +
       "Pass `url` (the login page), `username_secret` and `password_secret` (the VAULT NAMES, e.g. 'MYSITE_EMAIL' / 'MYSITE_PASSWORD' — never a raw password; the operator stores these in the vault and you reference the name only). Optionally pass CSS selectors (`username_selector`, `password_selector`, `submit_selector`) if the defaults miss, and `steps`: Python lines that use the Playwright `page` object to do the task after login (e.g. page.goto(...), page.click(...), print(page.inner_text('main'))). " +
-      "PREFER a connected Composio app when one exists — use this only when there is no API. Note: sites with CAPTCHA or 2FA will block automated login. Never use this to open financial accounts or submit government IDs.",
+      "PREFER a connected Composio app when one exists — use this only when there is no API, for accounts the operator owns. 2FA-gated sites may still challenge. Never use this to open financial accounts or submit government IDs.",
     parameters: {
       type: "object",
       properties: {
@@ -1056,25 +1061,57 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
       // submit government-ID/KYC identity, regardless of how the steps are framed.
       const policy = assessActionRisk(`${url} ${steps}`);
       if (policy.blocked) return policyRefusal(policy);
-      if (!sandboxConfigured()) return "error: the browser fallback needs the E2B cloud sandbox (set E2B_API_KEY).";
-      const rawScript = buildBrowserLoginScript({
-        url,
-        userSecret,
-        passSecret,
-        userSelector: args["username_selector"] != null ? String(args["username_selector"]) : undefined,
-        passSelector: args["password_selector"] != null ? String(args["password_selector"]) : undefined,
-        submitSelector: args["submit_selector"] != null ? String(args["submit_selector"]) : undefined,
-        steps,
-      });
-      const allowBlock = sandboxSecretsBlocked(rawScript);
-      if (allowBlock) return allowBlock;
-      // Inject the vaulted credentials (by name) just-in-time; redact from output.
-      const usedSecrets = new Set<string>();
-      const script = await substituteSecrets(rawScript, usedSecrets);
-      if (hasSecretPlaceholder(script)) {
-        return `error: a credential vault name did not resolve — '${userSecret}' and/or '${passSecret}' are not in the vault. Add them in Settings → vault, then retry. (Nothing was executed.)`;
+      const steelKey = process.env["STEEL_API_KEY"];
+      if (!steelKey) return "error: the browser fallback runs on Steel — set STEEL_API_KEY.";
+      if (!sandboxConfigured()) return "error: the browser fallback needs the E2B sandbox to host Playwright (set E2B_API_KEY).";
+
+      // 1) Open a managed Steel browser session (proxy + CAPTCHA solving on).
+      let sessionId: string;
+      try {
+        const r = await fetch(`${STEEL_BASE}/sessions`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${steelKey}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ solveCaptcha: true, useProxy: true, sessionTimeout: 300000 }),
+        });
+        if (!r.ok) return `error: could not start a Steel browser session (HTTP ${r.status}).`;
+        const data = (await r.json()) as { id?: string };
+        if (!data.id) return "error: Steel did not return a session id.";
+        sessionId = data.id;
+      } catch (e) {
+        return `error: Steel session start failed: ${String(e).slice(0, 200)}`;
       }
-      return redactSecrets(await runInSandbox(script), usedSecrets);
+
+      try {
+        // 2) Playwright connects to the remote Steel browser over CDP. The key is
+        //    in the URL — embedded server-side, redacted from any output.
+        const cdpUrl = `wss://connect.steel.dev?apiKey=${steelKey}&sessionId=${sessionId}`;
+        const rawScript = buildBrowserLoginScript({
+          cdpUrl,
+          url,
+          userSecret,
+          passSecret,
+          userSelector: args["username_selector"] != null ? String(args["username_selector"]) : undefined,
+          passSelector: args["password_selector"] != null ? String(args["password_selector"]) : undefined,
+          submitSelector: args["submit_selector"] != null ? String(args["submit_selector"]) : undefined,
+          steps,
+        });
+        const allowBlock = sandboxSecretsBlocked(rawScript);
+        if (allowBlock) return allowBlock;
+        // Inject the vaulted credentials (by name) just-in-time; redact the
+        // Steel key AND the credential values from everything returned.
+        const usedSecrets = new Set<string>([steelKey]);
+        const script = await substituteSecrets(rawScript, usedSecrets);
+        if (hasSecretPlaceholder(script)) {
+          return `error: a credential vault name did not resolve — '${userSecret}' and/or '${passSecret}' are not in the vault. Add them in Settings → vault, then retry. (Nothing was executed.)`;
+        }
+        return redactSecrets(await runInSandbox(script), usedSecrets);
+      } finally {
+        // 3) Always release the Steel session (single-run, no lingering browser).
+        await fetch(`${STEEL_BASE}/sessions/${sessionId}/release`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${steelKey}` },
+        }).catch(() => {});
+      }
     },
   },
 
