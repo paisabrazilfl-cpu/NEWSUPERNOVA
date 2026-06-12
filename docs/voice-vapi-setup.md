@@ -2,12 +2,23 @@
 
 BOS-AURA can be driven entirely by a phone call through [Vapi](https://vapi.ai):
 talk to ABBY, dispatch real orchestrated tasks, and hear the results back.
-Two server pieces power it, both under the existing external API auth:
+
+**Voice mode is self-contained in the custom-LLM endpoint.** Vapi includes the
+live `call` object in every custom-LLM request; when a call id is present:
+
+- **One dashboard chat per call** — a `voice-<MMDD-HHmm>` channel is created
+  for the call, the live transcript (caller + ABBY + tool actions) is logged
+  into it, and tasks dispatched during the call report their results there.
+- **Tools run inline** — `dispatch_task`, `check_status` and `get_last_result`
+  are offered to the model and executed by this server inside the same
+  request, then the confirmation is spoken in the same breath. The separate
+  Vapi tool-server round trip is NOT needed for the voice loop, so a missing
+  tool secret can never silence the agent mid-call.
 
 | Piece | Endpoint | Purpose |
 | --- | --- | --- |
-| Conversation | `POST /api/external/v1/chat/completions` | OpenAI-compatible (SSE streaming) — Vapi's "Custom LLM" talks to an agent directly |
-| Actions | `POST /api/external/v1/vapi/webhook` | Vapi tool server — `dispatch_task`, `check_status`, `get_last_result` |
+| Conversation + actions | `POST /api/external/v1/chat/completions` | OpenAI-compatible (SSE streaming) — Vapi's "Custom LLM"; voice mode handles the swarm tools inline |
+| Call lifecycle (optional) | `POST /api/external/v1/vapi/webhook` | end-of-call summary into the call's channel; also still serves the legacy custom tools |
 
 ## 0. Prerequisites
 
@@ -30,21 +41,27 @@ Two server pieces power it, both under the existing external API auth:
 
 **Transcriber + Voice:** any (Deepgram + ElevenLabs work well).
 
-## 2. Add the custom tools
+## 2. Tools — built in, nothing to attach
 
-Create three **custom tools** (Dashboard → Tools), all with:
-- Server URL: `https://bos-aura.onrender.com/api/external/v1/vapi/webhook`
-- Server secret: the `OPENCLAW_API_KEY` value (Vapi sends it as `x-vapi-secret`,
-  which the API accepts alongside `Authorization`/`x-api-key`).
+The three swarm tools are offered to the model and executed **inline by the
+server** whenever the request belongs to a live call:
 
 | Tool name | Parameters | What it does |
 | --- | --- | --- |
-| `dispatch_task` | `task` (string, required), `priority` (`normal`\|`high`) | Hands the goal to ABBY's orchestrator — the same real multi-CLAW machinery as the dashboard, including the solve loop. Connected-account goals ("post to my Instagram…") are auto-routed to WIRE exactly once. Returns immediately; work continues in the background. |
+| `dispatch_task` | `task` (string, required), `priority` (`normal`\|`high`) | Hands the goal to ABBY's orchestrator — the same real multi-CLAW machinery as the dashboard, including the solve loop. Connected-account goals ("post to my Instagram…") are auto-routed to WIRE exactly once. Results report into the call's own channel. |
 | `check_status` | none | Voice-sized summary: which agents are busy, running tasks, recently completed. |
 | `get_last_result` | none | ABBY's most recent final briefing, stripped of markdown for speech. |
 
-Attach all three tools to the assistant, then attach a phone number to the
-assistant.
+Do **not** attach separate custom tools to the assistant — the inline path
+replaces them. (The webhook still serves the same tools for any legacy
+configuration that has them attached with a valid server secret.)
+
+**Optional — call-end summaries:** set the assistant's *Server URL* to
+`https://bos-aura.onrender.com/api/external/v1/vapi/webhook` with server
+secret = `OPENCLAW_API_KEY` and enable the `end-of-call-report` server
+message. The call's channel then gets a final "📞 Call ended" summary.
+
+Attach a phone number to the assistant and you're done.
 
 ## 3. Call it
 

@@ -90,3 +90,43 @@ describe("voiceify — results must read naturally when spoken", () => {
     expect(voiceify("word ".repeat(2000)).length).toBeLessThanOrEqual(1200);
   });
 });
+
+import { extractVapiCallId, sanitizeOpenAiMessages } from "./routes/external";
+
+describe("extractVapiCallId — voice mode detection on custom-LLM requests and webhook events", () => {
+  it("pulls call.id from a Vapi custom-LLM body", () => {
+    expect(extractVapiCallId({ model: "abby", messages: [], call: { id: "call-abc-123" } })).toBe("call-abc-123");
+  });
+
+  it("returns null when there is no live call (plain OpenAI-compatible caller)", () => {
+    expect(extractVapiCallId({ model: "abby", messages: [] })).toBeNull();
+    expect(extractVapiCallId({ call: { id: "  " } })).toBeNull();
+    expect(extractVapiCallId(null)).toBeNull();
+  });
+});
+
+describe("sanitizeOpenAiMessages — Vapi transcripts become provider-safe history", () => {
+  it("keeps valid roles, coerces null content, drops empty assistant filler and junk roles", () => {
+    const out = sanitizeOpenAiMessages([
+      { role: "system", content: "be brief" },
+      { role: "user", content: "hello" },
+      { role: "assistant", content: null },                       // Vapi filler → dropped
+      { role: "assistant", content: "Hi. What do you need?" },
+      { role: "metadata", content: "internal" },                  // unknown role → dropped
+      { role: "tool", content: "result", tool_call_id: "tc_1" },  // valid tool msg → kept
+      { role: "tool", content: "orphan" },                        // no tool_call_id → dropped
+    ]);
+    expect(out).toEqual([
+      { role: "system", content: "be brief" },
+      { role: "user", content: "hello" },
+      { role: "assistant", content: "Hi. What do you need?" },
+      { role: "tool", content: "result", tool_call_id: "tc_1" },
+    ]);
+  });
+
+  it("preserves assistant tool_calls turns even with empty content", () => {
+    const toolCalls = [{ id: "tc_9", type: "function", function: { name: "dispatch_task", arguments: "{}" } }];
+    const out = sanitizeOpenAiMessages([{ role: "assistant", content: null, tool_calls: toolCalls }]);
+    expect(out).toEqual([{ role: "assistant", content: "", tool_calls: toolCalls }]);
+  });
+});

@@ -96542,12 +96542,114 @@ router10.get("/external/v1/swarm", async (req, res) => {
     res.status(500).json({ error: "Failed to get swarm status" });
   }
 });
+function extractVapiCallId(body) {
+  const rec = body;
+  const id = rec?.call && typeof rec.call.id === "string" ? rec.call.id.trim() : "";
+  return id || null;
+}
+function sanitizeOpenAiMessages(raw) {
+  const ROLES = /* @__PURE__ */ new Set(["system", "user", "assistant", "tool"]);
+  const out = [];
+  for (const item of raw.slice(-60)) {
+    const m = item ?? {};
+    const role = String(m.role ?? "");
+    if (!ROLES.has(role)) continue;
+    const content = typeof m.content === "string" ? m.content : "";
+    const msg = { role, content };
+    if (role === "assistant" && Array.isArray(m.tool_calls) && m.tool_calls.length) msg["tool_calls"] = m.tool_calls;
+    if (role === "tool") {
+      if (typeof m.tool_call_id !== "string" || !m.tool_call_id) continue;
+      msg["tool_call_id"] = m.tool_call_id;
+    }
+    if (role === "assistant" && !content && !msg["tool_calls"]) continue;
+    out.push(msg);
+  }
+  return out;
+}
+var vapiCallChannels = /* @__PURE__ */ new Map();
+async function channelForVapiCall(callId) {
+  const cached2 = vapiCallChannels.get(callId);
+  if (cached2) return cached2;
+  const marker = `vapi:${callId}`;
+  const [existing] = await db.select().from(channelsTable).where(like(channelsTable.description, `%${marker}%`)).limit(1);
+  if (existing) {
+    vapiCallChannels.set(callId, existing.id);
+    return existing.id;
+  }
+  const now = /* @__PURE__ */ new Date();
+  const p = (n) => String(n).padStart(2, "0");
+  const [ch] = await db.insert(channelsTable).values({
+    name: `voice-${p(now.getMonth() + 1)}${p(now.getDate())}-${p(now.getHours())}${p(now.getMinutes())}`,
+    type: "general",
+    description: `\u{1F4DE} Voice call via Vapi (${marker})`
+  }).returning();
+  vapiCallChannels.set(callId, ch.id);
+  await db.insert(messagesTable).values({
+    channelId: ch.id,
+    agentId: null,
+    agentName: "SYSTEM",
+    agentColor: "#7888a0",
+    content: "\u{1F4DE} Voice call connected \u2014 live transcript of this conversation follows.",
+    messageType: "system",
+    metadata: JSON.stringify({ source: "vapi", callId })
+  });
+  return ch.id;
+}
+async function logVoiceTurn(channelId, entry) {
+  if (!entry.content.trim()) return;
+  try {
+    await db.insert(messagesTable).values({
+      channelId,
+      agentId: entry.agent?.id ?? null,
+      agentName: entry.role === "user" ? "OPERATOR \u{1F4DE}" : entry.agent?.name ?? "SYSTEM",
+      agentColor: entry.role === "user" ? "#00e5ff" : entry.agent?.color ?? "#7888a0",
+      content: entry.content.slice(0, 2e4),
+      messageType: entry.role === "user" ? "user" : entry.role === "assistant" ? "agent" : "system",
+      metadata: JSON.stringify({ source: "vapi" })
+    });
+  } catch {
+  }
+}
+var VOICE_TOOLS = [
+  {
+    type: "function",
+    function: {
+      name: "dispatch_task",
+      description: "Dispatch a goal to the BOS-AURA agent swarm (research, build, analyze, post, schedule, \u2026). Fire-and-forget: the swarm works in the background. Confirm dispatch and move on.",
+      parameters: {
+        type: "object",
+        required: ["task"],
+        properties: {
+          task: { type: "string", description: "Complete, self-contained instruction for the swarm." },
+          priority: { type: "string", enum: ["normal", "high"] }
+        }
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "check_status",
+      description: "Voice-sized summary of what the swarm is doing right now (busy agents, running and recent tasks).",
+      parameters: { type: "object", properties: {} }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_last_result",
+      description: "ABBY's most recent final result, cleaned up for speech.",
+      parameters: { type: "object", properties: {} }
+    }
+  }
+];
 router10.post("/external/v1/chat/completions", async (req, res) => {
   const {
     model = "abby",
     messages = [],
     stream = false,
-    max_tokens: maxTokensRaw = 1024
+    max_tokens: maxTokensRaw = 1024,
+    tools: callerTools
   } = req.body ?? {};
   const max_tokens = Math.min(8192, Math.max(1, Number(maxTokensRaw) || 1024));
   if (!Array.isArray(messages)) {
@@ -96570,7 +96672,108 @@ router10.post("/external/v1/chat/completions", async (req, res) => {
   }
   const agentModel = agent.model ?? ABBY_DEFAULT_MODEL;
   const systemPrompt = (AGENT_PERSONAS2[agentId] ?? `You are ${agent.name}, an AI agent in the ABBY CLAW swarm.`) + ANTI_HALLUCINATION_DIRECTIVE;
-  const orMessages = [{ role: "system", content: systemPrompt }, ...messages];
+  const sanitized = sanitizeOpenAiMessages(messages);
+  const orMessages = [{ role: "system", content: systemPrompt }, ...sanitized];
+  const callId = extractVapiCallId(req.body);
+  if (callId) {
+    const sendSSE = (payload) => {
+      if (payload === "[DONE]") {
+        res.write("data: [DONE]\n\n");
+        return;
+      }
+      res.write(`data: ${JSON.stringify(payload)}
+
+`);
+    };
+    if (stream) {
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+      res.setHeader("X-Accel-Buffering", "no");
+      res.flushHeaders();
+    }
+    let channelId = DEFAULT_CHANNEL_ID3;
+    try {
+      channelId = await channelForVapiCall(callId);
+      const lastUser = [...sanitized].reverse().find((m) => m["role"] === "user");
+      if (lastUser) await logVoiceTurn(channelId, { role: "user", content: String(lastUser["content"] ?? "") });
+      const working = [...orMessages];
+      let finalText = "";
+      for (let round = 0; round < 4; round++) {
+        const { r } = await llmFetch(agentModel, {
+          messages: working,
+          tools: VOICE_TOOLS,
+          tool_choice: "auto",
+          stream: false,
+          max_tokens: Math.min(max_tokens, 400)
+        });
+        if (!r.ok) {
+          const errText = (await r.text()).slice(0, 200);
+          req.log.error({ status: r.status, errText }, "Voice turn: provider error");
+          finalText = "I hit a model provider error just now. Give me a second and ask again.";
+          break;
+        }
+        const data = await r.json();
+        const msg = data.choices?.[0]?.message;
+        const toolCalls = Array.isArray(msg?.tool_calls) ? msg.tool_calls : [];
+        if (toolCalls.length === 0) {
+          finalText = (msg?.content ?? "").trim();
+          break;
+        }
+        working.push({ role: "assistant", content: msg?.content ?? "", tool_calls: toolCalls });
+        for (const tc of toolCalls.slice(0, 3)) {
+          const name = String(tc.function?.name ?? "");
+          let args = {};
+          try {
+            args = JSON.parse(tc.function?.arguments || "{}");
+          } catch {
+          }
+          const result = await runVapiTool(name, args, req.log, { channelId });
+          working.push({ role: "tool", tool_call_id: tc.id, content: result });
+          await logVoiceTurn(channelId, { role: "system", content: `\u{1F6E0} ${name}${args["task"] ? `: ${String(args["task"]).slice(0, 200)}` : ""} \u2192 ${result.slice(0, 300)}` });
+        }
+      }
+      if (!finalText) finalText = "Done. Anything else?";
+      finalText = voiceify(finalText, 1200);
+      await logVoiceTurn(channelId, { role: "assistant", content: finalText, agent: { id: agent.id, name: agent.name, color: agent.color } });
+      if (stream) {
+        const id = `chatcmpl-voice-${Date.now()}`;
+        const chunk = (delta, finish = null) => ({
+          id,
+          object: "chat.completion.chunk",
+          created: Math.floor(Date.now() / 1e3),
+          model,
+          choices: [{ index: 0, delta, finish_reason: finish }]
+        });
+        sendSSE(chunk({ role: "assistant" }));
+        for (const piece of finalText.match(/[^.!?]+[.!?]*\s*/g) ?? [finalText]) sendSSE(chunk({ content: piece }));
+        sendSSE(chunk({}, "stop"));
+        sendSSE("[DONE]");
+        res.end();
+      } else {
+        res.json({
+          id: `chatcmpl-voice-${Date.now()}`,
+          object: "chat.completion",
+          created: Math.floor(Date.now() / 1e3),
+          model,
+          choices: [{ index: 0, message: { role: "assistant", content: finalText }, finish_reason: "stop" }],
+          usage: {}
+        });
+      }
+    } catch (err) {
+      req.log.error({ err, callId }, "Voice turn failed");
+      if (stream) {
+        sendSSE({ id: "chatcmpl-voice-err", object: "chat.completion.chunk", created: Math.floor(Date.now() / 1e3), model, choices: [{ index: 0, delta: { role: "assistant", content: "Something broke on my side \u2014 try that again." }, finish_reason: null }] });
+        sendSSE({ id: "chatcmpl-voice-err", object: "chat.completion.chunk", created: Math.floor(Date.now() / 1e3), model, choices: [{ index: 0, delta: {}, finish_reason: "stop" }] });
+        sendSSE("[DONE]");
+        res.end();
+      } else {
+        res.status(500).json({ error: String(err) });
+      }
+    }
+    return;
+  }
+  const passthroughTools = Array.isArray(callerTools) && callerTools.length ? { tools: callerTools.slice(0, 32), tool_choice: "auto" } : {};
   if (stream) {
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
@@ -96587,7 +96790,7 @@ router10.post("/external/v1/chat/completions", async (req, res) => {
 `);
     };
     try {
-      const { r: orRes } = await llmFetch(agentModel, { stream: true, messages: orMessages, max_tokens });
+      const { r: orRes } = await llmFetch(agentModel, { stream: true, messages: orMessages, max_tokens, ...passthroughTools });
       if (!orRes.ok) {
         const errText = await orRes.text();
         sendSSE({ error: errText.slice(0, 300) });
@@ -96633,15 +96836,17 @@ router10.post("/external/v1/chat/completions", async (req, res) => {
     return;
   }
   try {
-    const { r: orRes } = await llmFetch(agentModel, { messages: orMessages, max_tokens });
+    const { r: orRes } = await llmFetch(agentModel, { messages: orMessages, max_tokens, ...passthroughTools });
     const data = await orRes.json();
-    const content = data.choices?.[0]?.message?.content ?? "";
+    const message = data.choices?.[0]?.message;
+    const content = message?.content ?? "";
+    const toolCalls = Array.isArray(message?.tool_calls) && message.tool_calls.length ? { tool_calls: message.tool_calls } : {};
     res.json({
       id: `chatcmpl-openclaw-${Date.now()}`,
       object: "chat.completion",
       created: Math.floor(Date.now() / 1e3),
       model,
-      choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: "stop" }],
+      choices: [{ index: 0, message: { role: "assistant", content, ...toolCalls }, finish_reason: Object.keys(toolCalls).length ? "tool_calls" : "stop" }],
       usage: data.usage ?? {}
     });
   } catch (err) {
@@ -96753,7 +96958,7 @@ function parseVapiToolCalls(body) {
 function voiceify(text2, max = 1200) {
   return text2.replace(/```[\s\S]*?```/g, " (code omitted) ").replace(/^#{1,6}\s+/gm, "").replace(/[*_`|>]/g, "").replace(/\[(.*?)\]\((.*?)\)/g, "$1").replace(/\s+/g, " ").trim().slice(0, max);
 }
-async function runVapiTool(name, args, log) {
+async function runVapiTool(name, args, log, opts) {
   switch (name) {
     case "dispatch_task": {
       const task = String(args["task"] ?? "").trim();
@@ -96762,7 +96967,9 @@ async function runVapiTool(name, args, log) {
       const connectedAccount = requestsConnectedAccountAction(task);
       void orchestrateGoal({
         goal: task,
-        channelId: DEFAULT_CHANNEL_ID3,
+        // Voice dispatches report into the call's own channel, so the results
+        // land in the same chat as the conversation that asked for them.
+        channelId: opts?.channelId ?? DEFAULT_CHANNEL_ID3,
         priority,
         ...connectedAccount ? { forceAgentId: COMPOSIO_AGENT_ID2 } : {}
       }).catch((err) => log.error({ err }, "Vapi dispatch_task: orchestrateGoal crashed"));
@@ -96792,16 +96999,35 @@ async function runVapiTool(name, args, log) {
   }
 }
 router10.post("/external/v1/vapi/webhook", async (req, res) => {
+  const message = req.body?.message;
+  const callId = extractVapiCallId(message) ?? extractVapiCallId(req.body);
   const calls = parseVapiToolCalls(req.body);
   if (calls.length === 0) {
+    try {
+      const type = String(message?.["type"] ?? "");
+      if (callId && type === "end-of-call-report") {
+        const channelId2 = await channelForVapiCall(callId);
+        const analysis = message?.["analysis"] ?? {};
+        const summary = String(message?.["summary"] ?? analysis["summary"] ?? "").trim();
+        await logVoiceTurn(channelId2, { role: "system", content: `\u{1F4DE} Call ended.${summary ? ` Summary: ${summary.slice(0, 2e3)}` : ""}` });
+        vapiCallChannels.delete(callId);
+      } else if (callId && type === "status-update" && String(message?.["status"] ?? "") === "ended") {
+        const channelId2 = await channelForVapiCall(callId);
+        await logVoiceTurn(channelId2, { role: "system", content: "\u{1F4DE} Call ended." });
+        vapiCallChannels.delete(callId);
+      }
+    } catch (err) {
+      req.log.error({ err, callId }, "Vapi lifecycle event handling failed");
+    }
     res.status(200).json({ results: [] });
     return;
   }
+  const channelId = callId ? await channelForVapiCall(callId).catch(() => DEFAULT_CHANNEL_ID3) : DEFAULT_CHANNEL_ID3;
   const results = [];
   for (const call of calls) {
     let result;
     try {
-      result = await runVapiTool(call.name, call.args, req.log);
+      result = await runVapiTool(call.name, call.args, req.log, { channelId });
     } catch (err) {
       req.log.error({ err, tool: call.name }, "Vapi tool failed");
       result = `error: the ${call.name} tool failed \u2014 ${String(err).slice(0, 160)}`;

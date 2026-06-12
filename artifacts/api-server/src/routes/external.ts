@@ -149,12 +149,154 @@ router.get("/external/v1/swarm", async (req, res) => {
 // ─── POST /api/external/v1/chat/completions ──────────────────────────────────
 // OpenAI-compatible. Use `model` = agent name (abby, forge, vault…) or "abby" default.
 // Supports stream: true (SSE) and stream: false (JSON).
+//
+// VOICE MODE (Vapi custom-LLM): Vapi includes the live `call` object in every
+// request. When a call id is present, the request takes the voice path:
+//   - one dashboard channel is created per call (the phone conversation is a
+//     chat of its own, with the live transcript logged into it), and
+//   - the swarm tools (dispatch_task / check_status / get_last_result) are
+//     executed INLINE in the model loop — the voice agent never depends on
+//     Vapi's separate tool-server round trip, so a tool turn can't dead-end
+//     into silence, and the result is spoken in the same breath.
+
+/** Pull the Vapi call id out of a custom-LLM request or webhook message. */
+export function extractVapiCallId(body: unknown): string | null {
+  const rec = body as { call?: { id?: unknown } } | null | undefined;
+  const id = rec?.call && typeof rec.call.id === "string" ? rec.call.id.trim() : "";
+  return id || null;
+}
+
+/**
+ * Keep only OpenAI-valid roles and shapes: Vapi (and other external callers)
+ * interleave assistant turns with null content, tool messages, and metadata
+ * roles that NIM rejects with a 400 — which reads as "the agent went silent".
+ */
+export function sanitizeOpenAiMessages(raw: unknown[]): Array<Record<string, unknown>> {
+  const ROLES = new Set(["system", "user", "assistant", "tool"]);
+  const out: Array<Record<string, unknown>> = [];
+  for (const item of raw.slice(-60)) {
+    const m = (item ?? {}) as { role?: unknown; content?: unknown; tool_calls?: unknown; tool_call_id?: unknown };
+    const role = String(m.role ?? "");
+    if (!ROLES.has(role)) continue;
+    const content = typeof m.content === "string" ? m.content : "";
+    const msg: Record<string, unknown> = { role, content };
+    if (role === "assistant" && Array.isArray(m.tool_calls) && m.tool_calls.length) msg["tool_calls"] = m.tool_calls;
+    if (role === "tool") {
+      if (typeof m.tool_call_id !== "string" || !m.tool_call_id) continue;
+      msg["tool_call_id"] = m.tool_call_id;
+    }
+    // Drop empty assistant filler turns (no text, no tool calls) — they are
+    // Vapi bookkeeping, and some NIM models refuse empty assistant content.
+    if (role === "assistant" && !content && !msg["tool_calls"]) continue;
+    out.push(msg);
+  }
+  return out;
+}
+
+// One dashboard channel per live phone call, keyed by Vapi call id. The
+// description carries a `vapi:<id>` marker so a server restart mid-call finds
+// the existing channel instead of opening a duplicate.
+const vapiCallChannels = new Map<string, number>();
+
+async function channelForVapiCall(callId: string): Promise<number> {
+  const cached = vapiCallChannels.get(callId);
+  if (cached) return cached;
+  const marker = `vapi:${callId}`;
+  const [existing] = await db
+    .select()
+    .from(channelsTable)
+    .where(like(channelsTable.description, `%${marker}%`))
+    .limit(1);
+  if (existing) {
+    vapiCallChannels.set(callId, existing.id);
+    return existing.id;
+  }
+  const now = new Date();
+  const p = (n: number) => String(n).padStart(2, "0");
+  const [ch] = await db
+    .insert(channelsTable)
+    .values({
+      name: `voice-${p(now.getMonth() + 1)}${p(now.getDate())}-${p(now.getHours())}${p(now.getMinutes())}`,
+      type: "general",
+      description: `📞 Voice call via Vapi (${marker})`,
+    })
+    .returning();
+  vapiCallChannels.set(callId, ch.id);
+  await db.insert(messagesTable).values({
+    channelId: ch.id,
+    agentId: null,
+    agentName: "SYSTEM",
+    agentColor: "#7888a0",
+    content: "📞 Voice call connected — live transcript of this conversation follows.",
+    messageType: "system",
+    metadata: JSON.stringify({ source: "vapi", callId }),
+  });
+  return ch.id;
+}
+
+/** Best-effort transcript line; a logging failure must never break the call. */
+async function logVoiceTurn(
+  channelId: number,
+  entry: { role: "user" | "assistant" | "system"; content: string; agent?: { id: number; name: string; color: string | null } },
+): Promise<void> {
+  if (!entry.content.trim()) return;
+  try {
+    await db.insert(messagesTable).values({
+      channelId,
+      agentId: entry.agent?.id ?? null,
+      agentName: entry.role === "user" ? "OPERATOR 📞" : (entry.agent?.name ?? "SYSTEM"),
+      agentColor: entry.role === "user" ? "#00e5ff" : (entry.agent?.color ?? "#7888a0"),
+      content: entry.content.slice(0, 20_000),
+      messageType: entry.role === "user" ? "user" : entry.role === "assistant" ? "agent" : "system",
+      metadata: JSON.stringify({ source: "vapi" }),
+    });
+  } catch { /* transcript is best-effort */ }
+}
+
+// The swarm tools offered to the voice model — same contract as the Vapi
+// custom tools, but executed inline by this server (see runVapiTool).
+const VOICE_TOOLS = [
+  {
+    type: "function",
+    function: {
+      name: "dispatch_task",
+      description:
+        "Dispatch a goal to the BOS-AURA agent swarm (research, build, analyze, post, schedule, …). Fire-and-forget: the swarm works in the background. Confirm dispatch and move on.",
+      parameters: {
+        type: "object",
+        required: ["task"],
+        properties: {
+          task: { type: "string", description: "Complete, self-contained instruction for the swarm." },
+          priority: { type: "string", enum: ["normal", "high"] },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "check_status",
+      description: "Voice-sized summary of what the swarm is doing right now (busy agents, running and recent tasks).",
+      parameters: { type: "object", properties: {} },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_last_result",
+      description: "ABBY's most recent final result, cleaned up for speech.",
+      parameters: { type: "object", properties: {} },
+    },
+  },
+];
+
 router.post("/external/v1/chat/completions", async (req, res) => {
   const {
     model = "abby",
     messages = [],
     stream = false,
     max_tokens: maxTokensRaw = 1024,
+    tools: callerTools,
   } = req.body ?? {};
 
   // Clamp max_tokens to a sane window so a caller can't drive cost/abuse with a
@@ -178,12 +320,112 @@ router.post("/external/v1/chat/completions", async (req, res) => {
   }
   if (!agent) { res.status(404).json({ error: `Agent '${model}' not found` }); return; }
 
-  // Provider routing (NVIDIA NIM vs OpenRouter) + fallback model remapping.
-  // llmFetch (used below) also carries the NIM auth circuit-breaker.
+  // llmFetch (used below) carries the NIM key rotation + circuit breakers.
   const agentModel = agent.model ?? ABBY_DEFAULT_MODEL;
 
   const systemPrompt = (AGENT_PERSONAS[agentId] ?? `You are ${agent.name}, an AI agent in the ABBY CLAW swarm.`) + ANTI_HALLUCINATION_DIRECTIVE;
-  const orMessages = [{ role: "system", content: systemPrompt }, ...messages];
+  const sanitized = sanitizeOpenAiMessages(messages);
+  const orMessages = [{ role: "system", content: systemPrompt }, ...sanitized];
+
+  // ── VOICE MODE — a live Vapi phone call ────────────────────────────────────
+  const callId = extractVapiCallId(req.body);
+  if (callId) {
+    const sendSSE = (payload: object | "[DONE]") => {
+      if (payload === "[DONE]") { res.write("data: [DONE]\n\n"); return; }
+      res.write(`data: ${JSON.stringify(payload)}\n\n`);
+    };
+    if (stream) {
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+      res.setHeader("X-Accel-Buffering", "no");
+      res.flushHeaders();
+    }
+    let channelId = DEFAULT_CHANNEL_ID;
+    try {
+      channelId = await channelForVapiCall(callId);
+      const lastUser = [...sanitized].reverse().find((m) => m["role"] === "user");
+      if (lastUser) await logVoiceTurn(channelId, { role: "user", content: String(lastUser["content"] ?? "") });
+
+      // Inline agentic loop: short turns, the call's own channel for dispatch.
+      const working: Array<Record<string, unknown>> = [...orMessages];
+      let finalText = "";
+      for (let round = 0; round < 4; round++) {
+        const { r } = await llmFetch(agentModel, {
+          messages: working,
+          tools: VOICE_TOOLS,
+          tool_choice: "auto",
+          stream: false,
+          max_tokens: Math.min(max_tokens, 400),
+        });
+        if (!r.ok) {
+          const errText = (await r.text()).slice(0, 200);
+          req.log.error({ status: r.status, errText }, "Voice turn: provider error");
+          finalText = "I hit a model provider error just now. Give me a second and ask again.";
+          break;
+        }
+        const data = (await r.json()) as { choices?: Array<{ message?: { content?: string | null; tool_calls?: Array<{ id: string; function?: { name?: string; arguments?: string } }> } }> };
+        const msg = data.choices?.[0]?.message;
+        const toolCalls = Array.isArray(msg?.tool_calls) ? msg.tool_calls : [];
+        if (toolCalls.length === 0) {
+          finalText = (msg?.content ?? "").trim();
+          break;
+        }
+        working.push({ role: "assistant", content: msg?.content ?? "", tool_calls: toolCalls });
+        for (const tc of toolCalls.slice(0, 3)) {
+          const name = String(tc.function?.name ?? "");
+          let args: Record<string, unknown> = {};
+          try { args = JSON.parse(tc.function?.arguments || "{}") as Record<string, unknown>; } catch { /* leave {} */ }
+          const result = await runVapiTool(name, args, req.log, { channelId });
+          working.push({ role: "tool", tool_call_id: tc.id, content: result });
+          await logVoiceTurn(channelId, { role: "system", content: `🛠 ${name}${args["task"] ? `: ${String(args["task"]).slice(0, 200)}` : ""} → ${result.slice(0, 300)}` });
+        }
+      }
+      if (!finalText) finalText = "Done. Anything else?";
+      finalText = voiceify(finalText, 1200);
+      await logVoiceTurn(channelId, { role: "assistant", content: finalText, agent: { id: agent.id, name: agent.name, color: agent.color } });
+
+      if (stream) {
+        const id = `chatcmpl-voice-${Date.now()}`;
+        const chunk = (delta: object, finish: string | null = null) => ({
+          id, object: "chat.completion.chunk", created: Math.floor(Date.now() / 1000), model,
+          choices: [{ index: 0, delta, finish_reason: finish }],
+        });
+        sendSSE(chunk({ role: "assistant" }));
+        // Sentence-sized chunks so TTS starts speaking without waiting for the tail.
+        for (const piece of finalText.match(/[^.!?]+[.!?]*\s*/g) ?? [finalText]) sendSSE(chunk({ content: piece }));
+        sendSSE(chunk({}, "stop"));
+        sendSSE("[DONE]");
+        res.end();
+      } else {
+        res.json({
+          id: `chatcmpl-voice-${Date.now()}`,
+          object: "chat.completion",
+          created: Math.floor(Date.now() / 1000),
+          model,
+          choices: [{ index: 0, message: { role: "assistant", content: finalText }, finish_reason: "stop" }],
+          usage: {},
+        });
+      }
+    } catch (err) {
+      req.log.error({ err, callId }, "Voice turn failed");
+      if (stream) {
+        sendSSE({ id: "chatcmpl-voice-err", object: "chat.completion.chunk", created: Math.floor(Date.now() / 1000), model, choices: [{ index: 0, delta: { role: "assistant", content: "Something broke on my side — try that again." }, finish_reason: null }] });
+        sendSSE({ id: "chatcmpl-voice-err", object: "chat.completion.chunk", created: Math.floor(Date.now() / 1000), model, choices: [{ index: 0, delta: {}, finish_reason: "stop" }] });
+        sendSSE("[DONE]");
+        res.end();
+      } else {
+        res.status(500).json({ error: String(err) });
+      }
+    }
+    return;
+  }
+
+  // Non-voice external callers may bring their own OpenAI tools; pass them
+  // through so the model can answer with tool_calls.
+  const passthroughTools = Array.isArray(callerTools) && callerTools.length
+    ? { tools: callerTools.slice(0, 32), tool_choice: "auto" }
+    : {};
 
   // ── Streaming response ───────────────────────────────────────────────────
   if (stream) {
@@ -199,7 +441,7 @@ router.post("/external/v1/chat/completions", async (req, res) => {
     };
 
     try {
-      const { r: orRes } = await llmFetch(agentModel, { stream: true, messages: orMessages, max_tokens });
+      const { r: orRes } = await llmFetch(agentModel, { stream: true, messages: orMessages, max_tokens, ...passthroughTools });
 
       if (!orRes.ok) {
         const errText = await orRes.text();
@@ -241,18 +483,20 @@ router.post("/external/v1/chat/completions", async (req, res) => {
 
   // ── Non-streaming response ───────────────────────────────────────────────
   try {
-    const { r: orRes } = await llmFetch(agentModel, { messages: orMessages, max_tokens });
+    const { r: orRes } = await llmFetch(agentModel, { messages: orMessages, max_tokens, ...passthroughTools });
     const data = await orRes.json() as {
-      choices?: { message?: { content?: string } }[];
+      choices?: { message?: { content?: string; tool_calls?: unknown[] } }[];
       usage?: object;
     };
-    const content = data.choices?.[0]?.message?.content ?? "";
+    const message = data.choices?.[0]?.message;
+    const content = message?.content ?? "";
+    const toolCalls = Array.isArray(message?.tool_calls) && message.tool_calls.length ? { tool_calls: message.tool_calls } : {};
     res.json({
       id: `chatcmpl-openclaw-${Date.now()}`,
       object: "chat.completion",
       created: Math.floor(Date.now() / 1000),
       model,
-      choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: "stop" }],
+      choices: [{ index: 0, message: { role: "assistant", content, ...toolCalls }, finish_reason: Object.keys(toolCalls).length ? "tool_calls" : "stop" }],
       usage: data.usage ?? {},
     });
   } catch (err) {
@@ -425,7 +669,12 @@ export function voiceify(text: string, max = 1200): string {
     .slice(0, max);
 }
 
-async function runVapiTool(name: string, args: Record<string, unknown>, log: { error: (o: unknown, m: string) => void }): Promise<string> {
+async function runVapiTool(
+  name: string,
+  args: Record<string, unknown>,
+  log: { error: (o: unknown, m: string) => void },
+  opts?: { channelId?: number },
+): Promise<string> {
   switch (name) {
     case "dispatch_task": {
       const task = String(args["task"] ?? "").trim();
@@ -436,7 +685,9 @@ async function runVapiTool(name: string, args: Record<string, unknown>, log: { e
       const connectedAccount = requestsConnectedAccountAction(task);
       void orchestrateGoal({
         goal: task,
-        channelId: DEFAULT_CHANNEL_ID,
+        // Voice dispatches report into the call's own channel, so the results
+        // land in the same chat as the conversation that asked for them.
+        channelId: opts?.channelId ?? DEFAULT_CHANNEL_ID,
         priority,
         ...(connectedAccount ? { forceAgentId: COMPOSIO_AGENT_ID } : {}),
       }).catch((err: unknown) => log.error({ err }, "Vapi dispatch_task: orchestrateGoal crashed"));
@@ -474,18 +725,40 @@ async function runVapiTool(name: string, args: Record<string, unknown>, log: { e
 }
 
 router.post("/external/v1/vapi/webhook", async (req, res) => {
+  const message = (req.body as { message?: Record<string, unknown> } | null)?.message;
+  // The call id rides inside message.call on webhook events — map it to the
+  // call's own channel so tool dispatches and lifecycle notes land there.
+  const callId = extractVapiCallId(message) ?? extractVapiCallId(req.body);
+
   const calls = parseVapiToolCalls(req.body);
-  // Non-tool-call server messages (status-update, end-of-call-report, …) are
-  // acknowledged so Vapi doesn't retry them.
   if (calls.length === 0) {
+    // Call lifecycle events get logged into the call's channel; everything
+    // else is acknowledged so Vapi doesn't retry it.
+    try {
+      const type = String(message?.["type"] ?? "");
+      if (callId && type === "end-of-call-report") {
+        const channelId = await channelForVapiCall(callId);
+        const analysis = (message?.["analysis"] ?? {}) as Record<string, unknown>;
+        const summary = String(message?.["summary"] ?? analysis["summary"] ?? "").trim();
+        await logVoiceTurn(channelId, { role: "system", content: `📞 Call ended.${summary ? ` Summary: ${summary.slice(0, 2000)}` : ""}` });
+        vapiCallChannels.delete(callId);
+      } else if (callId && type === "status-update" && String(message?.["status"] ?? "") === "ended") {
+        const channelId = await channelForVapiCall(callId);
+        await logVoiceTurn(channelId, { role: "system", content: "📞 Call ended." });
+        vapiCallChannels.delete(callId);
+      }
+    } catch (err) {
+      req.log.error({ err, callId }, "Vapi lifecycle event handling failed");
+    }
     res.status(200).json({ results: [] });
     return;
   }
+  const channelId = callId ? await channelForVapiCall(callId).catch(() => DEFAULT_CHANNEL_ID) : DEFAULT_CHANNEL_ID;
   const results: Array<{ toolCallId: string; result: string }> = [];
   for (const call of calls) {
     let result: string;
     try {
-      result = await runVapiTool(call.name, call.args, req.log);
+      result = await runVapiTool(call.name, call.args, req.log, { channelId });
     } catch (err) {
       req.log.error({ err, tool: call.name }, "Vapi tool failed");
       result = `error: the ${call.name} tool failed — ${String(err).slice(0, 160)}`;
