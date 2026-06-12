@@ -13,6 +13,8 @@ import {
   BookOpen,
   ExternalLink,
   RefreshCw,
+  Globe,
+  LogIn,
 } from "lucide-react";
 import {
   useListVaultSecrets,
@@ -217,6 +219,7 @@ function VaultPanel() {
             { id: "integrations", label: "Integrations" },
             { id: "social", label: "Social" },
             { id: "connect-apps", label: "Connect Apps" },
+            { id: "website-logins", label: "Website Logins" },
             { id: "vault", label: "Vault" },
           ].map((s) => (
             <button
@@ -241,6 +244,25 @@ function VaultPanel() {
 
           {/* Composio — connect SaaS apps (Gmail, Slack, GitHub, …). First-class, permanent. */}
           <div id="connect-apps" className="scroll-mt-20"><ComposioIntegrations /></div>
+
+          {/* Website Logins — store a site's login so the Steel browser fallback can sign in. */}
+          <div id="website-logins" className="scroll-mt-20">
+            <SiteLogins
+              secrets={secrets}
+              onSave={(slug, email, password, site, url) =>
+                Promise.all([
+                  setSecret.mutateAsync({ data: { name: `${slug}_EMAIL`, value: email, description: `Website login for ${site}${url ? ` (${url})` : ""}` } }),
+                  setSecret.mutateAsync({ data: { name: `${slug}_PASSWORD`, value: password, description: `Website login password for ${site}` } }),
+                ]).then(() => invalidate())
+              }
+              onRemove={(slug) =>
+                Promise.all([
+                  deleteSecret.mutateAsync({ name: `${slug}_EMAIL` }),
+                  deleteSecret.mutateAsync({ name: `${slug}_PASSWORD` }),
+                ]).then(() => invalidate())
+              }
+            />
+          </div>
 
           {/* Security notice */}
           <div className="flex gap-3 rounded-lg border border-[#bf00ff]/30 bg-[#bf00ff]/5 p-4">
@@ -268,14 +290,9 @@ function VaultPanel() {
             </div>
 
             <p className="text-xs text-muted-foreground leading-relaxed">
-              Store API keys here, or a website login so the swarm can operate it for you when the
-              site has no API. For a site login, add two secrets — e.g.{" "}
-              <code className="px-1 py-0.5 rounded bg-muted text-foreground font-mono">MYSITE_EMAIL</code>{" "}
-              and{" "}
-              <code className="px-1 py-0.5 rounded bg-muted text-foreground font-mono">MYSITE_PASSWORD</code>{" "}
-              — then ask the swarm to do the task on that site; it logs in via a Steel browser using
-              these by name. Values are encrypted and never shown to the agents. For Gmail/Google,
-              prefer <span className="text-foreground">Connect Apps</span> (OAuth) above instead of a stored password.
+              Store API keys and other secrets here. To save a <span className="text-foreground">website login</span> for
+              the browser fallback, use the <span className="text-foreground">Website Logins</span> tab above — it sets
+              this up for you. Values are encrypted and never shown to the agents.
             </p>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -585,6 +602,128 @@ function SocialIntegrations() {
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * Website Logins — a first-class, guided way to store a site's login so the
+ * Steel browser fallback (browser_login) can sign in for the operator. A single
+ * "site + email + password" entry is stored as the NAME_EMAIL / NAME_PASSWORD
+ * vault pair the swarm references by name.
+ */
+function SiteLogins({
+  secrets,
+  onSave,
+  onRemove,
+}: {
+  secrets: Array<{ id?: number | string; name: string; description?: string | null }>;
+  onSave: (slug: string, email: string, password: string, site: string, url: string) => Promise<unknown>;
+  onRemove: (slug: string) => Promise<unknown>;
+}) {
+  const [site, setSite] = useState("");
+  const [url, setUrl] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const slug = site.trim().toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+
+  // Existing site logins = every NAME_EMAIL that has a matching NAME_PASSWORD.
+  const logins = secrets
+    .filter((s) => /_EMAIL$/.test(s.name) && secrets.some((p) => p.name === s.name.replace(/_EMAIL$/, "_PASSWORD")))
+    .map((s) => ({ base: s.name.replace(/_EMAIL$/, ""), desc: s.description ?? "" }));
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    if (!slug) { setError("Enter a site name."); return; }
+    if (!email.trim() || !password) { setError("Email/username and password are required."); return; }
+    setSaving(true);
+    try {
+      await onSave(slug, email.trim(), password, site.trim(), url.trim());
+      setSite(""); setUrl(""); setEmail(""); setPassword("");
+      toast.success(`Saved login for ${slug} — the swarm can now sign in to this site.`);
+    } catch {
+      setError("Couldn't save the login. Check the server logs.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const inputCls = "w-full bg-background border border-muted-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:border-[#00e5ff] transition-colors";
+
+  return (
+    <section className="rounded-lg border border-card-border bg-card p-6 space-y-5">
+      <div className="flex items-start gap-3">
+        <div className="w-10 h-10 rounded-lg bg-muted border border-muted-border flex items-center justify-center shrink-0">
+          <Globe className="w-5 h-5 text-[#00e5ff]" />
+        </div>
+        <div>
+          <h2 className="text-lg font-bold text-foreground">Website Logins</h2>
+          <p className="text-sm text-muted-foreground mt-1 leading-relaxed">
+            For a site with <span className="text-foreground">no connected API</span>, save your login here and the swarm
+            signs in for you with a Steel browser when you ask it to do something there. Credentials are encrypted and
+            never shown to the agents. For Gmail/Google, use <span className="text-foreground">Connect Apps</span> (OAuth) instead.
+          </p>
+        </div>
+      </div>
+
+      <form onSubmit={submit} className="space-y-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="space-y-1.5">
+            <label className="text-xs uppercase tracking-wider text-muted-foreground font-mono">Site name</label>
+            <input value={site} onChange={(e) => setSite(e.target.value)} placeholder="My Site" className={inputCls} />
+            {slug && <p className="text-[11px] text-muted-foreground font-mono">stored as {slug}_EMAIL / {slug}_PASSWORD</p>}
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-xs uppercase tracking-wider text-muted-foreground font-mono">Login URL <span className="opacity-50">(optional)</span></label>
+            <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://mysite.com/login" className={`${inputCls} font-mono`} />
+          </div>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="space-y-1.5">
+            <label className="text-xs uppercase tracking-wider text-muted-foreground font-mono">Email / username</label>
+            <input value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="off" placeholder="you@example.com" className={inputCls} />
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-xs uppercase tracking-wider text-muted-foreground font-mono">Password</label>
+            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" placeholder="••••••••••••" className={`${inputCls} font-mono`} />
+          </div>
+        </div>
+        {error && <p className="text-sm text-[#ff2d78]">{error}</p>}
+        <button
+          type="submit"
+          disabled={saving}
+          className="flex items-center gap-2 bg-[#00e5ff]/10 hover:bg-[#00e5ff]/20 border border-[#00e5ff]/50 text-[#00e5ff] rounded-md px-4 py-2 text-sm font-semibold uppercase tracking-wider transition-colors disabled:opacity-50"
+        >
+          <LogIn className="w-4 h-4" />
+          {saving ? "Encrypting…" : "Save login"}
+        </button>
+      </form>
+
+      {logins.length > 0 && (
+        <div className="space-y-2 pt-2">
+          <div className="text-xs uppercase tracking-widest text-muted-foreground font-mono">Saved logins ({logins.length})</div>
+          {logins.map((l) => (
+            <div key={l.base} className="flex items-center gap-4 rounded-lg border border-card-border bg-card px-4 py-3">
+              <Globe className="w-4 h-4 text-[#00e5ff] shrink-0" />
+              <div className="min-w-0 flex-1">
+                <div className="font-mono text-sm text-foreground truncate">{l.base}</div>
+                <div className="text-xs text-muted-foreground truncate">{l.desc || `${l.base}_EMAIL · ${l.base}_PASSWORD`}</div>
+              </div>
+              <button
+                onClick={() => onRemove(l.base).then(() => toast.success(`Removed ${l.base} login.`)).catch(() => toast.error("Couldn't remove login."))}
+                title="Remove login"
+                className="text-muted-foreground hover:text-[#ff2d78] transition-colors shrink-0"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 
