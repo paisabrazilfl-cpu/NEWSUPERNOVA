@@ -94997,7 +94997,36 @@ asking them to confirm, or asking for an input they ALREADY provided \u2014 when
 connected tool or named account could have done the task is an automatic FAIL:
 the swarm under-read a command as a question. The operator's short or repeated
 commands ("Report", "do it", "you have the tool") are orders; a briefing that
-answers them with a question instead of the completed action does NOT solve.`;
+answers them with a question instead of the completed action does NOT solve.
+VERIFIED IMPOSSIBILITY IS A SOLUTION: if the briefing proves with verbatim tool
+evidence that the target does not exist (e.g. an HTTP 404 from a real lookup),
+that the task is outside the swarm's tools, or that it is blocked on an input
+ONLY the operator holds (a secret, a private-repo grant, a path on the
+operator's machine the operator never provided), then naming that blocker IS
+the answer \u2014 mark it solved. Demanding the swarm "force" a result past such
+evidence invites fabrication and is itself a violation.
+DIRECTIVES MUST BE EXECUTABLE: every corrective directive must be achievable
+with the swarm's REAL tools (web search/scrape, HTTP, isolated code exec,
+memory, connected accounts). The CLAWs' sandbox CANNOT see the application
+repository, the operator's filesystem, or any local path \u2014 never direct an
+agent to clone, open, inspect, build, or test local files or the codebase.`;
+var OUT_OF_SCOPE_DIRECTIVE_PATTERNS = [
+  /\bclone\b/i,
+  // git clone — no git, no filesystem
+  /\blocal\s+(file|files|path|paths|director(?:y|ies)|repo|repository|environment|machine|filesystem)\b/i,
+  /\bfilesystem\b/i,
+  /(^|[\s"'`(])\/workspace\//,
+  // sandbox-relative paths that do not exist
+  /\b(?:operator|user)'s\s+(?:machine|environment|filesystem|computer|laptop)\b/i,
+  /\b(?:pnpm|npm|yarn|tsc|vitest|playwright)\b/i,
+  // toolchain runs against the repo
+  /\b(?:inspect|read|open|audit|browse|modify|edit|patch|fix|build|test)\b[^.]*\bcodebase\b/i,
+  /\bcodebase\b[^.]*\b(?:inspect|read|open|audit|browse|modify|edit|patch|fix|build|test)\b/i,
+  /\brun\s+the\s+(?:build|tests?)\b/i
+];
+function directiveIsExecutable(text2) {
+  return !OUT_OF_SCOPE_DIRECTIVE_PATTERNS.some((re) => re.test(text2));
+}
 function parseSolutionVerdict(raw) {
   const start = raw.indexOf("{");
   const end = raw.lastIndexOf("}");
@@ -95708,7 +95737,23 @@ _Note: the solution-gate verifier returned an unreadable verdict, so this answer
             }
             break;
           }
-          const fixes = parseDirectives(verdictRaw, claws).slice(0, 2);
+          const proposed = parseDirectives(verdictRaw, claws).slice(0, 2);
+          const fixes = proposed.filter((f) => directiveIsExecutable(f.directive));
+          if (!directiveIsExecutable(verdict.reason) || proposed.length > 0 && fixes.length === 0) {
+            await postMessage({
+              channelId,
+              agentId: ABBY_ID2,
+              agentName: "ABBY",
+              agentColor: abby?.color ?? ABBY_COLOR,
+              content: `Solution gate verdict overridden: the verifier demanded actions outside the swarm's toolset (no repo or local-filesystem access) \u2014 "${(verdict.reason || "unspecified").slice(0, 300)}". Accepting the briefing as the verified answer.`,
+              messageType: "system"
+            });
+            finalAnswer += `
+
+---
+_Solution-gate note: the verifier objected that the swarm should have done something outside its real toolset (it has no access to the repository or any local filesystem), so that objection was overridden. The briefing above is the swarm's verified answer; any remaining blocker is stated in it and is the operator's to resolve._`;
+            break;
+          }
           const budgetLeft = solveRoundsUsed < MAX_SOLVE_CYCLES;
           await postMessage({
             channelId,
