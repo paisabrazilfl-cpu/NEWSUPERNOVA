@@ -202,7 +202,7 @@ describe("llmFetch — rotation, breaker, and stall failover", () => {
     expect(seen).toEqual(["Bearer nvapi-a", "Bearer nvapi-b"]);
   });
 
-  it("rejected on EVERY pooled key: marks NIM unhealthy and returns the honest failure (Buddy is the caller's fallback) — zero off-NVIDIA traffic", async () => {
+  it("rejected on EVERY pooled key: marks NIM unhealthy and returns the honest failure — zero off-NVIDIA traffic", async () => {
     process.env["NVIDIA_API_KEY"] = "nvapi-a,nvapi-b";
     process.env["OPENROUTER_API_KEY"] = "or-test"; // present but must never be used
     const urls: string[] = [];
@@ -213,7 +213,7 @@ describe("llmFetch — rotation, breaker, and stall failover", () => {
       return jsonResponse(403);
     }));
     const { r, req } = await llmFetch("z-ai/glm-5.1", { messages: [] });
-    // The failure is surfaced honestly (the orchestrator's Buddy fallback takes it from here).
+    // The failure is surfaced honestly to the caller.
     expect(r.status).toBe(403);
     expect(req.provider).toBe("nvidia-nim");
     expect(nimHealthy()).toBe(false);
@@ -314,7 +314,7 @@ describe("llmFetch — rotation, breaker, and stall failover", () => {
     expect(modelStalled("nvidia/nemotron-3-ultra-550b-a55b")).toBe(false);
   });
 
-  it("FINAL ESCAPE (NIM-only): 429 on every key + backoff retry → NIM marked degraded and the failure surfaced honestly for the Buddy fallback — zero off-NVIDIA traffic", async () => {
+  it("FINAL ESCAPE (NIM-only): 429 on every key + backoff retry → NIM marked degraded and the failure surfaced honestly — zero off-NVIDIA traffic", async () => {
     process.env["NVIDIA_API_KEY"] = "nvapi-valid-but-throttled";
     process.env["OPENROUTER_API_KEY"] = "or-test"; // present but must never be used
     process.env["NIM_429_BACKOFF_MS"] = "5";
@@ -324,9 +324,9 @@ describe("llmFetch — rotation, breaker, and stall failover", () => {
       return jsonResponse(429);
     }));
     const { r, req } = await llmFetch("nvidia/nemotron-3-ultra-550b-a55b", { messages: [] });
-    // OpenRouter is removed: the throttle is surfaced honestly (orchestrator's
-    // Buddy fallback takes it from here) — it is NOT silently rerouted to a
-    // third-party router with no credits (the source of the live 402 outage).
+    // OpenRouter is removed: the throttle is surfaced honestly — it is NOT
+    // silently rerouted to a third-party router with no credits (the source
+    // of the live 402 outage).
     expect(r.status).toBe(429);
     expect(req.provider).toBe("nvidia-nim");
     expect(urls.length).toBeGreaterThanOrEqual(2); // initial + backoff retry at minimum

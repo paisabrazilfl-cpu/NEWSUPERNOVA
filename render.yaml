@@ -39,15 +39,6 @@ services:
         sync: false
       - key: FIRECRAWL_API_KEY
         sync: false
-      - key: NEUROBUDDY_API_KEY
-        sync: false
-      # Buddy AI fallback LLM
-      - key: BUDDY_API_KEY
-        sync: false
-      - key: BUDDY_BASE_URL
-        sync: false
-      - key: BUDDY_MODEL
-        value: bos-omega
       # Composio tool/auth router (execution off by default)
       - key: COMPOSIO_API_KEY
         sync: false

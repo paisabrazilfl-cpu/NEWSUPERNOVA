@@ -181,26 +181,15 @@ export function buildPostCaption(a: AuraState, w: WorldState, voice?: string[] |
   ].join("\n");
 }
 
-/** One LLM turn (NIM/OpenRouter → Buddy fallback), short + bounded. Returns text or null. */
+/** One LLM turn (NVIDIA NIM), short + bounded. Returns text or null. */
 async function llmOnce(system: string, user: string, maxTokens = 160): Promise<string | null> {
   const model = process.env["WORLD_VOICE_MODEL"] ?? "x-ai/grok-4.3";
   try {
-    // llmFetch throws when no provider key is configured — fall to Buddy. It
-    // also carries the NIM auth circuit-breaker (bad NVIDIA key → OpenRouter).
+    // llmFetch throws when no provider key is configured. It also carries the
+    // NIM auth circuit-breaker and key-pool rotation.
     const { r } = await llmFetch(model, { messages: [{ role: "system", content: system }, { role: "user", content: user }], max_tokens: maxTokens, temperature: 0.95 });
     if (r.ok) { const d = (await r.json()) as { choices?: Array<{ message?: { content?: string } }> }; const t = d.choices?.[0]?.message?.content?.trim(); if (t) return t; }
-  } catch { /* fall through to Buddy */ }
-  const bKey = process.env["BUDDY_API_KEY"], bBase = process.env["BUDDY_BASE_URL"];
-  if (bKey && bBase) {
-    try {
-      const r = await fetch(`${bBase.replace(/\/$/, "")}/chat/completions`, {
-        method: "POST", headers: { Authorization: `Bearer ${bKey}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ model: process.env["BUDDY_MODEL"] ?? "bos-omega", messages: [{ role: "system", content: system }, { role: "user", content: user }], max_tokens: maxTokens }),
-        signal: AbortSignal.timeout(20000),
-      });
-      if (r.ok) { const d = (await r.json()) as { choices?: Array<{ message?: { content?: string } }> }; const t = d.choices?.[0]?.message?.content?.trim(); if (t) return t; }
-    } catch { /* give up -> templates */ }
-  }
+  } catch { /* give up -> templates */ }
   return null;
 }
 

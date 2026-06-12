@@ -3,7 +3,7 @@
  *
  * This is what makes the swarm REAL instead of scripted text:
  *  - ABBY (Grok) decomposes an operator goal into concrete per-CLAW directives.
- *  - Each target CLAW actually executes its directive via its real OpenRouter model.
+ *  - Each target CLAW actually executes its directive via its real NIM model.
  *  - CRAWLER (browser agent) runs a real Steel scrape when a URL is present and
  *    feeds the real web content back into its reasoning.
  *  - Real messages, tool calls, tasks, monologue lines, agent status, and command
@@ -28,8 +28,6 @@ import {
   AGENT_PERSONAS,
   ABBY_ID,
   resolveModel,
-  buddyConfigured,
-  buddyComplete,
   ANTI_HALLUCINATION_DIRECTIVE,
   TOOL_CALL_DISCIPLINE,
   EXECUTION_DOCTRINE,
@@ -270,7 +268,7 @@ export async function reconcileStaleWork(): Promise<void> {
 // ─── Low-level helpers ───────────────────────────────────────────────────────
 
 /**
- * Non-streaming OpenRouter completion. Returns the assistant text. `maxTokens`
+ * Non-streaming NIM completion. Returns the assistant text. `maxTokens`
  * defaults to a small budget (planning/review emit short JSON), but callers that
  * produce the operator-facing deliverable (final synthesis) pass a larger budget
  * so a 10/10 answer isn't truncated.
@@ -280,27 +278,16 @@ export async function reconcileStaleWork(): Promise<void> {
  * engine is 429-rate-limited or 5xxing). A Mistral NIM build — a different
  * model family from the nemotron/qwen/deepseek CLAW primaries, all served from
  * the same NVIDIA NIM endpoint — so a CLAW-model outage stays inside the swarm
- * (and inside NVIDIA) instead of dropping straight to Buddy.
+ * (and inside NVIDIA).
  */
 const SECONDARY_CHAT_MODEL = "mistralai/mistral-medium-3.5-128b";
-
-/**
- * The Buddy endpoint hosts its own personality (BOS-OMEGA, a "predictive
- * cognitive engine") that overrides our system prompt and REFUSES to act as a
- * CLAW — observed live: directives answered with "identity is BOS-OMEGA, not
- * WIRE" and cognition-theater GLOBAL_STATE blocks, recorded as successful runs.
- * Any fallback output showing that identity is junk, not a result.
- */
-export function buddyIdentityJunk(text: string): boolean {
-  return /\bBOS[-_ ]?OMEGA\b|predictive cognitive|cognitive (engine|architecture|system)|psychological intervention|GLOBAL_STATE/i.test(text);
-}
 
 async function completeChat(model: string, system: string, user: string, maxTokens = 800): Promise<string> {
   const startedAt = new Date();
   let r: Response;
   try {
-    // llmFetch carries the NIM auth circuit-breaker: a rejected NVIDIA key
-    // trips it and the same payload retries on OpenRouter immediately.
+    // llmFetch carries the NIM auth circuit-breaker and key-pool rotation: a
+    // rejected NVIDIA key advances to the next pooled key before failing.
     ({ r } = await llmFetch(model, {
       messages: [
         { role: "system", content: system },
@@ -346,9 +333,9 @@ async function completeChat(model: string, system: string, user: string, maxToke
         }
       }
     }
-    // First fallback: the swarm's secondary model (different provider pool).
-    // A 429 on a CLAW's qwen/deepseek pool must stay inside the swarm — the
-    // secondary keeps the persona/system prompt intact, unlike Buddy.
+    // Last resort: the swarm's secondary model (different NIM pool). A 429 on
+    // a CLAW's qwen/deepseek pool must stay inside the swarm — the secondary
+    // keeps the persona/system prompt intact.
     try {
       const primary = chatRequestFor(model);
       const fb = chatRequestFor(SECONDARY_CHAT_MODEL);
@@ -378,24 +365,6 @@ async function completeChat(model: string, system: string, user: string, maxToke
       }
     } catch (e) {
       logger.warn({ e }, "secondary-model fallback failed after primary error");
-    }
-    // Last resort: Buddy — but its hosted BOS-OMEGA personality overrides our
-    // system prompt; reject identity junk instead of recording it as a result.
-    if (buddyConfigured()) {
-      try {
-        const out = await buddyComplete(
-          [
-            { role: "system", content: system },
-            { role: "user", content: user },
-          ],
-          maxTokens,
-        );
-        if (buddyIdentityJunk(out)) throw new Error("Buddy answered as BOS-OMEGA (hosted personality), not as the agent — unusable");
-        traceLlmRun({ name: "completeChat", model: "buddy-fallback", input: { system, user }, output: out, startedAt });
-        return out;
-      } catch (e) {
-        logger.warn({ e }, "Buddy fallback failed after OpenRouter error");
-      }
     }
     traceLlmRun({ name: "completeChat", model, input: { system, user }, output: null, startedAt, error: `NVIDIA NIM ${r.status}: ${errText}` });
     throw new Error(`NVIDIA NIM ${r.status}: ${errText}`);
@@ -428,7 +397,7 @@ type ChatMessage =
   | { role: "tool"; tool_call_id: string; name: string; content: string };
 
 /**
- * One OpenRouter chat turn that may request tools. Returns the raw assistant
+ * One NIM chat turn that may request tools. Returns the raw assistant
  * message (content and/or tool_calls). Falls back to a tool-free call if the
  * model/provider rejects the `tools` parameter.
  */
@@ -442,8 +411,8 @@ async function completeChatTurn(
     payload["tools"] = tools;
     payload["tool_choice"] = "auto";
   }
-  // llmFetch carries the NIM auth circuit-breaker: a rejected NVIDIA key trips
-  // it and the same payload retries on OpenRouter immediately.
+  // llmFetch carries the NIM auth circuit-breaker and key-pool rotation: a
+  // rejected NVIDIA key advances to the next pooled key before failing.
   let { r, req: llmReq } = await llmFetch(model, payload);
   if (!r.ok && tools.length) {
     // Some providers reject function-calling — retry once without tools.
@@ -474,9 +443,9 @@ async function completeChatTurn(
         logger.warn({ e, budget }, "402 budget-fit retry failed (tool turn); falling through");
       }
     }
-    // First fallback: the swarm's secondary model, WITH tools — so a 429 on
-    // the CLAW's own pool keeps the agent fully operational (persona + tool
-    // calling) instead of degrading to a tool-free Buddy turn.
+    // Last resort: the swarm's secondary model, WITH tools — so a 429 on the
+    // CLAW's own pool keeps the agent fully operational (persona + tool
+    // calling).
     try {
       const fb = chatRequestFor(SECONDARY_CHAT_MODEL);
       if (fb.model !== llmReq.model || fb.url !== llmReq.url) {
@@ -497,21 +466,6 @@ async function completeChatTurn(
       }
     } catch (e) {
       logger.warn({ e }, "secondary-model fallback failed (tool turn)");
-    }
-    // Last resort: Buddy (tool-free) — reject its hosted BOS-OMEGA identity
-    // junk so a refused persona never masquerades as a completed directive.
-    if (buddyConfigured()) {
-      try {
-        const textMessages = messages.map((m) => ({
-          role: m.role,
-          content: typeof (m as { content?: unknown }).content === "string" ? (m as { content: string }).content : "",
-        }));
-        const out = await buddyComplete(textMessages, 2048);
-        if (buddyIdentityJunk(out)) throw new Error("Buddy answered as BOS-OMEGA (hosted personality), not as the agent — unusable");
-        return { role: "assistant", content: out };
-      } catch (e) {
-        logger.warn({ e }, "Buddy fallback failed after OpenRouter error (tool turn)");
-      }
     }
     throw new Error(`NVIDIA NIM ${r.status}: ${errText}`);
   }
@@ -570,7 +524,7 @@ async function postMessage(opts: {
 /**
  * Execute one already-created command end-to-end as a genuinely autonomous,
  * tool-using agent:
- *  - The CLAW reasons over the directive with its real OpenRouter model.
+ *  - The CLAW reasons over the directive with its real NIM model.
  *  - It decides for itself which of its permitted tools to call (web_scrape,
  *    web_screenshot, http_request, code_exec, memory_write, memory_search) via
  *    native function-calling, in a bounded loop (MAX_AGENT_STEPS).

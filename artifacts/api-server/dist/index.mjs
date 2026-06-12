@@ -20502,27 +20502,27 @@ var require_router = __commonJS({
     var slice = Array.prototype.slice;
     var flatten = Array.prototype.flat;
     var methods = METHODS.map((method) => method.toLowerCase());
-    module.exports = Router20;
+    module.exports = Router19;
     module.exports.Route = Route;
-    function Router20(options) {
-      if (!(this instanceof Router20)) {
-        return new Router20(options);
+    function Router19(options) {
+      if (!(this instanceof Router19)) {
+        return new Router19(options);
       }
       const opts = options || {};
-      function router20(req, res, next) {
-        router20.handle(req, res, next);
+      function router19(req, res, next) {
+        router19.handle(req, res, next);
       }
-      Object.setPrototypeOf(router20, this);
-      router20.caseSensitive = opts.caseSensitive;
-      router20.mergeParams = opts.mergeParams;
-      router20.params = {};
-      router20.strict = opts.strict;
-      router20.stack = [];
-      return router20;
+      Object.setPrototypeOf(router19, this);
+      router19.caseSensitive = opts.caseSensitive;
+      router19.mergeParams = opts.mergeParams;
+      router19.params = {};
+      router19.strict = opts.strict;
+      router19.stack = [];
+      return router19;
     }
-    Router20.prototype = function() {
+    Router19.prototype = function() {
     };
-    Router20.prototype.param = function param(name, fn) {
+    Router19.prototype.param = function param(name, fn) {
       if (!name) {
         throw new TypeError("argument name is required");
       }
@@ -20542,7 +20542,7 @@ var require_router = __commonJS({
       params.push(fn);
       return this;
     };
-    Router20.prototype.handle = function handle(req, res, callback) {
+    Router19.prototype.handle = function handle(req, res, callback) {
       if (!callback) {
         throw new TypeError("argument callback is required");
       }
@@ -20669,7 +20669,7 @@ var require_router = __commonJS({
         }
       }
     };
-    Router20.prototype.use = function use(handler) {
+    Router19.prototype.use = function use(handler) {
       let offset = 0;
       let path3 = "/";
       if (typeof handler !== "function") {
@@ -20702,7 +20702,7 @@ var require_router = __commonJS({
       }
       return this;
     };
-    Router20.prototype.route = function route(path3) {
+    Router19.prototype.route = function route(path3) {
       const route2 = new Route(path3);
       const layer = new Layer(path3, {
         sensitive: this.caseSensitive,
@@ -20717,7 +20717,7 @@ var require_router = __commonJS({
       return route2;
     };
     methods.concat("all").forEach(function(method) {
-      Router20.prototype[method] = function(path3) {
+      Router19.prototype[method] = function(path3) {
         const route = this.route(path3);
         route[method].apply(route, slice.call(arguments, 1));
         return this;
@@ -20900,13 +20900,13 @@ var require_application = __commonJS({
     var compileTrust = require_utils3().compileTrust;
     var resolve = __require("node:path").resolve;
     var once = require_once();
-    var Router20 = require_router();
+    var Router19 = require_router();
     var slice = Array.prototype.slice;
     var flatten = Array.prototype.flat;
     var app2 = exports = module.exports = {};
     var trustProxyDefaultSymbol = "@@symbol:trust_proxy_default";
     app2.init = function init() {
-      var router20 = null;
+      var router19 = null;
       this.cache = /* @__PURE__ */ Object.create(null);
       this.engines = /* @__PURE__ */ Object.create(null);
       this.settings = /* @__PURE__ */ Object.create(null);
@@ -20915,13 +20915,13 @@ var require_application = __commonJS({
         configurable: true,
         enumerable: true,
         get: function getrouter() {
-          if (router20 === null) {
-            router20 = new Router20({
+          if (router19 === null) {
+            router19 = new Router19({
               caseSensitive: this.enabled("case sensitive routing"),
               strict: this.enabled("strict routing")
             });
           }
-          return router20;
+          return router19;
         }
       });
     };
@@ -20992,15 +20992,15 @@ var require_application = __commonJS({
       if (fns.length === 0) {
         throw new TypeError("app.use() requires a middleware function");
       }
-      var router20 = this.router;
+      var router19 = this.router;
       fns.forEach(function(fn2) {
         if (!fn2 || !fn2.handle || !fn2.set) {
-          return router20.use(path3, fn2);
+          return router19.use(path3, fn2);
         }
         debug(".use app under %s", path3);
         fn2.mountpath = path3;
         fn2.parent = this;
-        router20.use(path3, function mounted_app(req, res, next) {
+        router19.use(path3, function mounted_app(req, res, next) {
           var orig = req.app;
           fn2.handle(req, res, function(err) {
             Object.setPrototypeOf(req, orig.request);
@@ -23573,7 +23573,7 @@ var require_express = __commonJS({
     var EventEmitter = __require("node:events").EventEmitter;
     var mixin = require_merge_descriptors();
     var proto2 = require_application();
-    var Router20 = require_router();
+    var Router19 = require_router();
     var req = require_request();
     var res = require_response();
     exports = module.exports = createApplication;
@@ -23595,8 +23595,8 @@ var require_express = __commonJS({
     exports.application = proto2;
     exports.request = req;
     exports.response = res;
-    exports.Route = Router20.Route;
-    exports.Router = Router20;
+    exports.Route = Router19.Route;
+    exports.Router = Router19;
     exports.json = bodyParser.json;
     exports.raw = bodyParser.raw;
     exports.static = require_serve_static();
@@ -28105,7 +28105,7 @@ var require_pino = __commonJS({
     function pinoBundlerAbsolutePath(p) {
       try {
         const path3 = __require("path");
-        const outputDir = "/home/runner/work/BOS-AURA/BOS-AURA/artifacts/api-server/dist";
+        const outputDir = "/home/user/BOS-AURA/artifacts/api-server/dist";
         return path3.resolve(outputDir, p.replace(/^\.\//, ""));
       } catch (e) {
         const f = new Function("p", "return new URL(p, import.meta.url).pathname");
@@ -54353,7 +54353,7 @@ function reportNimHttpFailure(status) {
     nimDisabledUntil = Date.now() + NIM_AUTH_COOLDOWN_MS;
     logger.error(
       { status, cooldownMinutes: NIM_AUTH_COOLDOWN_MS / 6e4 },
-      "NVIDIA NIM rejected the API key \u2014 marked unhealthy; calls will fail to Buddy until fixed. Fix/rotate NVIDIA_API_KEY on the server."
+      "NVIDIA NIM rejected the API key \u2014 marked unhealthy; calls will fail until fixed. Fix/rotate NVIDIA_API_KEY on the server."
     );
   }
 }
@@ -54374,7 +54374,7 @@ function reportNimDegraded(reason) {
   nimDegradedUntil = Date.now() + nimDegradedCooldownMs();
   logger.error(
     { reason, cooldownMs: nimDegradedCooldownMs() },
-    "NVIDIA NIM is throttled/overloaded on every pooled key \u2014 marked degraded for the cooldown; Buddy is the only fallback."
+    "NVIDIA NIM is throttled/overloaded on every pooled key \u2014 marked degraded for the cooldown."
   );
 }
 function modelStalled(model) {
@@ -54882,7 +54882,6 @@ function integrationStatus() {
   const has = (k) => !!process.env[k];
   return [
     { key: "nvidia-nim", name: "NVIDIA NIM", category: "llm", envVar: "NVIDIA_API_KEY", configured: has("NVIDIA_API_KEY") },
-    { key: "neurobuddy", name: "Buddy AI (NeuroBuddy)", category: "llm", envVar: "NEUROBUDDY_API_KEY", configured: has("NEUROBUDDY_API_KEY") },
     { key: "helicone", name: "Helicone", category: "observability", envVar: "HELICONE_API_KEY", configured: has("HELICONE_API_KEY") },
     { key: "langsmith", name: "LangSmith (LangChain)", category: "observability", envVar: "LANGSMITH_API_KEY", configured: langsmithEnabled() },
     { key: "embeddings", name: "Embeddings (semantic memory)", category: "memory", envVar: "EMBEDDINGS_API_KEY", configured: has("EMBEDDINGS_API_KEY") },
@@ -54894,8 +54893,7 @@ function integrationStatus() {
     { key: "inngest", name: "Inngest", category: "events", envVar: "INNGEST_EVENT_KEY", configured: has("INNGEST_EVENT_KEY") },
     { key: "e2b", name: "E2B", category: "sandbox", envVar: "E2B_API_KEY", configured: has("E2B_API_KEY") },
     { key: "composio", name: "Composio", category: "tools", envVar: "COMPOSIO_API_KEY", configured: has("COMPOSIO_API_KEY") },
-    { key: "image-generation", name: "Image generation (image_generate)", category: "tools", envVar: "OPENAI_API_KEY", configured: has("OPENAI_API_KEY") || has("IMAGE_API_KEY") },
-    { key: "buddy", name: "Buddy AI (fallback LLM)", category: "llm", envVar: "BUDDY_API_KEY", configured: has("BUDDY_API_KEY") && has("BUDDY_BASE_URL") }
+    { key: "image-generation", name: "Image generation (image_generate)", category: "tools", envVar: "OPENAI_API_KEY", configured: has("OPENAI_API_KEY") || has("IMAGE_API_KEY") }
   ];
 }
 var NVIDIA_NIM_BASE, HELICONE_GATEWAY, nimKeyIndex, NIM_AUTH_COOLDOWN_MS, nimDisabledUntil, nimDegradedUntil, MODEL_STALL_COOLDOWN_MS, modelStallUntil, NIM_PREFIXES, NIM_MODEL_FALLBACKS, NIM_GENERIC_FALLBACK, NIM_FAST_MODEL, E2B_PKG, E2B_TIMEOUT_MS;
@@ -66496,20 +66494,20 @@ var require_router2 = __commonJS({
     function createConnectRouter(routerOptions) {
       const base = whichProtocols(routerOptions);
       const handlers = [];
-      const router20 = {
+      const router19 = {
         handlers,
         service: (service, implementation, options) => {
           const { protocols } = whichProtocols(options, base);
           handlers.push(...(0, universal_handler_js_1.createUniversalServiceHandlers)((0, implementation_js_1.createServiceImplSpec)(service, implementation), protocols));
-          return router20;
+          return router19;
         },
         rpc: (method, impl, opt) => {
           const { protocols } = whichProtocols(opt, base);
           handlers.push((0, universal_handler_js_1.createUniversalMethodHandler)((0, implementation_js_1.createMethodImplSpec)(method, impl), protocols));
-          return router20;
+          return router19;
         }
       };
-      return router20;
+      return router19;
     }
     function whichProtocols(options, base) {
       if (base && !options) {
@@ -67128,9 +67126,9 @@ var require_router_transport = __commonJS({
     var router_js_1 = require_router2();
     function createRouterTransport(routes, options) {
       var _a, _b;
-      const router20 = (0, router_js_1.createConnectRouter)(Object.assign(Object.assign({}, (_a = options === null || options === void 0 ? void 0 : options.router) !== null && _a !== void 0 ? _a : {}), { connect: true }));
-      routes(router20);
-      return (0, transport_js_1.createTransport)(Object.assign({ httpClient: (0, universal_handler_client_js_1.createUniversalHandlerClient)(router20.handlers), baseUrl: "https://in-memory", useBinaryFormat: true, interceptors: [], acceptCompression: [], sendCompression: null, compressMinBytes: Number.MAX_SAFE_INTEGER, readMaxBytes: Number.MAX_SAFE_INTEGER, writeMaxBytes: Number.MAX_SAFE_INTEGER }, (_b = options === null || options === void 0 ? void 0 : options.transport) !== null && _b !== void 0 ? _b : {}));
+      const router19 = (0, router_js_1.createConnectRouter)(Object.assign(Object.assign({}, (_a = options === null || options === void 0 ? void 0 : options.router) !== null && _a !== void 0 ? _a : {}), { connect: true }));
+      routes(router19);
+      return (0, transport_js_1.createTransport)(Object.assign({ httpClient: (0, universal_handler_client_js_1.createUniversalHandlerClient)(router19.handlers), baseUrl: "https://in-memory", useBinaryFormat: true, interceptors: [], acceptCompression: [], sendCompression: null, compressMinBytes: Number.MAX_SAFE_INTEGER, readMaxBytes: Number.MAX_SAFE_INTEGER, writeMaxBytes: Number.MAX_SAFE_INTEGER }, (_b = options === null || options === void 0 ? void 0 : options.transport) !== null && _b !== void 0 ? _b : {}));
     }
   }
 });
@@ -87395,7 +87393,7 @@ async function renderContentCard(opts = {}) {
   });
   ctx.fillStyle = DIM;
   ctx.font = `22pt ${MONO}`;
-  ctx.fillText("bos-omega \u2014 execution mode", 150, 34 + 22);
+  ctx.fillText("bos-aura \u2014 execution mode", 150, 34 + 22);
   ctx.fillStyle = GREEN;
   ctx.font = `18pt ${MONO}`;
   ctx.fillText("\u25CF live", W - 140, 38 + 18);
@@ -87451,7 +87449,7 @@ async function renderContentCard(opts = {}) {
       put(ln, 55, y, 50, INK);
       y += 66;
     }
-    put(opts.body ?? "\u2014 bos-omega field notes", 55, y + 24, 28, CYAN);
+    put(opts.body ?? "\u2014 bos-aura field notes", 55, y + 24, 28, CYAN);
   } else {
     let y = 224;
     for (const ln of wrap(head, 52, W - 90)) {
@@ -87744,23 +87742,6 @@ async function llmOnce(system, user, maxTokens = 160) {
       if (t) return t;
     }
   } catch {
-  }
-  const bKey = process.env["BUDDY_API_KEY"], bBase = process.env["BUDDY_BASE_URL"];
-  if (bKey && bBase) {
-    try {
-      const r = await fetch(`${bBase.replace(/\/$/, "")}/chat/completions`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${bKey}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ model: process.env["BUDDY_MODEL"] ?? "bos-omega", messages: [{ role: "system", content: system }, { role: "user", content: user }], max_tokens: maxTokens }),
-        signal: AbortSignal.timeout(2e4)
-      });
-      if (r.ok) {
-        const d = await r.json();
-        const t = d.choices?.[0]?.message?.content?.trim();
-        if (t) return t;
-      }
-    } catch {
-    }
   }
   return null;
 }
@@ -89803,13 +89784,13 @@ ${clip3(res.body, 4e3)}`;
 });
 
 // src/app.ts
-var import_express20 = __toESM(require_express2(), 1);
+var import_express19 = __toESM(require_express2(), 1);
 var import_cors = __toESM(require_lib3(), 1);
 var import_cookie_parser = __toESM(require_cookie_parser(), 1);
 var import_pino_http = __toESM(require_logger(), 1);
 
 // src/routes/index.ts
-var import_express19 = __toESM(require_express2(), 1);
+var import_express18 = __toESM(require_express2(), 1);
 
 // src/routes/health.ts
 var import_express = __toESM(require_express2(), 1);
@@ -94552,27 +94533,6 @@ function resolveModel(agentId, agentModel, override) {
   }
   return candidate;
 }
-function buddyConfigured() {
-  return !!(process.env["BUDDY_API_KEY"] && process.env["BUDDY_BASE_URL"]);
-}
-async function buddyComplete(messages, maxTokens = 1024) {
-  const key = process.env["BUDDY_API_KEY"];
-  const base = process.env["BUDDY_BASE_URL"];
-  if (!key || !base) throw new Error("Buddy fallback is not configured");
-  const model = process.env["BUDDY_MODEL"] ?? "bos-omega";
-  const r = await fetch(`${base.replace(/\/$/, "")}/chat/completions`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${key}`,
-      "Content-Type": "application/json",
-      ...heliconeHeaders()
-    },
-    body: JSON.stringify({ model, messages, max_tokens: maxTokens })
-  });
-  if (!r.ok) throw new Error(`Buddy ${r.status}: ${(await r.text()).slice(0, 200)}`);
-  const data = await r.json();
-  return data.choices?.[0]?.message?.content?.trim() || "(no response)";
-}
 var NIM_FEATURED_MODELS = [
   { id: "moonshotai/kimi-k2.6", name: "Moonshot Kimi K2.6 (NIM, fast)", context_length: 262144 },
   { id: "meta/llama-3.1-8b-instruct", name: "Meta Llama 3.1 8B (NIM, fast)", context_length: 131072 },
@@ -94702,24 +94662,6 @@ ${a.extractedText}` });
     sendEvent({ done: true, agentId: agent.id, agentName: agent.name, model: usedModel });
     res.end();
   };
-  const tryBuddyFallback = async (reason) => {
-    if (!buddyConfigured()) return false;
-    try {
-      const buddyMessages = chatMessages.map((m) => ({
-        role: m.role,
-        content: typeof m.content === "string" ? m.content : m.content.map((p) => p.type === "text" ? p.text : "[image attachment]").join("\n")
-      }));
-      const text2 = await buddyComplete(buddyMessages, 700);
-      if (!text2.trim() || text2 === "(no response)") return false;
-      sendEvent({ token: text2 });
-      req.log.warn({ reason }, "AI chat fell back to Buddy");
-      await finishWith(text2, process.env["BUDDY_MODEL"] ?? "bos-omega", "buddy-fallback");
-      return true;
-    } catch (e) {
-      req.log.error({ e }, "Buddy fallback failed in AI chat");
-      return false;
-    }
-  };
   const dispatchContext = (() => {
     const lines = history.filter((h) => typeof h.content === "string" && h.content.trim()).map((h) => `${h.role === "user" ? "Operator" : "ABBY"}: ${h.content}`);
     const transcript = lines.join("\n\n");
@@ -94832,9 +94774,7 @@ The agents are starting now; their work and results will stream into this channe
     if (!orRes.ok) {
       const errText = await orRes.text();
       req.log.error({ status: orRes.status, provider: llmReq.provider, model: llmReq.model, errText }, "LLM provider error");
-      if (await tryBuddyFallback(`${llmReq.provider} ${orRes.status}`)) return;
-      const hint = orRes.status === 402 && llmReq.provider === "openrouter" ? "OpenRouter is out of credits. Add credits, or configure BUDDY_API_KEY/BUDDY_BASE_URL for automatic fallback." : `${providerLabel(llmReq)} error ${orRes.status} (${llmReq.model}): ${errText.slice(0, 200)}`;
-      sendEvent({ error: hint });
+      sendEvent({ error: `${providerLabel(llmReq)} error ${orRes.status} (${llmReq.model}): ${errText.slice(0, 200)}` });
       sendEvent({ done: true });
       res.end();
       return;
@@ -94842,8 +94782,7 @@ The agents are starting now; their work and results will stream into this channe
     const decoder = new TextDecoder();
     const reader = orRes.body?.getReader();
     if (!reader) {
-      if (await tryBuddyFallback("no response body")) return;
-      sendEvent({ error: "No response body from OpenRouter" });
+      sendEvent({ error: "No response body from the LLM provider" });
       sendEvent({ done: true });
       res.end();
       return;
@@ -94914,18 +94853,8 @@ router7.post("/ai/complete", async (req, res) => {
   try {
     const { r, req: llmReq } = await llmFetch(model, { messages, max_tokens: 512 });
     if (!r.ok) {
-      if (buddyConfigured()) {
-        try {
-          const content2 = await buddyComplete(messages, 512);
-          res.json({ content: content2, model: process.env["BUDDY_MODEL"] ?? "bos-omega", agentId: resolvedAgentId, via: "buddy-fallback" });
-          return;
-        } catch (e) {
-          req.log.error({ e }, "Buddy fallback failed in AI complete");
-        }
-      }
       const errText = (await r.text()).slice(0, 200);
-      const hint = r.status === 402 && llmReq.provider === "openrouter" ? "OpenRouter is out of credits. Add credits or configure Buddy fallback (BUDDY_API_KEY/BUDDY_BASE_URL)." : `${providerLabel(llmReq)} error ${r.status} (${llmReq.model}): ${errText}`;
-      res.status(502).json({ error: hint });
+      res.status(502).json({ error: `${providerLabel(llmReq)} error ${r.status} (${llmReq.model}): ${errText}` });
       return;
     }
     const data = await r.json();
@@ -95068,9 +94997,6 @@ async function reconcileStaleWork() {
   }
 }
 var SECONDARY_CHAT_MODEL = "mistralai/mistral-medium-3.5-128b";
-function buddyIdentityJunk(text2) {
-  return /\bBOS[-_ ]?OMEGA\b|predictive cognitive|cognitive (engine|architecture|system)|psychological intervention|GLOBAL_STATE/i.test(text2);
-}
 async function completeChat(model, system, user, maxTokens = 800) {
   const startedAt = /* @__PURE__ */ new Date();
   let r;
@@ -95145,22 +95071,6 @@ async function completeChat(model, system, user, maxTokens = 800) {
     } catch (e) {
       logger.warn({ e }, "secondary-model fallback failed after primary error");
     }
-    if (buddyConfigured()) {
-      try {
-        const out2 = await buddyComplete(
-          [
-            { role: "system", content: system },
-            { role: "user", content: user }
-          ],
-          maxTokens
-        );
-        if (buddyIdentityJunk(out2)) throw new Error("Buddy answered as BOS-OMEGA (hosted personality), not as the agent \u2014 unusable");
-        traceLlmRun({ name: "completeChat", model: "buddy-fallback", input: { system, user }, output: out2, startedAt });
-        return out2;
-      } catch (e) {
-        logger.warn({ e }, "Buddy fallback failed after OpenRouter error");
-      }
-    }
     traceLlmRun({ name: "completeChat", model, input: { system, user }, output: null, startedAt, error: `NVIDIA NIM ${r.status}: ${errText}` });
     throw new Error(`NVIDIA NIM ${r.status}: ${errText}`);
   }
@@ -95221,19 +95131,6 @@ async function completeChatTurn(model, messages, tools) {
       }
     } catch (e) {
       logger.warn({ e }, "secondary-model fallback failed (tool turn)");
-    }
-    if (buddyConfigured()) {
-      try {
-        const textMessages = messages.map((m) => ({
-          role: m.role,
-          content: typeof m.content === "string" ? m.content : ""
-        }));
-        const out = await buddyComplete(textMessages, 2048);
-        if (buddyIdentityJunk(out)) throw new Error("Buddy answered as BOS-OMEGA (hosted personality), not as the agent \u2014 unusable");
-        return { role: "assistant", content: out };
-      } catch (e) {
-        logger.warn({ e }, "Buddy fallback failed after OpenRouter error (tool turn)");
-      }
     }
     throw new Error(`NVIDIA NIM ${r.status}: ${errText}`);
   }
@@ -96435,139 +96332,8 @@ router9.post("/steel/pdf", async (req, res) => {
 });
 var steel_default = router9;
 
-// src/routes/neurobuddy.ts
-var import_express10 = __toESM(require_express2(), 1);
-init_src();
-init_src();
-var router10 = (0, import_express10.Router)();
-var NB_BASE = "https://neurobuddy-wg8b.onrender.com/api/external/v1";
-var NB_PERSONAS = [
-  { id: "neuro-buddy", name: "NEURO-BUDDY", description: "Core NeuroBuddy intelligence" },
-  { id: "bos-omega", name: "BOS-OMEGA", description: "Boss-level omega directive system" },
-  { id: "machiavel", name: "MACHIAVEL", description: "Strategic political intelligence" },
-  { id: "jung", name: "JUNG", description: "Jungian archetype analyst" },
-  { id: "kant", name: "KANT", description: "Kantian ethics & categorical imperatives" },
-  { id: "lacan", name: "LACAN", description: "Lacanian psychoanalytic lens" }
-];
-function nbHeaders() {
-  const key = process.env["NEUROBUDDY_API_KEY"];
-  if (!key) throw new Error("NEUROBUDDY_API_KEY is not set");
-  return {
-    "Authorization": `Bearer ${key}`,
-    "Content-Type": "application/json"
-  };
-}
-router10.get("/neurobuddy/models", (_req, res) => {
-  res.json({ models: NB_PERSONAS });
-});
-router10.post("/neurobuddy/chat", async (req, res) => {
-  const { message, persona = "bos-omega", channelId } = req.body ?? {};
-  if (!message || typeof message !== "string") {
-    res.status(400).json({ error: "message is required" });
-    return;
-  }
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep-alive");
-  res.setHeader("X-Accel-Buffering", "no");
-  res.flushHeaders();
-  const sendEvent = (data) => res.write(`data: ${JSON.stringify(data)}
-
-`);
-  let fullResponse = "";
-  try {
-    const nbRes = await fetch(`${NB_BASE}/chat/completions`, {
-      method: "POST",
-      headers: nbHeaders(),
-      body: JSON.stringify({
-        model: persona,
-        stream: true,
-        messages: [{ role: "user", content: message }]
-      })
-    });
-    if (!nbRes.ok) {
-      const errText = await nbRes.text();
-      sendEvent({ error: `NeuroBuddy error ${nbRes.status}: ${errText.slice(0, 200)}` });
-      sendEvent({ done: true });
-      res.end();
-      return;
-    }
-    const decoder = new TextDecoder();
-    const reader = nbRes.body?.getReader();
-    if (!reader) {
-      sendEvent({ error: "No response body from NeuroBuddy" });
-      sendEvent({ done: true });
-      res.end();
-      return;
-    }
-    let buffer = "";
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-      for (const line2 of lines) {
-        const trimmed = line2.trim();
-        if (!trimmed || trimmed === "data: [DONE]") continue;
-        if (!trimmed.startsWith("data: ")) continue;
-        try {
-          const parsed = JSON.parse(trimmed.slice(6));
-          const token = parsed.choices?.[0]?.delta?.content;
-          if (token) {
-            fullResponse += token;
-            sendEvent({ token });
-          }
-        } catch {
-        }
-      }
-    }
-    if (fullResponse.trim() && channelId && typeof channelId === "number") {
-      await db.insert(messagesTable).values({
-        channelId,
-        agentId: null,
-        agentName: `NB:${persona.toUpperCase()}`,
-        agentColor: "#ff2d78",
-        content: fullResponse.trim(),
-        messageType: "agent",
-        metadata: JSON.stringify({ source: "neurobuddy", persona })
-      });
-    }
-    sendEvent({ done: true, persona });
-  } catch (err) {
-    req.log.error({ err }, "NeuroBuddy chat error");
-    sendEvent({ error: String(err) });
-    sendEvent({ done: true });
-  }
-  res.end();
-});
-router10.post("/neurobuddy/complete", async (req, res) => {
-  const { message, persona = "bos-omega" } = req.body ?? {};
-  if (!message || typeof message !== "string") {
-    res.status(400).json({ error: "message is required" });
-    return;
-  }
-  try {
-    const r = await fetch(`${NB_BASE}/chat/completions`, {
-      method: "POST",
-      headers: nbHeaders(),
-      body: JSON.stringify({
-        model: persona,
-        messages: [{ role: "user", content: message }]
-      })
-    });
-    const data = await r.json();
-    const content = data.choices?.[0]?.message?.content ?? "";
-    res.json({ content, persona });
-  } catch (err) {
-    req.log.error({ err }, "NeuroBuddy complete error");
-    res.status(500).json({ error: String(err) });
-  }
-});
-var neurobuddy_default = router10;
-
 // src/routes/external.ts
-var import_express11 = __toESM(require_express2(), 1);
+var import_express10 = __toESM(require_express2(), 1);
 init_src();
 init_src();
 init_drizzle_orm();
@@ -96679,7 +96445,7 @@ function requireOperator(req, res, next) {
 
 // src/routes/external.ts
 init_embeddings();
-var router11 = (0, import_express11.Router)();
+var router10 = (0, import_express10.Router)();
 var VAULT_AGENT_ID = 4;
 var COMPOSIO_AGENT_ID2 = 5;
 var DEFAULT_CHANNEL_ID3 = 1;
@@ -96722,8 +96488,8 @@ function apiKeyAuth(req, res, next) {
   }
   next();
 }
-router11.use("/external/v1", apiKeyAuth);
-router11.get("/external/v1/models", async (req, res) => {
+router10.use("/external/v1", apiKeyAuth);
+router10.get("/external/v1/models", async (req, res) => {
   try {
     const agents = await db.select().from(agentsTable);
     const data = agents.map((a) => ({
@@ -96744,7 +96510,7 @@ router11.get("/external/v1/models", async (req, res) => {
     res.status(500).json({ error: "Failed to list models" });
   }
 });
-router11.get("/external/v1/agents", async (req, res) => {
+router10.get("/external/v1/agents", async (req, res) => {
   try {
     const agents = await db.select().from(agentsTable);
     res.json({ agents });
@@ -96753,7 +96519,7 @@ router11.get("/external/v1/agents", async (req, res) => {
     res.status(500).json({ error: "Failed to list agents" });
   }
 });
-router11.get("/external/v1/swarm", async (req, res) => {
+router10.get("/external/v1/swarm", async (req, res) => {
   try {
     const [agents, channels, recent] = await Promise.all([
       db.select().from(agentsTable),
@@ -96776,7 +96542,7 @@ router11.get("/external/v1/swarm", async (req, res) => {
     res.status(500).json({ error: "Failed to get swarm status" });
   }
 });
-router11.post("/external/v1/chat/completions", async (req, res) => {
+router10.post("/external/v1/chat/completions", async (req, res) => {
   const {
     model = "abby",
     messages = [],
@@ -96883,7 +96649,7 @@ router11.post("/external/v1/chat/completions", async (req, res) => {
     res.status(500).json({ error: String(err) });
   }
 });
-router11.post("/external/v1/messages", async (req, res) => {
+router10.post("/external/v1/messages", async (req, res) => {
   const {
     content,
     agentName = "EXTERNAL",
@@ -96916,7 +96682,7 @@ router11.post("/external/v1/messages", async (req, res) => {
     res.status(500).json({ error: "Failed to post message" });
   }
 });
-router11.post("/external/v1/twin-lessons", async (req, res) => {
+router10.post("/external/v1/twin-lessons", async (req, res) => {
   const body = req.body ?? {};
   if (!Array.isArray(body.lessons)) {
     res.status(400).json({ error: "lessons array is required" });
@@ -97025,7 +96791,7 @@ async function runVapiTool(name, args, log) {
       return `error: unknown tool "${name}". Available tools: dispatch_task, check_status, get_last_result.`;
   }
 }
-router11.post("/external/v1/vapi/webhook", async (req, res) => {
+router10.post("/external/v1/vapi/webhook", async (req, res) => {
   const calls = parseVapiToolCalls(req.body);
   if (calls.length === 0) {
     res.status(200).json({ results: [] });
@@ -97044,13 +96810,13 @@ router11.post("/external/v1/vapi/webhook", async (req, res) => {
   }
   res.status(200).json({ results });
 });
-var external_default = router11;
+var external_default = router10;
 
 // src/routes/integrations.ts
-var import_express12 = __toESM(require_express2(), 1);
+var import_express11 = __toESM(require_express2(), 1);
 init_integrations();
-var router12 = (0, import_express12.Router)();
-router12.get("/integrations", (_req, res) => {
+var router11 = (0, import_express11.Router)();
+router11.get("/integrations", (_req, res) => {
   const items = integrationStatus();
   res.json({
     integrations: items,
@@ -97065,7 +96831,7 @@ function guardComposio(res) {
   }
   return true;
 }
-router12.get("/integrations/composio/toolkits", requireOperator, async (req, res) => {
+router11.get("/integrations/composio/toolkits", requireOperator, async (req, res) => {
   if (!guardComposio(res)) return;
   try {
     const search = typeof req.query["search"] === "string" ? req.query["search"] : void 0;
@@ -97075,7 +96841,7 @@ router12.get("/integrations/composio/toolkits", requireOperator, async (req, res
     res.status(502).json({ error: String(err instanceof Error ? err.message : err) });
   }
 });
-router12.get("/integrations/composio/connections", requireOperator, async (req, res) => {
+router11.get("/integrations/composio/connections", requireOperator, async (req, res) => {
   if (!guardComposio(res)) return;
   try {
     res.json({ connections: await composioListConnections() });
@@ -97084,7 +96850,7 @@ router12.get("/integrations/composio/connections", requireOperator, async (req, 
     res.status(502).json({ error: String(err instanceof Error ? err.message : err) });
   }
 });
-router12.post("/integrations/composio/connect", requireOperator, async (req, res) => {
+router11.post("/integrations/composio/connect", requireOperator, async (req, res) => {
   if (!guardComposio(res)) return;
   const { toolkit, userId } = req.body ?? {};
   if (!toolkit?.trim()) {
@@ -97099,7 +96865,7 @@ router12.post("/integrations/composio/connect", requireOperator, async (req, res
     res.status(502).json({ error: String(err instanceof Error ? err.message : err) });
   }
 });
-router12.get("/integrations/composio/connections/:id", requireOperator, async (req, res) => {
+router11.get("/integrations/composio/connections/:id", requireOperator, async (req, res) => {
   if (!guardComposio(res)) return;
   try {
     res.json(await composioConnectionStatus(String(req.params.id)));
@@ -97108,7 +96874,7 @@ router12.get("/integrations/composio/connections/:id", requireOperator, async (r
     res.status(502).json({ error: String(err instanceof Error ? err.message : err) });
   }
 });
-router12.delete("/integrations/composio/connections/:id", requireOperator, async (req, res) => {
+router11.delete("/integrations/composio/connections/:id", requireOperator, async (req, res) => {
   if (!guardComposio(res)) return;
   try {
     await composioDeleteConnection(String(req.params.id));
@@ -97118,15 +96884,15 @@ router12.delete("/integrations/composio/connections/:id", requireOperator, async
     res.status(502).json({ error: String(err instanceof Error ? err.message : err) });
   }
 });
-var integrations_default = router12;
+var integrations_default = router11;
 
 // src/routes/selfCheck.ts
-var import_express13 = __toESM(require_express2(), 1);
+var import_express12 = __toESM(require_express2(), 1);
 init_src();
 init_src();
 init_tools();
 init_integrations();
-var router13 = (0, import_express13.Router)();
+var router12 = (0, import_express12.Router)();
 var REQUIRED_TOOLS = [
   "web_search",
   "web_scrape",
@@ -97143,7 +96909,7 @@ var REQUIRED_TOOLS = [
   "vault_list"
 ];
 var REQUIRED_AGENTS = [1, 2, 3, 4, 5, 6];
-router13.get("/self-check", async (_req, res) => {
+router12.get("/self-check", async (_req, res) => {
   const checks = [];
   const assigned = /* @__PURE__ */ new Set();
   for (const list of Object.values(AGENT_TOOLS)) for (const t of list) assigned.add(t);
@@ -97202,12 +96968,12 @@ router13.get("/self-check", async (_req, res) => {
     checks
   });
 });
-var selfCheck_default = router13;
+var selfCheck_default = router12;
 
 // src/routes/auth.ts
-var import_express14 = __toESM(require_express2(), 1);
-var router14 = (0, import_express14.Router)();
-router14.post("/auth/login", (req, res) => {
+var import_express13 = __toESM(require_express2(), 1);
+var router13 = (0, import_express13.Router)();
+router13.post("/auth/login", (req, res) => {
   const password = req.body?.password;
   if (!verifyPassword(password)) {
     res.status(401).json({ error: "Invalid operator password" });
@@ -97217,24 +96983,24 @@ router14.post("/auth/login", (req, res) => {
   res.cookie(SESSION_COOKIE, token, sessionCookieOptions());
   res.status(200).json({ authenticated: true });
 });
-router14.post("/auth/logout", (_req, res) => {
+router13.post("/auth/logout", (_req, res) => {
   const opts = sessionCookieOptions();
   res.clearCookie(SESSION_COOKIE, { ...opts, maxAge: void 0 });
   res.status(200).json({ authenticated: false });
 });
-router14.get("/auth/me", (req, res) => {
+router13.get("/auth/me", (req, res) => {
   const token = req.cookies?.[SESSION_COOKIE];
   res.status(200).json({ authenticated: verifySessionToken(token) });
 });
-var auth_default = router14;
+var auth_default = router13;
 
 // src/routes/vault.ts
-var import_express15 = __toESM(require_express2(), 1);
+var import_express14 = __toESM(require_express2(), 1);
 init_src();
 init_drizzle_orm();
 init_vault2();
 init_integrations();
-var router15 = (0, import_express15.Router)();
+var router14 = (0, import_express14.Router)();
 function fmt2(row) {
   return {
     id: row.id,
@@ -97244,11 +97010,11 @@ function fmt2(row) {
     updatedAt: row.updatedAt.toISOString()
   };
 }
-router15.get("/vault", async (_req, res) => {
+router14.get("/vault", async (_req, res) => {
   const rows = await db.select().from(vaultSecretsTable).orderBy(desc(vaultSecretsTable.updatedAt));
   res.json(rows.map(fmt2));
 });
-router15.put("/vault", async (req, res) => {
+router14.put("/vault", async (req, res) => {
   const parsed = setVaultSecretSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid secret data" });
@@ -97300,7 +97066,7 @@ router15.put("/vault", async (req, res) => {
     res.status(500).json({ error: "Failed to store secret" });
   }
 });
-router15.delete("/vault/:name", async (req, res) => {
+router14.delete("/vault/:name", async (req, res) => {
   const name = req.params.name;
   try {
     const [row] = await db.delete(vaultSecretsTable).where(eq(vaultSecretsTable.name, name)).returning();
@@ -97314,13 +97080,13 @@ router15.delete("/vault/:name", async (req, res) => {
     res.status(500).json({ error: "Failed to delete secret" });
   }
 });
-var vault_default = router15;
+var vault_default = router14;
 
 // src/routes/social.ts
-var import_express16 = __toESM(require_express2(), 1);
+var import_express15 = __toESM(require_express2(), 1);
 init_connectors();
-var router16 = (0, import_express16.Router)();
-router16.get("/social/platforms", async (_req, res) => {
+var router15 = (0, import_express15.Router)();
+router15.get("/social/platforms", async (_req, res) => {
   const platforms = Object.values(PLATFORMS);
   const rows = await Promise.all(
     platforms.map(async (p) => ({
@@ -97334,14 +97100,14 @@ router16.get("/social/platforms", async (_req, res) => {
   );
   res.json(rows);
 });
-var social_default = router16;
+var social_default = router15;
 
 // src/routes/uploads.ts
-var import_express17 = __toESM(require_express2(), 1);
+var import_express16 = __toESM(require_express2(), 1);
 init_src();
 init_src();
 init_drizzle_orm();
-var router17 = (0, import_express17.Router)();
+var router16 = (0, import_express16.Router)();
 var MAX_BYTES = 20 * 1024 * 1024;
 var TEXT_MIME_RE = /^(text\/|application\/(json|xml|x-yaml|yaml|csv|javascript|typescript))/i;
 var TEXT_EXT_RE = /\.(txt|md|markdown|csv|json|ya?ml|xml|log|ts|tsx|js|jsx|py|rb|go|rs|java|c|cpp|h|sh|sql|html|css)$/i;
@@ -97350,7 +97116,7 @@ function kindFor(mime, filename) {
   if (TEXT_MIME_RE.test(mime) || TEXT_EXT_RE.test(filename)) return "text";
   return "other";
 }
-router17.post("/uploads", requireOperator, async (req, res) => {
+router16.post("/uploads", requireOperator, async (req, res) => {
   const { name, mime, dataBase64 } = req.body ?? {};
   if (!dataBase64 || typeof dataBase64 !== "string") {
     res.status(400).json({ error: "dataBase64 is required" });
@@ -97401,7 +97167,7 @@ router17.post("/uploads", requireOperator, async (req, res) => {
     res.status(500).json({ error: "failed to store upload" });
   }
 });
-router17.get("/uploads/:id", async (req, res) => {
+router16.get("/uploads/:id", async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isFinite(id)) {
     res.status(400).json({ error: "invalid id" });
@@ -97429,16 +97195,16 @@ router17.get("/uploads/:id", async (req, res) => {
     res.status(500).json({ error: "failed to read upload" });
   }
 });
-var uploads_default = router17;
+var uploads_default = router16;
 
 // src/routes/world.ts
-var import_express18 = __toESM(require_express2(), 1);
+var import_express17 = __toESM(require_express2(), 1);
 init_worldEngine();
 init_world();
 init_logger2();
-var router18 = (0, import_express18.Router)();
+var router17 = (0, import_express17.Router)();
 var cachedFrame = null;
-router18.get("/world/preview.png", async (_req, res) => {
+router17.get("/world/preview.png", async (_req, res) => {
   try {
     if (!cachedFrame) {
       cachedFrame = renderWorldFrame({
@@ -97465,7 +97231,7 @@ router18.get("/world/preview.png", async (_req, res) => {
   }
 });
 var cachedBlock = null;
-router18.get("/world/preview-block.png", async (_req, res) => {
+router17.get("/world/preview-block.png", async (_req, res) => {
   try {
     if (!cachedBlock) {
       cachedBlock = renderTraversalBlock({
@@ -97489,7 +97255,7 @@ router18.get("/world/preview-block.png", async (_req, res) => {
     res.status(500).json({ error: `block render failed: ${String(err).slice(0, 200)}` });
   }
 });
-router18.get("/world/status", async (_req, res) => {
+router17.get("/world/status", async (_req, res) => {
   try {
     const [a, w] = [await readAuraState(), await getWorldState()];
     res.json({
@@ -97515,7 +97281,7 @@ function cycleAuth(req, res, next) {
   }
   requireOperator(req, res, next);
 }
-router18.post("/world/cycle", cycleAuth, async (req, res) => {
+router17.post("/world/cycle", cycleAuth, async (req, res) => {
   try {
     const dry = req.query["dry"] !== "0";
     const force = req.query["force"] === "1";
@@ -97530,7 +97296,7 @@ router18.post("/world/cycle", cycleAuth, async (req, res) => {
     res.status(500).json({ error: String(err).slice(0, 300) });
   }
 });
-router18.post("/world/intro", cycleAuth, async (req, res) => {
+router17.post("/world/intro", cycleAuth, async (req, res) => {
   try {
     const dry = req.query["dry"] !== "0";
     if (req.query["async"] === "1") {
@@ -97543,7 +97309,7 @@ router18.post("/world/intro", cycleAuth, async (req, res) => {
     res.status(500).json({ error: String(err).slice(0, 300) });
   }
 });
-router18.post("/world/story", cycleAuth, async (req, res) => {
+router17.post("/world/story", cycleAuth, async (req, res) => {
   try {
     const dry = req.query["dry"] !== "0";
     const force = req.query["force"] === "1";
@@ -97557,7 +97323,7 @@ router18.post("/world/story", cycleAuth, async (req, res) => {
     res.status(500).json({ error: String(err).slice(0, 300) });
   }
 });
-router18.post("/world/art", cycleAuth, async (req, res) => {
+router17.post("/world/art", cycleAuth, async (req, res) => {
   try {
     const dry = req.query["dry"] !== "0";
     const force = req.query["force"] === "1";
@@ -97571,14 +97337,14 @@ router18.post("/world/art", cycleAuth, async (req, res) => {
     res.status(500).json({ error: String(err).slice(0, 300) });
   }
 });
-router18.post("/world/diag", cycleAuth, async (_req, res) => {
+router17.post("/world/diag", cycleAuth, async (_req, res) => {
   try {
     res.json(await worldDiag());
   } catch (err) {
     res.status(500).json({ error: String(err).slice(0, 300) });
   }
 });
-router18.post("/world/reset", cycleAuth, async (req, res) => {
+router17.post("/world/reset", cycleAuth, async (req, res) => {
   try {
     const w = await resetWorldState(req.query["cap"] === "1");
     res.json({ ok: true, chapter: w.chapter, step: w.step, capCleared: req.query["cap"] === "1" });
@@ -97586,36 +97352,35 @@ router18.post("/world/reset", cycleAuth, async (req, res) => {
     res.status(500).json({ error: String(err).slice(0, 300) });
   }
 });
-var world_default = router18;
+var world_default = router17;
 
 // src/routes/index.ts
-var router19 = (0, import_express19.Router)();
-router19.use(health_default);
-router19.use(auth_default);
-router19.use(external_default);
-router19.use(world_default);
-router19.use(uploads_default);
-router19.use("/agents", requireOperator, agents_default);
-router19.use("/channels", requireOperator, channels_default);
-router19.use("/tasks", requireOperator, tasks_default);
-router19.use(requireOperator, telemetry_default);
-router19.use("/swarm", requireOperator, swarm_default);
-router19.use(requireOperator, commands_default);
-router19.use(requireOperator, steel_default);
-router19.use(requireOperator, ai_default);
-router19.use(requireOperator, neurobuddy_default);
-router19.use(requireOperator, integrations_default);
-router19.use(requireOperator, selfCheck_default);
-router19.use(requireOperator, vault_default);
-router19.use(requireOperator, social_default);
-var routes_default = router19;
+var router18 = (0, import_express18.Router)();
+router18.use(health_default);
+router18.use(auth_default);
+router18.use(external_default);
+router18.use(world_default);
+router18.use(uploads_default);
+router18.use("/agents", requireOperator, agents_default);
+router18.use("/channels", requireOperator, channels_default);
+router18.use("/tasks", requireOperator, tasks_default);
+router18.use(requireOperator, telemetry_default);
+router18.use("/swarm", requireOperator, swarm_default);
+router18.use(requireOperator, commands_default);
+router18.use(requireOperator, steel_default);
+router18.use(requireOperator, ai_default);
+router18.use(requireOperator, integrations_default);
+router18.use(requireOperator, selfCheck_default);
+router18.use(requireOperator, vault_default);
+router18.use(requireOperator, social_default);
+var routes_default = router18;
 
 // src/app.ts
 init_logger2();
 import path2 from "path";
 import fs2 from "fs";
 import { fileURLToPath as fileURLToPath2 } from "url";
-var app = (0, import_express20.default)();
+var app = (0, import_express19.default)();
 app.use(
   (0, import_pino_http.default)({
     logger,
@@ -97640,8 +97405,8 @@ app.use(
   allowedOrigins.length ? (0, import_cors.default)({ origin: allowedOrigins, credentials: true }) : (0, import_cors.default)()
 );
 app.use((0, import_cookie_parser.default)());
-app.use(import_express20.default.json({ limit: "30mb" }));
-app.use(import_express20.default.urlencoded({ extended: true, limit: "30mb" }));
+app.use(import_express19.default.json({ limit: "30mb" }));
+app.use(import_express19.default.urlencoded({ extended: true, limit: "30mb" }));
 app.use("/api", routes_default);
 app.get("/healthz", (_req, res) => {
   res.json({ status: "ok", service: "bos-aura-api" });
@@ -97653,7 +97418,7 @@ var indexHtml = path2.join(staticPath, "index.html");
 var hasFrontend = process.env["NODE_ENV"] === "production" && fs2.existsSync(indexHtml);
 if (hasFrontend) {
   app.use(
-    import_express20.default.static(staticPath, {
+    import_express19.default.static(staticPath, {
       setHeaders: (res, filePath) => {
         if (filePath.endsWith("index.html")) {
           res.setHeader("Cache-Control", "no-cache");

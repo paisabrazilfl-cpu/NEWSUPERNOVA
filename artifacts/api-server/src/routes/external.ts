@@ -1,7 +1,7 @@
 /**
  * OPENCLAW OMEGA — External API (Inbound)
  *
- * OpenAI-compatible endpoints for connecting external systems (NeuroBuddy, n8n, etc.)
+ * OpenAI-compatible endpoints for connecting external systems (n8n, etc.)
  * directly into the ABBY CLAW swarm.
  *
  * Base:  /api/external/v1

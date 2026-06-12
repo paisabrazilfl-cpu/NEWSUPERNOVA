@@ -344,38 +344,6 @@ export function resolveModel(agentId: number, agentModel: string | null | undefi
   return candidate;
 }
 
-// ─── Buddy AI fallback (OpenAI-compatible) ───────────────────────────────────
-// An optional secondary LLM endpoint (e.g. NeuroBuddy / BOS-OMEGA). When the
-// primary OpenRouter call fails and Buddy is configured, the orchestrator falls
-// back to it so a single-provider outage doesn't kill a run.
-
-export function buddyConfigured(): boolean {
-  return !!(process.env["BUDDY_API_KEY"] && process.env["BUDDY_BASE_URL"]);
-}
-
-/** Non-streaming completion against the Buddy endpoint. Throws on failure. */
-export async function buddyComplete(
-  messages: Array<{ role: string; content: string }>,
-  maxTokens = 1024,
-): Promise<string> {
-  const key = process.env["BUDDY_API_KEY"];
-  const base = process.env["BUDDY_BASE_URL"];
-  if (!key || !base) throw new Error("Buddy fallback is not configured");
-  const model = process.env["BUDDY_MODEL"] ?? "bos-omega";
-  const r = await fetch(`${base.replace(/\/$/, "")}/chat/completions`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${key}`,
-      "Content-Type": "application/json",
-      ...heliconeHeaders(),
-    },
-    body: JSON.stringify({ model, messages, max_tokens: maxTokens }),
-  });
-  if (!r.ok) throw new Error(`Buddy ${r.status}: ${(await r.text()).slice(0, 200)}`);
-  const data = (await r.json()) as { choices?: Array<{ message?: { content?: string } }> };
-  return data.choices?.[0]?.message?.content?.trim() || "(no response)";
-}
-
 export function openrouterHeaders() {
   // NIM-only deployment: this helper now signs requests for NVIDIA NIM. Kept
   // under the old name so existing call-sites need no change.
@@ -560,32 +528,6 @@ router.post("/ai/chat", async (req, res) => {
     res.end();
   };
 
-  // Fallback to Buddy (non-streaming) when the primary provider fails — e.g. a
-  // 402 (out of credits). Emits the full reply as one token so the UI still
-  // renders an answer instead of a raw error.
-  const tryBuddyFallback = async (reason: string): Promise<boolean> => {
-    if (!buddyConfigured()) return false;
-    try {
-      // Coerce any multimodal parts to text — the Buddy fallback is text-only.
-      const buddyMessages = chatMessages.map((m) => ({
-        role: m.role,
-        content:
-          typeof m.content === "string"
-            ? m.content
-            : m.content.map((p) => (p.type === "text" ? p.text : "[image attachment]")).join("\n"),
-      }));
-      const text = await buddyComplete(buddyMessages, 700);
-      if (!text.trim() || text === "(no response)") return false;
-      sendEvent({ token: text });
-      req.log.warn({ reason }, "AI chat fell back to Buddy");
-      await finishWith(text, process.env["BUDDY_MODEL"] ?? "bos-omega", "buddy-fallback");
-      return true;
-    } catch (e) {
-      req.log.error({ e }, "Buddy fallback failed in AI chat");
-      return false;
-    }
-  };
-
   // Dispatch context: the current request PLUS the recent transcript, so the
   // CLAWs can resolve cross-turn references ("that file", "the brief", "make it a
   // PDF") and reuse prior content/figures exactly instead of converting the literal
@@ -757,12 +699,7 @@ router.post("/ai/chat", async (req, res) => {
     if (!orRes.ok) {
       const errText = await orRes.text();
       req.log.error({ status: orRes.status, provider: llmReq.provider, model: llmReq.model, errText }, "LLM provider error");
-      if (await tryBuddyFallback(`${llmReq.provider} ${orRes.status}`)) return;
-      const hint =
-        orRes.status === 402 && llmReq.provider === "openrouter"
-          ? "OpenRouter is out of credits. Add credits, or configure BUDDY_API_KEY/BUDDY_BASE_URL for automatic fallback."
-          : `${providerLabel(llmReq)} error ${orRes.status} (${llmReq.model}): ${errText.slice(0, 200)}`;
-      sendEvent({ error: hint });
+      sendEvent({ error: `${providerLabel(llmReq)} error ${orRes.status} (${llmReq.model}): ${errText.slice(0, 200)}` });
       sendEvent({ done: true });
       res.end(); return;
     }
@@ -770,8 +707,7 @@ router.post("/ai/chat", async (req, res) => {
     const decoder = new TextDecoder();
     const reader = orRes.body?.getReader();
     if (!reader) {
-      if (await tryBuddyFallback("no response body")) return;
-      sendEvent({ error: "No response body from OpenRouter" });
+      sendEvent({ error: "No response body from the LLM provider" });
       sendEvent({ done: true });
       res.end(); return;
     }
@@ -852,22 +788,8 @@ router.post("/ai/complete", async (req, res) => {
   try {
     const { r, req: llmReq } = await llmFetch(model, { messages, max_tokens: 512 });
     if (!r.ok) {
-      // Fall back to Buddy on provider failure (e.g. 402 out of credits).
-      if (buddyConfigured()) {
-        try {
-          const content = await buddyComplete(messages, 512);
-          res.json({ content, model: process.env["BUDDY_MODEL"] ?? "bos-omega", agentId: resolvedAgentId, via: "buddy-fallback" });
-          return;
-        } catch (e) {
-          req.log.error({ e }, "Buddy fallback failed in AI complete");
-        }
-      }
       const errText = (await r.text()).slice(0, 200);
-      const hint =
-        r.status === 402 && llmReq.provider === "openrouter"
-          ? "OpenRouter is out of credits. Add credits or configure Buddy fallback (BUDDY_API_KEY/BUDDY_BASE_URL)."
-          : `${providerLabel(llmReq)} error ${r.status} (${llmReq.model}): ${errText}`;
-      res.status(502).json({ error: hint });
+      res.status(502).json({ error: `${providerLabel(llmReq)} error ${r.status} (${llmReq.model}): ${errText}` });
       return;
     }
     const data = await r.json() as { choices?: { message?: { content?: string } }[] };

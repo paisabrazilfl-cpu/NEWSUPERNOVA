@@ -57,8 +57,8 @@ export function heliconeHeaders(extra?: Record<string, string>): Record<string, 
 // OpenAI-compatible chat endpoint for NVIDIA-hosted models (Nemotron, DeepSeek,
 // Qwen 3.5, Mistral NIM builds, …). Activated by NVIDIA_API_KEY — store it in
 // the vault (loadVaultIntoEnv puts it in process.env at boot) or set it as an
-// env var. OpenRouter has been removed: every model id resolves to NVIDIA NIM,
-// and the only non-NIM fallback is Buddy (handled by the orchestrator).
+// env var. OpenRouter has been removed: every model id resolves to NVIDIA NIM —
+// there is no non-NIM provider or fallback.
 
 const NVIDIA_NIM_BASE = "https://integrate.api.nvidia.com/v1";
 const HELICONE_GATEWAY = "https://gateway.helicone.ai/v1";
@@ -114,8 +114,8 @@ export function nimConfigured(): boolean {
 // (including the fallbacks), one bad key killed all LLM calls. The breaker
 // marks NIM unhealthy on 401/403 as an operator-visible health signal (the
 // vault route consults it to clear on key rotation). Routing stays on NVIDIA —
-// there is no other LLM provider; Buddy is the orchestrator-level fallback. NIM is
-// re-probed after the cooldown so a fixed key recovers without a restart.
+// there is no other LLM provider. NIM is re-probed after the cooldown so a
+// fixed key recovers without a restart.
 const NIM_AUTH_COOLDOWN_MS = 10 * 60_000;
 let nimDisabledUntil = 0;
 
@@ -129,7 +129,7 @@ export function reportNimHttpFailure(status: number): void {
     nimDisabledUntil = Date.now() + NIM_AUTH_COOLDOWN_MS;
     logger.error(
       { status, cooldownMinutes: NIM_AUTH_COOLDOWN_MS / 60_000 },
-      "NVIDIA NIM rejected the API key — marked unhealthy; calls will fail to Buddy until fixed. Fix/rotate NVIDIA_API_KEY on the server.",
+      "NVIDIA NIM rejected the API key — marked unhealthy; calls will fail until fixed. Fix/rotate NVIDIA_API_KEY on the server.",
     );
   }
 }
@@ -150,8 +150,7 @@ export function resetNimHealth(): void {
 // (minutes per LLM call) and still failed — the whole system looked dead.
 // This breaker marks NIM "degraded" when the full gauntlet fails with
 // throttle/overload (429/5xx/stall). It is an operator-visible health signal
-// for the cooldown window; routing stays on NVIDIA (Buddy is the only
-// non-NIM fallback, applied by the orchestrator) — then NIM is re-probed.
+// for the cooldown window; routing stays on NVIDIA — then NIM is re-probed.
 function nimDegradedCooldownMs(): number {
   const v = Number(process.env["NIM_DEGRADED_COOLDOWN_MS"]);
   return Number.isFinite(v) && v > 0 ? v : 120_000;
@@ -166,7 +165,7 @@ export function reportNimDegraded(reason: string): void {
   nimDegradedUntil = Date.now() + nimDegradedCooldownMs();
   logger.error(
     { reason, cooldownMs: nimDegradedCooldownMs() },
-    "NVIDIA NIM is throttled/overloaded on every pooled key — marked degraded for the cooldown; Buddy is the only fallback.",
+    "NVIDIA NIM is throttled/overloaded on every pooled key — marked degraded for the cooldown.",
   );
 }
 
@@ -214,7 +213,7 @@ export function isNimModel(model: string): boolean {
 // NIM-internal fallback for each swarm model: a sibling NIM model to use when
 // the primary is throttled/5xx. OpenRouter has been removed, so every fallback
 // is itself a NIM id served from integrate.api.nvidia.com. NIM_FAST_MODEL is the
-// last-resort fast engine inside the gauntlet; Buddy is the only non-NIM escape.
+// last-resort fast engine inside the gauntlet.
 export const NIM_MODEL_FALLBACKS: Record<string, string> = {
   "nvidia/nemotron-3-ultra-550b-a55b": "nvidia/nemotron-3-super-120b-a12b",
   "nvidia/nemotron-3-super-120b-a12b": "qwen/qwen3.5-122b-a10b",
@@ -253,8 +252,7 @@ export interface LlmChatRequest {
  * Resolve the chat-completions endpoint, auth headers, and effective model id
  * for a given model. Every model routes to NVIDIA NIM (integrate.api.nvidia.com),
  * optionally through the Helicone gateway. OpenRouter has been removed — there is
- * no non-NIM provider here; the only escape is Buddy (handled by the orchestrator).
- * Throws only when NVIDIA_API_KEY is missing entirely.
+ * no non-NIM provider here. Throws only when NVIDIA_API_KEY is missing entirely.
  */
 export function chatRequestFor(model: string): LlmChatRequest {
   return nimRequestFor(model);
@@ -269,7 +267,7 @@ export function chatRequestFor(model: string): LlmChatRequest {
  * Note: still exported as `openRouterRequestFor` for call-site compatibility —
  * llmFetch uses it as the "guaranteed escape" builder, which now means a NIM
  * request that bypasses the health gate (so a degraded-but-keyed NIM still gets
- * one direct attempt before the orchestrator's Buddy fallback).
+ * one direct attempt before the failure is surfaced).
  */
 function nimRequestFor(model: string, opts?: { bypassHealthGate?: boolean }): LlmChatRequest {
   if (!nimConfigured()) throw new Error("NVIDIA_API_KEY is not set");
@@ -352,8 +350,8 @@ async function timedFetch(req: LlmChatRequest, payload: Record<string, unknown>)
  *    NVIDIA_API_KEY pool and retries (each build.nvidia.com key has its own
  *    rate-limit budget, so the pool multiplies throughput).
  * 2. AUTH BREAKER — when EVERY pooled key is rejected, the breaker marks NIM
- *    unhealthy and the failure surfaces honestly (the orchestrator falls to
- *    Buddy); the swarm is NIM-only, so nothing ever reroutes off NVIDIA.
+ *    unhealthy and the failure surfaces honestly; the swarm is NIM-only, so
+ *    nothing ever reroutes off NVIDIA.
  * 3. STALL/5XX FAILOVER — a NIM request that produces no response within the
  *    time budget, or answers 5xx, retries once on NIM_FAST_MODEL (same
  *    provider, same persona/tools, much faster engine).
@@ -1030,7 +1028,6 @@ export function integrationStatus(): IntegrationStatus[] {
   const has = (k: string) => !!process.env[k];
   return [
     { key: "nvidia-nim", name: "NVIDIA NIM", category: "llm", envVar: "NVIDIA_API_KEY", configured: has("NVIDIA_API_KEY") },
-    { key: "neurobuddy", name: "Buddy AI (NeuroBuddy)", category: "llm", envVar: "NEUROBUDDY_API_KEY", configured: has("NEUROBUDDY_API_KEY") },
     { key: "helicone", name: "Helicone", category: "observability", envVar: "HELICONE_API_KEY", configured: has("HELICONE_API_KEY") },
     { key: "langsmith", name: "LangSmith (LangChain)", category: "observability", envVar: "LANGSMITH_API_KEY", configured: langsmithEnabled() },
     { key: "embeddings", name: "Embeddings (semantic memory)", category: "memory", envVar: "EMBEDDINGS_API_KEY", configured: has("EMBEDDINGS_API_KEY") },
@@ -1043,6 +1040,5 @@ export function integrationStatus(): IntegrationStatus[] {
     { key: "e2b", name: "E2B", category: "sandbox", envVar: "E2B_API_KEY", configured: has("E2B_API_KEY") },
     { key: "composio", name: "Composio", category: "tools", envVar: "COMPOSIO_API_KEY", configured: has("COMPOSIO_API_KEY") },
     { key: "image-generation", name: "Image generation (image_generate)", category: "tools", envVar: "OPENAI_API_KEY", configured: has("OPENAI_API_KEY") || has("IMAGE_API_KEY") },
-    { key: "buddy", name: "Buddy AI (fallback LLM)", category: "llm", envVar: "BUDDY_API_KEY", configured: has("BUDDY_API_KEY") && has("BUDDY_BASE_URL") },
   ];
 }
