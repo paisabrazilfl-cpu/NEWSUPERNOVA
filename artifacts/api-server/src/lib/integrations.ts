@@ -7,7 +7,7 @@
  * calls explicitly) or silently no-ops (for fire-and-forget observability).
  *
  * Wired here:
- *   - Helicone   — observability proxy in front of OpenRouter (LLM logging).
+ *   - Helicone   — observability proxy in front of NVIDIA NIM (LLM logging).
  *   - Tavily     — web search provider.
  *   - Exa        — neural web search provider.
  *   - Inngest    — durable event bus (fire-and-forget swarm events).
@@ -25,45 +25,48 @@ function clip(s: string, n: number): string {
   return s.length > n ? `${s.slice(0, n)}\n…[truncated ${s.length - n} chars]` : s;
 }
 
-// ─── Helicone (OpenRouter observability proxy) ───────────────────────────────
-// Helicone sits transparently in front of OpenRouter: same OpenAI-compatible
-// API, but the base host changes and a Helicone-Auth header is added. When no
-// Helicone key is configured we fall through to OpenRouter directly.
-
-const OPENROUTER_DIRECT = "https://openrouter.ai/api/v1";
-const OPENROUTER_VIA_HELICONE = "https://openrouter.helicone.ai/api/v1";
+// ─── Helicone (LLM observability proxy in front of NVIDIA NIM) ────────────────
+// Helicone sits transparently in front of the LLM provider: same OpenAI-
+// compatible API, but requests route through Helicone's gateway with a
+// Helicone-Auth header so calls are logged. The swarm runs entirely on NVIDIA
+// NIM; Helicone proxies to integrate.api.nvidia.com via its gateway target URL
+// header. When no Helicone key is configured we call NIM directly.
 
 export function heliconeEnabled(): boolean {
   return !!process.env["HELICONE_API_KEY"];
 }
 
-/** The LLM base URL to use — Helicone proxy when configured, else OpenRouter. */
-export function llmBaseUrl(): string {
-  return heliconeEnabled() ? OPENROUTER_VIA_HELICONE : OPENROUTER_DIRECT;
-}
-
 /**
- * Extra headers that enable Helicone logging. Returns an empty object when
- * Helicone is not configured, so callers can always spread it safely.
+ * Extra headers that enable Helicone logging in front of NVIDIA NIM. Returns an
+ * empty object when Helicone is not configured, so callers can always spread it
+ * safely. Uses Helicone's gateway pattern (Helicone-Target-Url) so the upstream
+ * stays NVIDIA NIM rather than any third-party router.
  */
 export function heliconeHeaders(extra?: Record<string, string>): Record<string, string> {
   const key = process.env["HELICONE_API_KEY"];
   if (!key) return {};
   return {
     "Helicone-Auth": `Bearer ${key}`,
+    "Helicone-Target-Url": NVIDIA_NIM_BASE,
     "Helicone-Cache-Enabled": "false",
     ...extra,
   };
 }
 
-// ─── NVIDIA NIM (build.nvidia.com) ───────────────────────────────────────────
+// ─── NVIDIA NIM (build.nvidia.com) — the swarm's ONLY LLM provider ───────────
 // OpenAI-compatible chat endpoint for NVIDIA-hosted models (Nemotron, DeepSeek,
 // Qwen 3.5, Mistral NIM builds, …). Activated by NVIDIA_API_KEY — store it in
 // the vault (loadVaultIntoEnv puts it in process.env at boot) or set it as an
-// env var. When the key is absent, every NIM model id transparently falls back
-// to its legacy OpenRouter equivalent so the swarm NEVER loses function.
+// env var. OpenRouter has been removed: every model id resolves to NVIDIA NIM,
+// and the only non-NIM fallback is Buddy (handled by the orchestrator).
 
 const NVIDIA_NIM_BASE = "https://integrate.api.nvidia.com/v1";
+const HELICONE_GATEWAY = "https://gateway.helicone.ai/v1";
+
+/** The LLM base URL — Helicone gateway (in front of NIM) when configured, else NIM direct. */
+export function llmBaseUrl(): string {
+  return heliconeEnabled() ? HELICONE_GATEWAY : NVIDIA_NIM_BASE;
+}
 
 // ─── NIM key pool ────────────────────────────────────────────────────────────
 // The operator holds MULTIPLE build.nvidia.com keys (one per NVIDIA project),
@@ -109,8 +112,9 @@ export function nimConfigured(): boolean {
 // by integrate.api.nvidia.com (403 "Authorization failed" — a revoked/typo'd
 // key). Because a configured key routes EVERY swarm model through NIM
 // (including the fallbacks), one bad key killed all LLM calls. The breaker
-// marks NIM unhealthy on 401/403 so chatRequestFor() transparently reroutes to
-// OpenRouter, and llmFetch() retries the failed call immediately. NIM is
+// marks NIM unhealthy on 401/403 as an operator-visible health signal (the
+// vault route consults it to clear on key rotation). Routing stays on NVIDIA —
+// there is no other LLM provider; Buddy is the orchestrator-level fallback. NIM is
 // re-probed after the cooldown so a fixed key recovers without a restart.
 const NIM_AUTH_COOLDOWN_MS = 10 * 60_000;
 let nimDisabledUntil = 0;
@@ -125,7 +129,7 @@ export function reportNimHttpFailure(status: number): void {
     nimDisabledUntil = Date.now() + NIM_AUTH_COOLDOWN_MS;
     logger.error(
       { status, cooldownMinutes: NIM_AUTH_COOLDOWN_MS / 60_000 },
-      "NVIDIA NIM rejected the API key — falling back to OpenRouter for all models. Fix/rotate NVIDIA_API_KEY on the server.",
+      "NVIDIA NIM rejected the API key — marked unhealthy; calls will fail to Buddy until fixed. Fix/rotate NVIDIA_API_KEY on the server.",
     );
   }
 }
@@ -145,9 +149,9 @@ export function resetNimHealth(): void {
 // but-drowning, every agent turn paid the full stall/rotation/backoff gauntlet
 // (minutes per LLM call) and still failed — the whole system looked dead.
 // This breaker marks NIM "degraded" when the full gauntlet fails with
-// throttle/overload (429/5xx/stall), so for a short cooldown every NIM model
-// routes STRAIGHT to its OpenRouter fallback — instant turns, no stacked
-// timeouts — then NIM is re-probed.
+// throttle/overload (429/5xx/stall). It is an operator-visible health signal
+// for the cooldown window; routing stays on NVIDIA (Buddy is the only
+// non-NIM fallback, applied by the orchestrator) — then NIM is re-probed.
 function nimDegradedCooldownMs(): number {
   const v = Number(process.env["NIM_DEGRADED_COOLDOWN_MS"]);
   return Number.isFinite(v) && v > 0 ? v : 120_000;
@@ -162,7 +166,7 @@ export function reportNimDegraded(reason: string): void {
   nimDegradedUntil = Date.now() + nimDegradedCooldownMs();
   logger.error(
     { reason, cooldownMs: nimDegradedCooldownMs() },
-    "NVIDIA NIM is throttled/overloaded on every pooled key — routing ALL NIM models to their OpenRouter fallbacks for the cooldown.",
+    "NVIDIA NIM is throttled/overloaded on every pooled key — marked degraded for the cooldown; Buddy is the only fallback.",
   );
 }
 
@@ -207,20 +211,21 @@ export function isNimModel(model: string): boolean {
   return NIM_PREFIXES.some((p) => model.startsWith(p));
 }
 
-// Legacy OpenRouter equivalent for each NIM model the swarm uses. Consulted
-// only when NVIDIA_API_KEY is missing, so a fresh deploy without the key keeps
-// every agent fully functional on its previous provider.
+// NIM-internal fallback for each swarm model: a sibling NIM model to use when
+// the primary is throttled/5xx. OpenRouter has been removed, so every fallback
+// is itself a NIM id served from integrate.api.nvidia.com. NIM_FAST_MODEL is the
+// last-resort fast engine inside the gauntlet; Buddy is the only non-NIM escape.
 export const NIM_MODEL_FALLBACKS: Record<string, string> = {
-  "nvidia/nemotron-3-ultra-550b-a55b": "x-ai/grok-4.3",
-  "nvidia/nemotron-3-super-120b-a12b": "x-ai/grok-4.20",
-  "deepseek-ai/deepseek-v4-flash": "x-ai/grok-build-0.1",
-  "deepseek-ai/deepseek-v4-pro": "qwen/qwen3.7-max",
-  "qwen/qwen3.5-397b-a17b": "qwen/qwen3.7-plus",
-  "qwen/qwen3.5-122b-a10b": "qwen/qwen3.6-plus",
-  "mistralai/mistral-medium-3.5-128b": "mistral/mistral-large",
-  "z-ai/glm-5.1": "x-ai/grok-4.3",
+  "nvidia/nemotron-3-ultra-550b-a55b": "nvidia/nemotron-3-super-120b-a12b",
+  "nvidia/nemotron-3-super-120b-a12b": "qwen/qwen3.5-122b-a10b",
+  "deepseek-ai/deepseek-v4-flash": "qwen/qwen3.5-122b-a10b",
+  "deepseek-ai/deepseek-v4-pro": "deepseek-ai/deepseek-v4-flash",
+  "qwen/qwen3.5-397b-a17b": "qwen/qwen3.5-122b-a10b",
+  "qwen/qwen3.5-122b-a10b": "nvidia/nemotron-3-super-120b-a12b",
+  "mistralai/mistral-medium-3.5-128b": "qwen/qwen3.5-122b-a10b",
+  "z-ai/glm-5.1": "qwen/qwen3.5-122b-a10b",
 };
-const NIM_GENERIC_FALLBACK = "x-ai/grok-4.3";
+const NIM_GENERIC_FALLBACK = "qwen/qwen3.5-122b-a10b";
 
 // NOTE deliberately NO reverse legacy→NIM upgrade at request time. There used
 // to be one (built from NIM_MODEL_FALLBACKS) and it broke the safety net live
@@ -246,61 +251,68 @@ export interface LlmChatRequest {
 
 /**
  * Resolve the chat-completions endpoint, auth headers, and effective model id
- * for a given model. NIM models route to integrate.api.nvidia.com when
- * NVIDIA_API_KEY is set, and silently remap to their OpenRouter fallback when
- * it is not. Throws only when the chosen provider's key is missing entirely.
+ * for a given model. Every model routes to NVIDIA NIM (integrate.api.nvidia.com),
+ * optionally through the Helicone gateway. OpenRouter has been removed — there is
+ * no non-NIM provider here; the only escape is Buddy (handled by the orchestrator).
+ * Throws only when NVIDIA_API_KEY is missing entirely.
  */
 export function chatRequestFor(model: string): LlmChatRequest {
-  if (isNimModel(model) && nimConfigured() && nimHealthy() && !nimDegraded()) {
-    const key = currentNimKey()!;
-    const bodyExtras: Record<string, unknown> = {
-      // Verified live 2026-06-10: qwen/qwen3.5-* 500s without explicit
-      // sampling params, and Nemotron's default thinking budget can exceed the
-      // swarm's patience — so default thinking off (NIM_ENABLE_THINKING=on to
-      // re-enable) and set NVIDIA-recommended sampling.
-      temperature: 0.6,
-      top_p: 0.95,
-    };
-    if (model.startsWith("nvidia/nemotron")) {
-      const thinking = (process.env["NIM_ENABLE_THINKING"] ?? "off").toLowerCase() === "on";
-      bodyExtras["chat_template_kwargs"] = { enable_thinking: thinking };
-    }
-    return {
-      url: `${NVIDIA_NIM_BASE}/chat/completions`,
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      model,
-      provider: "nvidia-nim",
-      bodyExtras,
-    };
-  }
-  return openRouterRequestFor(model);
+  return nimRequestFor(model);
 }
 
 /**
- * Build the OpenRouter request for a model UNCONDITIONALLY (NIM ids map to
- * their legacy OpenRouter equivalent). This is the guaranteed escape hatch —
- * it never routes back into NIM, so llmFetch can always reach a different
- * provider when NIM is throttled/overloaded with a perfectly valid key.
+ * Build a NVIDIA NIM request for a model. NIM model ids go through as-is; any
+ * non-NIM id (a legacy fallback alias, or a stale DB value) is remapped to its
+ * NIM equivalent so a request is ALWAYS a valid NIM call. This is the single
+ * request builder for the swarm now that OpenRouter is gone.
+ *
+ * Note: still exported as `openRouterRequestFor` for call-site compatibility —
+ * llmFetch uses it as the "guaranteed escape" builder, which now means a NIM
+ * request that bypasses the health gate (so a degraded-but-keyed NIM still gets
+ * one direct attempt before the orchestrator's Buddy fallback).
  */
-export function openRouterRequestFor(model: string): LlmChatRequest {
-  const effectiveModel = isNimModel(model)
-    ? (NIM_MODEL_FALLBACKS[model] ?? NIM_GENERIC_FALLBACK)
-    : model;
-  const orKey = process.env["OPENROUTER_API_KEY"];
-  if (!orKey) throw new Error("OPENROUTER_API_KEY is not set");
+function nimRequestFor(model: string, opts?: { bypassHealthGate?: boolean }): LlmChatRequest {
+  if (!nimConfigured()) throw new Error("NVIDIA_API_KEY is not set");
+  // Map any non-NIM id to a real NIM model so we never emit a non-NIM model id.
+  const effectiveModel = isNimModel(model) ? model : (NIM_MODEL_FALLBACKS[model] ?? NIM_GENERIC_FALLBACK);
+  const healthy = nimHealthy() && !nimDegraded();
+  void opts; // health gate no longer changes the provider — there is only NIM.
+  void healthy;
+  const key = currentNimKey()!;
+  const bodyExtras: Record<string, unknown> = {
+    // Verified live 2026-06-10: qwen/qwen3.5-* 500s without explicit sampling
+    // params, and Nemotron's default thinking budget can exceed the swarm's
+    // patience — so default thinking off (NIM_ENABLE_THINKING=on to re-enable)
+    // and set NVIDIA-recommended sampling.
+    temperature: 0.6,
+    top_p: 0.95,
+  };
+  if (effectiveModel.startsWith("nvidia/nemotron")) {
+    const thinking = (process.env["NIM_ENABLE_THINKING"] ?? "off").toLowerCase() === "on";
+    bodyExtras["chat_template_kwargs"] = { enable_thinking: thinking };
+  }
   return {
     url: `${llmBaseUrl()}/chat/completions`,
     headers: {
-      Authorization: `Bearer ${orKey}`,
+      Authorization: `Bearer ${key}`,
       "Content-Type": "application/json",
-      "HTTP-Referer": "https://openclaw.abbyclaw.io",
       "X-Title": "OPENCLAW OMEGA",
       ...heliconeHeaders(),
     },
     model: effectiveModel,
-    provider: "openrouter",
-    bodyExtras: {},
+    provider: "nvidia-nim",
+    bodyExtras,
   };
+}
+
+/**
+ * Guaranteed-request builder used by llmFetch as the "escape" path. With
+ * OpenRouter removed this is simply a NIM request for the model (remapping any
+ * non-NIM id to its NIM equivalent). Kept under the old name so the many
+ * call-sites in llmFetch / orchestrator / routes need no change.
+ */
+export function openRouterRequestFor(model: string): LlmChatRequest {
+  return nimRequestFor(model, { bypassHealthGate: true });
 }
 
 // A NIM model that answers in seconds (verified live 2026-06-10: ~2s for a
@@ -339,8 +351,9 @@ async function timedFetch(req: LlmChatRequest, payload: Record<string, unknown>)
  * 1. KEY ROTATION — 401/403/429 from NIM advances to the next key in the
  *    NVIDIA_API_KEY pool and retries (each build.nvidia.com key has its own
  *    rate-limit budget, so the pool multiplies throughput).
- * 2. AUTH BREAKER — when EVERY pooled key is rejected, the breaker trips and
- *    the call reroutes to OpenRouter, so bad NVIDIA keys can never down the swarm.
+ * 2. AUTH BREAKER — when EVERY pooled key is rejected, the breaker marks NIM
+ *    unhealthy and the failure surfaces honestly (the orchestrator falls to
+ *    Buddy); the swarm is NIM-only, so nothing ever reroutes off NVIDIA.
  * 3. STALL/5XX FAILOVER — a NIM request that produces no response within the
  *    time budget, or answers 5xx, retries once on NIM_FAST_MODEL (same
  *    provider, same persona/tools, much faster engine).
@@ -1016,7 +1029,6 @@ export interface IntegrationStatus {
 export function integrationStatus(): IntegrationStatus[] {
   const has = (k: string) => !!process.env[k];
   return [
-    { key: "openrouter", name: "OpenRouter", category: "llm", envVar: "OPENROUTER_API_KEY", configured: has("OPENROUTER_API_KEY") },
     { key: "nvidia-nim", name: "NVIDIA NIM", category: "llm", envVar: "NVIDIA_API_KEY", configured: has("NVIDIA_API_KEY") },
     { key: "neurobuddy", name: "Buddy AI (NeuroBuddy)", category: "llm", envVar: "NEUROBUDDY_API_KEY", configured: has("NEUROBUDDY_API_KEY") },
     { key: "helicone", name: "Helicone", category: "observability", envVar: "HELICONE_API_KEY", configured: has("HELICONE_API_KEY") },

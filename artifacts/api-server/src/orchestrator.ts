@@ -269,13 +269,13 @@ export async function reconcileStaleWork(): Promise<void> {
  * so a 10/10 answer isn't truncated.
  */
 /**
- * Secondary chat model used when an agent's own model fails (e.g. its
- * OpenRouter pool is 429-rate-limited). chatRequestFor() resolves this to
- * Nemotron Ultra when NVIDIA_API_KEY is set, else Grok on OpenRouter — a
- * different pool from the qwen/deepseek CLAW models, so a CLAW-model outage
- * stays inside the swarm instead of dropping to Buddy.
+ * Secondary chat model used when an agent's own model fails (e.g. its NIM
+ * engine is 429-rate-limited or 5xxing). A Mistral NIM build — a different
+ * model family from the nemotron/qwen/deepseek CLAW primaries, all served from
+ * the same NVIDIA NIM endpoint — so a CLAW-model outage stays inside the swarm
+ * (and inside NVIDIA) instead of dropping straight to Buddy.
  */
-const SECONDARY_CHAT_MODEL = "x-ai/grok-4.3";
+const SECONDARY_CHAT_MODEL = "mistralai/mistral-medium-3.5-128b";
 
 /**
  * The Buddy endpoint hosts its own personality (BOS-OMEGA, a "predictive
@@ -390,8 +390,8 @@ async function completeChat(model: string, system: string, user: string, maxToke
         logger.warn({ e }, "Buddy fallback failed after OpenRouter error");
       }
     }
-    traceLlmRun({ name: "completeChat", model, input: { system, user }, output: null, startedAt, error: `OpenRouter ${r.status}: ${errText}` });
-    throw new Error(`OpenRouter ${r.status}: ${errText}`);
+    traceLlmRun({ name: "completeChat", model, input: { system, user }, output: null, startedAt, error: `NVIDIA NIM ${r.status}: ${errText}` });
+    throw new Error(`NVIDIA NIM ${r.status}: ${errText}`);
   }
   const data = (await r.json()) as {
     choices?: Array<{ message?: { content?: string } }>;
@@ -506,7 +506,7 @@ async function completeChatTurn(
         logger.warn({ e }, "Buddy fallback failed after OpenRouter error (tool turn)");
       }
     }
-    throw new Error(`OpenRouter ${r.status}: ${errText}`);
+    throw new Error(`NVIDIA NIM ${r.status}: ${errText}`);
   }
   const data = (await r.json()) as {
     choices?: Array<{ message?: AssistantMessage }>;

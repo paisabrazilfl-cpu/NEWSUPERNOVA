@@ -198,7 +198,7 @@ VALUES
 // its NIM replacement (live-verified on integrate.api.nvidia.com — completion,
 // tool calling, and JSON mode all pass). Matched on the old model id, so any
 // custom model an operator picked in the UI is left untouched. Runtime routing
-// falls back to the legacy OpenRouter model when NVIDIA_API_KEY is unset, so
+// remaps any legacy id to a NIM model at request time (NIM-only runtime), so
 // this upgrade can never strand an agent on an unreachable model.
 const AGENT_MODEL_UPGRADES: Array<[oldModel: string, newModel: string]> = [
   ["x-ai/grok-4.3",        "moonshotai/kimi-k2.6"],

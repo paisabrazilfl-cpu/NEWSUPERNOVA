@@ -2,7 +2,7 @@ import { Router } from "express";
 import { db } from "@workspace/db";
 import { agentsTable, messagesTable, attachmentsTable } from "@workspace/db";
 import { eq, and, inArray, desc } from "drizzle-orm";
-import { llmBaseUrl, heliconeHeaders, integrationStatus, llmFetch, providerLabel } from "../lib/integrations";
+import { heliconeHeaders, integrationStatus, llmFetch, providerLabel } from "../lib/integrations";
 import { listSecretNames } from "../lib/vault";
 import { buildCapabilityCard, getToolNamesForAgent } from "../tools";
 import { orchestrateGoal } from "../orchestrator";
@@ -11,10 +11,6 @@ import { MARKETING_ENGINE_POINTER } from "../lib/marketing";
 
 const router = Router();
 
-// LLM base URL — routed through Helicone's observability proxy when a Helicone
-// key is configured, otherwise straight to OpenRouter. Resolved once at module
-// load (env is fixed for the process lifetime).
-export const OPENROUTER_BASE = llmBaseUrl();
 
 export const AGENT_PERSONAS: Record<number, string> = {
   1: `You are ABBY, orchestrator of the ABBY CLAW agent swarm inside OPENCLAW OMEGA — a Discord-style command center. You exist to get the operator's goals DONE through real, verified work.
@@ -363,12 +359,13 @@ export async function buddyComplete(
 }
 
 export function openrouterHeaders() {
-  const key = process.env["OPENROUTER_API_KEY"];
-  if (!key) throw new Error("OPENROUTER_API_KEY is not set");
+  // NIM-only deployment: this helper now signs requests for NVIDIA NIM. Kept
+  // under the old name so existing call-sites need no change.
+  const key = process.env["NVIDIA_API_KEY"];
+  if (!key) throw new Error("NVIDIA_API_KEY is not set");
   return {
     "Authorization": `Bearer ${key}`,
     "Content-Type": "application/json",
-    "HTTP-Referer": "https://openclaw.abbyclaw.io",
     "X-Title": "OPENCLAW OMEGA",
     // Adds Helicone-Auth (and logging hints) only when Helicone is configured;
     // otherwise this spreads nothing.
@@ -376,9 +373,9 @@ export function openrouterHeaders() {
   };
 }
 
-// NVIDIA NIM models the swarm can run (not in OpenRouter's catalog, so they
-// are appended to /ai/models manually). Live-verified against
-// integrate.api.nvidia.com on 2026-06-10: completion + tools + json mode.
+// NVIDIA NIM models the swarm can run. The swarm runs entirely on NVIDIA NIM
+// (OpenRouter removed), so this curated list IS the model catalog. Live-verified
+// against integrate.api.nvidia.com on 2026-06-10: completion + tools + json mode.
 const NIM_FEATURED_MODELS = [
   { id: "moonshotai/kimi-k2.6", name: "Moonshot Kimi K2.6 (NIM, fast)", context_length: 262144 },
   { id: "meta/llama-3.1-8b-instruct", name: "Meta Llama 3.1 8B (NIM, fast)", context_length: 131072 },
@@ -390,34 +387,11 @@ const NIM_FEATURED_MODELS = [
   { id: "mistralai/mistral-medium-3.5-128b", name: "Mistral Medium 3.5 128B (NIM)", context_length: 131072 },
 ];
 
-// List available models: OpenRouter catalog (filtered) + NVIDIA NIM models.
-router.get("/ai/models", async (req, res) => {
-  try {
-    const r = await fetch(`${OPENROUTER_BASE}/models`, { headers: openrouterHeaders() });
-    const data = await r.json() as { data: { id: string; name: string; context_length: number }[] };
-    const featured = [
-      "x-ai/grok-4.3",
-      "x-ai/grok-build-0.1",
-      "x-ai/grok-4.20",
-      "x-ai/grok-4.20-multi-agent",
-      "qwen/qwen3.7-plus",
-      "qwen/qwen3.7-max",
-      "qwen/qwen3.6-plus",
-      "qwen/qwen3.6-max-preview",
-      "openai/gpt-4o",
-      "openai/o4-mini",
-      "anthropic/claude-opus-4-5",
-      "anthropic/claude-sonnet-4-5",
-      "meta-llama/llama-4-maverick",
-      "google/gemini-2.5-pro",
-      "mistral/mistral-large",
-    ];
-    const models = (data.data ?? []).filter(m => featured.includes(m.id));
-    res.json({ models: [...NIM_FEATURED_MODELS, ...models] });
-  } catch (err) {
-    req.log.error({ err }, "Failed to fetch OpenRouter models");
-    res.status(500).json({ error: "Failed to fetch models" });
-  }
+// List available models — the curated NVIDIA NIM catalog (no external catalog
+// fetch: the swarm is NIM-only, and NIM's /models lists hundreds of engines the
+// swarm has not verified for tools/json mode, so the curated list is the truth).
+router.get("/ai/models", async (_req, res) => {
+  res.json({ models: NIM_FEATURED_MODELS });
 });
 
 // SSE streaming AI chat — POST /api/ai/chat
