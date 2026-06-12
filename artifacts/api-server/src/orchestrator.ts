@@ -150,6 +150,22 @@ export function stableStringify(value: unknown): string {
 }
 
 /**
+ * Did a CLAW fail to do its work (blocked / errored / produced nothing) rather
+ * than return a real result? Conservative on purpose: matches only the
+ * hard-failure markers executeAgentCommand emits when a directive did NOT
+ * complete, plus a leading "error:". This drives ABBY's recovery — a blocked
+ * CLAW reports back and she re-routes or changes the approach instead of the run
+ * silently stalling on it — and it must NOT mistake a successful connected-
+ * account action (which returns a real result, e.g. a permalink) for a failure,
+ * or a recovery round could repeat a side effect.
+ */
+export function resultWasBlocked(result: string): boolean {
+  const r = (result ?? "").trim();
+  if (!r || r === "(no result produced)" || r === "(no response)") return true;
+  return /could not complete its directive|UNVERIFIED — blocked or errored/i.test(r) || /^error:/i.test(r);
+}
+
+/**
  * Total solve budget per operator goal, expressed as a multiple of a single
  * run: at most MAX_SOLVE_CYCLES dispatch rounds INCLUDING the initial one, so
  * the default of 4 caps total spend at 4× one single run. The budget is SHARED
@@ -1095,18 +1111,28 @@ Respond with ONLY a JSON array (no prose, no code fences) of objects shaped: {"a
     // judges the goal solved. Skipped for forceAgentId runs: those are
     // connected-account ACTIONS (e.g. publish a post) that must execute exactly
     // once; re-cycling would repeat the side effect.
-    if (results.length && !isSwarmPaused() && !forceAgentId) {
+    // Recovery is normally skipped for forceAgentId runs (single connected-account
+    // ACTIONS that must execute exactly once). EXCEPTION: if the forced agent was
+    // BLOCKED (it never acted — no side effect happened), let ABBY recover, so a
+    // blocked agent reports back and gets re-routed/fixed instead of stalling.
+    const initiallyBlocked = results.some((r) => resultWasBlocked(r.result));
+    if (results.length && !isSwarmPaused() && (!forceAgentId || initiallyBlocked)) {
       while (solveRoundsUsed < MAX_SOLVE_CYCLES && !isSwarmPaused()) {
         await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, ABBY_ID));
+        // Which CLAWs reported back BLOCKED this round — ABBY must triage them.
+        const blocked = results.filter((r) => resultWasBlocked(r.result));
+        const triage = blocked.length
+          ? `\nThese CLAWs reported back BLOCKED — they could not do their work: ${[...new Set(blocked.map((b) => b.name))].join(", ")}. For EACH, decide the RECOVERY and issue it as a follow-up directive: (a) RE-ROUTE the same objective to a DIFFERENT, more-capable CLAW (use the roster — e.g. a browser/API task that one CLAW couldn't do may suit another); (b) CHANGE the approach or tool and retry (a different method, source, or smaller scope); or (c) if it is genuinely impossible (hard auth/2FA wall, contradictory request), leave it — it will be reported honestly. Do NOT re-issue the SAME directive to the SAME CLAW unchanged.\n`
+          : "";
         const reviewUser = `Operator goal: "${goal}"
 
 CLAW results so far:
 ${results.map((r) => `- ${r.name}: ${r.result.slice(0, 500)}`).join("\n")}
-
-First, internally assess which parts of the goal are VERIFIED by the real tool output above versus still missing, unverified, or only assumed — judge only on evidence actually present in the results, never on work no result shows. Do this reasoning silently; do not write it out.
+${triage}
+First, internally assess which parts of the goal are VERIFIED by the real tool output above versus still missing, unverified, blocked, or only assumed — judge only on evidence actually present in the results, never on work no result shows. Do this reasoning silently; do not write it out.
 
 Then, if every part of the goal is verified and complete, respond with exactly: []
-Otherwise respond with ONLY a JSON array (no prose, no code fences) of up to 2 follow-up directives that close the remaining gap, each shaped {"agentId": <number>, "directive": "<instruction>"}. Do NOT repeat a directive that already failed the same way — change the approach. Available CLAWs: ${roster}.`;
+Otherwise respond with ONLY a JSON array (no prose, no code fences) of up to 2 follow-up directives that close the remaining gap OR recover a blocked CLAW, each shaped {"agentId": <number>, "directive": "<instruction>"}. Do NOT repeat a directive that already failed the same way — change the approach or the agent. Available CLAWs: ${roster}.`;
         let followups: Directive[] = [];
         try {
           const reviewRaw = await completeChat(model, planSystem, reviewUser);
@@ -1118,15 +1144,18 @@ Otherwise respond with ONLY a JSON array (no prose, no code fences) of up to 2 f
         }
         await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.id, ABBY_ID));
 
-        if (!followups.length) break; // review judged the goal solved
+        if (!followups.length) break; // review judged the goal solved (or nothing to recover)
 
+        const recovering = blocked.length > 0;
         await postMessage({
           channelId,
           agentId: ABBY_ID,
           agentName: "ABBY",
           agentColor: abby?.color ?? ABBY_COLOR,
           content:
-            `Solve round ${solveRoundsUsed + 1}/${MAX_SOLVE_CYCLES}: goal not yet solved. Corrective round:\n\n` +
+            (recovering
+              ? `Recovery round ${solveRoundsUsed + 1}/${MAX_SOLVE_CYCLES}: ${[...new Set(blocked.map((b) => b.name))].join(", ")} reported blocked — re-routing / changing approach:\n\n`
+              : `Solve round ${solveRoundsUsed + 1}/${MAX_SOLVE_CYCLES}: goal not yet solved. Corrective round:\n\n`) +
             followups
               .map((d) => {
                 const c = claws.find((x) => x.id === d.agentId);
