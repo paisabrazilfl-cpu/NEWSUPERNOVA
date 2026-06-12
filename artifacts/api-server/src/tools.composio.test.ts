@@ -50,4 +50,15 @@ describe("Composio: agents know which apps are LIVE", () => {
     expect(names.indexOf("composio_apps")).toBeGreaterThanOrEqual(0);
     expect(names.indexOf("composio_apps")).toBeLessThan(names.indexOf("composio_action"));
   });
+
+  it("self-learning is ON: EVERY agent (1-6) can read AND write long-term memory", () => {
+    // The self-learn loop (search memory → research → retry → store the lesson)
+    // is only real if every agent actually holds both memory tools, not just is
+    // told to use them. ABBY (1) gets ALL_TOOLS; CLAWs 2-6 are explicit lists.
+    for (const id of [1, 2, 3, 4, 5, 6]) {
+      const names = getToolNamesForAgent(id);
+      expect(names, `agent ${id} must be able to recall lessons`).toContain("memory_search");
+      expect(names, `agent ${id} must be able to store lessons`).toContain("memory_write");
+    }
+  });
 });

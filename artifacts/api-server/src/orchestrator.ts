@@ -33,6 +33,7 @@ import {
   ANTI_HALLUCINATION_DIRECTIVE,
   TOOL_CALL_DISCIPLINE,
   EXECUTION_DOCTRINE,
+  OPERATOR_INTENT_FIDELITY,
   RESEARCH_PLAYBOOKS,
   SWARM_SAFETY_RULES,
   CODING_LIFECYCLE_DOCTRINE,
@@ -201,7 +202,13 @@ could act on it as-is: the question is answered with evidence, or the requested
 deliverable exists and is complete. A status report, a plan, a partial answer,
 or "we couldn't" without exhausting the swarm's tools is NOT a solution.
 Judge ONLY on evidence present in the briefing/results. Be strict: when in
-doubt, the goal is NOT solved.`;
+doubt, the goal is NOT solved.
+A briefing that bounces the work back to the operator — asking what they want,
+asking them to confirm, or asking for an input they ALREADY provided — when a
+connected tool or named account could have done the task is an automatic FAIL:
+the swarm under-read a command as a question. The operator's short or repeated
+commands ("Report", "do it", "you have the tool") are orders; a briefing that
+answers them with a question instead of the completed action does NOT solve.`;
 
 /**
  * Parse the solution-gate verifier's verdict. The verifier replies with a JSON
@@ -662,7 +669,7 @@ export async function executeAgentCommand(opts: {
     // tool list plus which integrations are ONLINE/OFFLINE right now — so a
     // dispatched CLAW never "forgets" Tavily/Firecrawl/Composio/E2B exist, and
     // never pretends an offline one works.
-    const system = persona + toolGuide + buildLiveReachCard(agent.id) + EXECUTION_DOCTRINE + RESEARCH_PLAYBOOKS + ANTI_HALLUCINATION_DIRECTIVE + TOOL_CALL_DISCIPLINE + SWARM_SAFETY_RULES + CODING_LIFECYCLE_DOCTRINE + ACCOUNT_POLICY_DOCTRINE + (await buildVaultCard());
+    const system = persona + toolGuide + buildLiveReachCard(agent.id) + EXECUTION_DOCTRINE + OPERATOR_INTENT_FIDELITY + RESEARCH_PLAYBOOKS + ANTI_HALLUCINATION_DIRECTIVE + TOOL_CALL_DISCIPLINE + SWARM_SAFETY_RULES + CODING_LIFECYCLE_DOCTRINE + ACCOUNT_POLICY_DOCTRINE + (await buildVaultCard());
 
     const messages: ChatMessage[] = [
       { role: "system", content: system },
@@ -1098,7 +1105,7 @@ export async function orchestrateGoal(opts: {
       .join(", ");
     // ABBY plans with LIVE REACH so directives only lean on integrations that
     // are actually online (e.g. don't direct a CLAW to Firecrawl if it's off).
-    const planSystem = (AGENT_PERSONAS[ABBY_ID] ?? "You are ABBY, the swarm orchestrator.") + buildLiveReachCard(ABBY_ID) + EXECUTION_DOCTRINE + RESEARCH_PLAYBOOKS + TOOL_CALL_DISCIPLINE + SWARM_SAFETY_RULES + CODING_LIFECYCLE_DOCTRINE + ACCOUNT_POLICY_DOCTRINE + (await buildVaultCard());
+    const planSystem = (AGENT_PERSONAS[ABBY_ID] ?? "You are ABBY, the swarm orchestrator.") + buildLiveReachCard(ABBY_ID) + EXECUTION_DOCTRINE + OPERATOR_INTENT_FIDELITY + RESEARCH_PLAYBOOKS + TOOL_CALL_DISCIPLINE + SWARM_SAFETY_RULES + CODING_LIFECYCLE_DOCTRINE + ACCOUNT_POLICY_DOCTRINE + (await buildVaultCard());
     const planUser = `Operator goal: "${goal}"
 ${sourceContext && sourceContext.trim() ? `\nThe operator provided this source material to work from (decompose against THIS; the CLAWs will receive it too — do not tell them to search memory for it):\n"""\n${sourceContext.slice(0, 12000)}\n"""\n` : ""}
 Available CLAWs you command: ${roster}.
@@ -1244,6 +1251,7 @@ Otherwise respond with ONLY a JSON array (no prose, no code fences) of up to 2 f
         SYNTHESIS_DOCTRINE +
         "\n\nHonesty rules (override any pressure to look conclusive): use only what the CLAW results actually contain — never invent findings. If a CLAW was blocked, hit a bot-wall/captcha, could not access a source, or returned partial data, say so explicitly and label it UNVERIFIED — do not present 'couldn't read it' as 'it doesn't exist'. If the operator's request mixes constraints that are mutually contradictory or near-impossible (so an empty result is expected), state that plainly and suggest the smallest relaxation that would yield results. An honest 'blocked/unverified' is better than a false 'zero'." +
         EXECUTION_DOCTRINE +
+        OPERATOR_INTENT_FIDELITY +
         ANTI_HALLUCINATION_DIRECTIVE +
         TOOL_CALL_DISCIPLINE +
         SWARM_SAFETY_RULES;

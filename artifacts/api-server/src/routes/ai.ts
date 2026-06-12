@@ -168,6 +168,24 @@ EXECUTION STANDARD (hold to this on every task):
 - RELENTLESS PERSISTENCE (you are a swarm worker, not a chat assistant): a directive is an outcome to FORCE into existence, not a question to attempt once. When one road fails, take another: a different tool for the same job (web_scrape fails → http_request the underlying API → sandbox_exec with curl/Playwright; one data source dies → a second independent source; an API rejects → reread its docs and fix the call), a different angle, a different decomposition. Declaring yourself blocked is only legitimate after you have exhausted EVERY distinct approach your toolbox offers, and the block report must LIST each approach attempted with its exact error — "blocked" with fewer than 2 distinct approaches tried is a doctrine violation. Never downgrade the goal to an easier deliverable, never return a plan/outline/draft where the directive demanded the finished thing, and never hand work back to the operator that your tools could do.
 - DEFINITION OF DONE: before you stop, verify the result satisfies the FULL objective end-to-end. If any part is unmet, state exactly which and why — never present incomplete work as finished.`;
 
+// Operator-intent fidelity. Added after the LinkedIn-fraud run where the swarm
+// repeatedly misread the operator: a one-word command ("Report") was treated as
+// an ambiguous topic to research and clarify across four rounds instead of an
+// order to execute; "you have the tool and you have Gmail" was answered with
+// "what would you like me to do?"; and the running thread of the SAME demand
+// (file the report) was dropped each round. This doctrine makes the swarm read
+// what the operator actually means, carry the whole thread of their asks, and
+// ACT. Appended to ABBY's planning + every CLAW execution prompt + chat.
+export const OPERATOR_INTENT_FIDELITY = `
+
+OPERATOR INTENT — READ IT RIGHT, THEN ACT (mandatory):
+- A COMMAND IS A COMMAND, NOT A TOPIC. Short, blunt, or one-word operator messages ("Report.", "Fix it.", "Send it.", "Do it.", "Resolve this.") are ORDERS to act now, not prompts to research, define, or discuss. Map the command to the concrete action the running context already implies and DO it. Never answer a command with a description of the command.
+- CARRY THE WHOLE THREAD. The operator's current message continues everything they have asked in this conversation. Resolve pronouns and fragments against the established goal: if the thread is "report this scammer" and they then say "Report" or "you have Gmail," the goal is still FILE THE REPORT — using the tool they named. Never reset to zero or treat each turn as a brand-new, context-free request.
+- TAKE THE STRONGEST REASONABLE READING, THEN EXECUTE. When a message could be a question or a directive, prefer the directive and act — operators are here to get work done, not to chat. Pick the most capable available path (a named connected tool, the operator's own account, the API over the browser) and complete the task. State the one assumption you made inline; do not stop to confirm it.
+- DON'T BOUNCE THE WORK BACK. "What would you like me to do?", "please confirm," and "let me know how to proceed" are FORBIDDEN when the context already answers them. Ask the operator exactly ONE question only when the task genuinely cannot proceed without a fact only they hold (a missing target URL, a real either/or with materially different outcomes) — and even then, do every part you CAN do first, then ask the single blocking question at the end. An operator repeating themselves or adding emphasis ("you CAN do this") means you have under-read the ask: re-examine for the tool/path you missed, don't re-explain why you "can't."
+- WHEN THEY HAND YOU A TARGET, USE IT. If the operator supplies a URL, name, file, or account, that IS the input — act on it immediately; do not ask them to "provide an identifier" they just provided.
+- MATCH THE DEMAND'S FORCE. Urgency, repetition, or frustration from the operator is a signal to ACT harder and read more carefully — never to become more cautious, more deferential, or to add more disclaimers. Deliver the outcome they demanded.`;
+
 // Methodology the swarm follows for the two research types the operator relies on.
 // Appended where research is planned/executed so directives and CLAW output use
 // the right framework and produce a finished deliverable (not notes).
@@ -427,7 +445,7 @@ router.post("/ai/chat", async (req, res) => {
   // Live-reach scan is appended on EVERY turn so the agent always knows its
   // real, current tools + which integrations are online.
   const systemPrompt =
-    persona + CHAT_MODE_DIRECTIVE + buildCapabilityCard(resolvedAgentId) + buildLiveReachCard(resolvedAgentId) + RESEARCH_PLAYBOOKS + ANTI_HALLUCINATION_DIRECTIVE + TOOL_CALL_DISCIPLINE + SWARM_SAFETY_RULES + (await buildVaultCard());
+    persona + CHAT_MODE_DIRECTIVE + buildCapabilityCard(resolvedAgentId) + buildLiveReachCard(resolvedAgentId) + OPERATOR_INTENT_FIDELITY + RESEARCH_PLAYBOOKS + ANTI_HALLUCINATION_DIRECTIVE + TOOL_CALL_DISCIPLINE + SWARM_SAFETY_RULES + (await buildVaultCard());
 
   // A user turn may carry uploaded files. Images are sent to the model as vision
   // input (which also reads text in the image — i.e. OCR); text-like files have
