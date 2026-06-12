@@ -407,7 +407,10 @@ export function openrouterHeaders() {
 const NIM_FEATURED_MODELS = [
   { id: "moonshotai/kimi-k2.6", name: "Moonshot Kimi K2.6 (NIM, fast)", context_length: 262144 },
   { id: "meta/llama-3.1-8b-instruct", name: "Meta Llama 3.1 8B (NIM, fast)", context_length: 131072 },
-  { id: "nvidia/nemotron-3-ultra-550b-a55b", name: "NVIDIA Nemotron 3 Ultra 550B (NIM)", context_length: 1000000 },
+  // nemotron-3-ultra-550b removed from the catalog 2026-06-12 (operator order):
+  // repeat staller (45-60s zero-byte hangs on 06-10, ~68s on a one-token probe
+  // today). NIM_MODEL_BANS in lib/integrations.ts hard-remaps any residual
+  // selection of it at the request layer.
   { id: "nvidia/nemotron-3-super-120b-a12b", name: "NVIDIA Nemotron 3 Super 120B (NIM)", context_length: 1000000 },
   { id: "deepseek-ai/deepseek-v4-flash", name: "DeepSeek V4 Flash (NIM)", context_length: 1000000 },
   { id: "qwen/qwen3.5-397b-a17b", name: "Qwen 3.5 397B MoE (NIM)", context_length: 262144 },

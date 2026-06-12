@@ -221,7 +221,6 @@ export function isNimModel(model: string): boolean {
 // is itself a NIM id served from integrate.api.nvidia.com. NIM_FAST_MODEL is the
 // last-resort fast engine inside the gauntlet.
 export const NIM_MODEL_FALLBACKS: Record<string, string> = {
-  "nvidia/nemotron-3-ultra-550b-a55b": "nvidia/nemotron-3-super-120b-a12b",
   "nvidia/nemotron-3-super-120b-a12b": "qwen/qwen3.5-122b-a10b",
   "deepseek-ai/deepseek-v4-flash": "qwen/qwen3.5-122b-a10b",
   "deepseek-ai/deepseek-v4-pro": "deepseek-ai/deepseek-v4-flash",
@@ -241,6 +240,16 @@ export const NIM_MODEL_FALLBACKS: Record<string, string> = {
   "openai/gpt-oss-120b": "mistralai/mistral-medium-3.5-128b",
 };
 const NIM_GENERIC_FALLBACK = "qwen/qwen3.5-122b-a10b";
+
+// Models EVICTED from the swarm by operator order. Applied at the request
+// layer (nimRequestFor), so a banned id is unreachable no matter where it
+// comes from — a stale DB row, a UI override, an external API caller, or a
+// fallback chain. nemotron-3-ultra-550b: repeat staller (45-60s zero-byte
+// hangs observed live 2026-06-10; ~68s on a one-token probe 2026-06-12) —
+// removed 2026-06-12.
+export const NIM_MODEL_BANS: Record<string, string> = {
+  "nvidia/nemotron-3-ultra-550b-a55b": "moonshotai/kimi-k2.6",
+};
 
 // Global completion budget — operator directive 2026-06-12: max_tokens 8000 on
 // every model. Applies to chat, routing, planning, CLAW turns, and synthesis.
@@ -298,6 +307,8 @@ export function chatRequestFor(model: string): LlmChatRequest {
  */
 function nimRequestFor(model: string, opts?: { bypassHealthGate?: boolean }): LlmChatRequest {
   if (!nimConfigured()) throw new Error("NVIDIA_API_KEY is not set");
+  // Banned ids are rewritten FIRST so they are unreachable from any path.
+  model = NIM_MODEL_BANS[model] ?? model;
   // Map any non-NIM id to a real NIM model so we never emit a non-NIM model id.
   const effectiveModel = isNimModel(model) ? model : (NIM_MODEL_FALLBACKS[model] ?? NIM_GENERIC_FALLBACK);
   const healthy = nimHealthy() && !nimDegraded();

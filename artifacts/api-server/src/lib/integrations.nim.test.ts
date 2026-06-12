@@ -5,7 +5,7 @@
  * equivalents when it is not (zero loss of function on a key-less deploy).
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { isNimModel, nimConfigured, chatRequestFor, openRouterRequestFor, NIM_MODEL_FALLBACKS, reportNimHttpFailure, resetNimHealth, nimHealthy, nimDegraded, reportNimDegraded, nimKeyPool, advanceNimKey, llmFetch, modelStalled } from "./integrations";
+import { isNimModel, nimConfigured, chatRequestFor, openRouterRequestFor, NIM_MODEL_FALLBACKS, NIM_MODEL_BANS, reportNimHttpFailure, resetNimHealth, nimHealthy, nimDegraded, reportNimDegraded, nimKeyPool, advanceNimKey, llmFetch, modelStalled } from "./integrations";
 
 const ENV_KEYS = ["NVIDIA_API_KEY", "NVIDIA_API_KEY_2", "OPENROUTER_API_KEY", "HELICONE_API_KEY", "NIM_ENABLE_THINKING", "LLM_TIMEOUT_MS"] as const;
 const saved: Record<string, string | undefined> = {};
@@ -23,7 +23,6 @@ afterEach(() => {
 
 describe("isNimModel", () => {
   it("recognises the swarm's NIM model ids", () => {
-    expect(isNimModel("nvidia/nemotron-3-ultra-550b-a55b")).toBe(true);
     expect(isNimModel("nvidia/nemotron-3-super-120b-a12b")).toBe(true);
     expect(isNimModel("deepseek-ai/deepseek-v4-flash")).toBe(true);
     expect(isNimModel("qwen/qwen3.5-397b-a17b")).toBe(true);
@@ -54,10 +53,10 @@ describe("chatRequestFor", () => {
 
   it("defaults Nemotron thinking OFF for bounded latency, NIM_ENABLE_THINKING=on re-enables", () => {
     process.env["NVIDIA_API_KEY"] = "nvapi-test";
-    const off = chatRequestFor("nvidia/nemotron-3-ultra-550b-a55b");
+    const off = chatRequestFor("nvidia/nemotron-3-super-120b-a12b");
     expect(off.bodyExtras["chat_template_kwargs"]).toEqual({ enable_thinking: false });
     process.env["NIM_ENABLE_THINKING"] = "on";
-    const on = chatRequestFor("nvidia/nemotron-3-ultra-550b-a55b");
+    const on = chatRequestFor("nvidia/nemotron-3-super-120b-a12b");
     expect(on.bodyExtras["chat_template_kwargs"]).toEqual({ enable_thinking: true });
     // non-Nemotron NIM models get no template kwargs
     const ds = chatRequestFor("deepseek-ai/deepseek-v4-flash");
@@ -67,7 +66,7 @@ describe("chatRequestFor", () => {
   it("throws a clear error when NVIDIA_API_KEY is absent (NIM-only deployment)", () => {
     process.env["OPENROUTER_API_KEY"] = "or-test"; // must be ignored — OpenRouter is removed
     expect(nimConfigured()).toBe(false);
-    expect(() => chatRequestFor("nvidia/nemotron-3-ultra-550b-a55b")).toThrow("NVIDIA_API_KEY");
+    expect(() => chatRequestFor("nvidia/nemotron-3-super-120b-a12b")).toThrow("NVIDIA_API_KEY");
   });
 
   it("maps every NIM-internal fallback target to a real NIM model (no dead ids)", () => {
@@ -96,6 +95,18 @@ describe("chatRequestFor", () => {
   it("throws a clear error when no provider key exists at all", () => {
     expect(() => chatRequestFor("x-ai/grok-4.3")).toThrow("NVIDIA_API_KEY");
   });
+
+  it("banned models are unreachable from ANY path — nemotron-3-ultra is evicted (operator order 2026-06-12)", () => {
+    process.env["NVIDIA_API_KEY"] = "nvapi-test";
+    expect(NIM_MODEL_BANS["nvidia/nemotron-3-ultra-550b-a55b"]).toBe("moonshotai/kimi-k2.6");
+    const r = chatRequestFor("nvidia/nemotron-3-ultra-550b-a55b");
+    expect(r.model).toBe("moonshotai/kimi-k2.6");
+    // every ban target must itself be a live, un-banned NIM id
+    for (const [banned, target] of Object.entries(NIM_MODEL_BANS)) {
+      expect(isNimModel(target), `${banned} must remap to a real NIM id`).toBe(true);
+      expect(NIM_MODEL_BANS[target], `${banned} must not remap to another banned id`).toBeUndefined();
+    }
+  });
 });
 
 describe("NIM auth circuit-breaker — a bad NVIDIA key is reported, never silently rerouted off-NVIDIA", () => {
@@ -115,7 +126,7 @@ describe("NIM auth circuit-breaker — a bad NVIDIA key is reported, never silen
     reportNimHttpFailure(429);
     reportNimHttpFailure(500);
     expect(nimHealthy()).toBe(true);
-    expect(chatRequestFor("nvidia/nemotron-3-ultra-550b-a55b").provider).toBe("nvidia-nim");
+    expect(chatRequestFor("nvidia/nemotron-3-super-120b-a12b").provider).toBe("nvidia-nim");
   });
 
   it("recovers after reset (cooldown expiry) so a fixed key clears the health mark without a restart", () => {
@@ -131,11 +142,11 @@ describe("NIM auth circuit-breaker — a bad NVIDIA key is reported, never silen
 describe("NIM degraded breaker — a VALID key that is throttled/overloaded is marked, never rerouted off-NVIDIA", () => {
   it("degraded mark is set and readable, while routing stays on NIM", () => {
     process.env["NVIDIA_API_KEY"] = "nvapi-valid-but-throttled";
-    expect(chatRequestFor("nvidia/nemotron-3-ultra-550b-a55b").provider).toBe("nvidia-nim");
+    expect(chatRequestFor("nvidia/nemotron-3-super-120b-a12b").provider).toBe("nvidia-nim");
     reportNimDegraded("test: 429 on every pooled key");
     expect(nimDegraded()).toBe(true);
     expect(nimHealthy()).toBe(true); // auth breaker untouched — the key IS valid
-    expect(chatRequestFor("nvidia/nemotron-3-ultra-550b-a55b").provider).toBe("nvidia-nim");
+    expect(chatRequestFor("nvidia/nemotron-3-super-120b-a12b").provider).toBe("nvidia-nim");
   });
 
   it("resetNimHealth clears the degraded mark (cooldown expiry / key rotation)", () => {
@@ -150,10 +161,10 @@ describe("NIM degraded breaker — a VALID key that is throttled/overloaded is m
   it("openRouterRequestFor (the escape builder) now builds a NIM request — never a removed provider", () => {
     process.env["NVIDIA_API_KEY"] = "nvapi-healthy";
     process.env["OPENROUTER_API_KEY"] = "or-test"; // present but must never be used
-    const r = openRouterRequestFor("nvidia/nemotron-3-ultra-550b-a55b");
+    const r = openRouterRequestFor("nvidia/nemotron-3-super-120b-a12b");
     expect(r.provider).toBe("nvidia-nim");
     expect(r.url).toContain("nvidia.com");
-    expect(r.model).toBe("nvidia/nemotron-3-ultra-550b-a55b");
+    expect(r.model).toBe("nvidia/nemotron-3-super-120b-a12b");
     expect(r.headers["Authorization"]).toBe("Bearer nvapi-healthy");
   });
 });
@@ -232,10 +243,10 @@ describe("llmFetch — rotation, breaker, and stall failover", () => {
       models.push(body.model);
       return body.model.startsWith("nvidia/") ? jsonResponse(504) : jsonResponse(200, { ok: true });
     }));
-    const { r, req } = await llmFetch("nvidia/nemotron-3-ultra-550b-a55b", { messages: [] });
+    const { r, req } = await llmFetch("nvidia/nemotron-3-super-120b-a12b", { messages: [] });
     expect(r.status).toBe(200);
     expect(req.provider).toBe("nvidia-nim");
-    expect(models).toEqual(["nvidia/nemotron-3-ultra-550b-a55b", "moonshotai/kimi-k2.6"]);
+    expect(models).toEqual(["nvidia/nemotron-3-super-120b-a12b", "moonshotai/kimi-k2.6"]);
   });
 
   it("fails over to the fast NIM model when the upstream never starts responding", async () => {
@@ -253,10 +264,10 @@ describe("llmFetch — rotation, breaker, and stall failover", () => {
       }
       return jsonResponse(200, { ok: true });
     }));
-    const { r, req } = await llmFetch("nvidia/nemotron-3-ultra-550b-a55b", { messages: [] });
+    const { r, req } = await llmFetch("nvidia/nemotron-3-super-120b-a12b", { messages: [] });
     expect(r.status).toBe(200);
     expect(req.model).toBe("moonshotai/kimi-k2.6");
-    expect(models).toEqual(["nvidia/nemotron-3-ultra-550b-a55b", "moonshotai/kimi-k2.6"]);
+    expect(models).toEqual(["nvidia/nemotron-3-super-120b-a12b", "moonshotai/kimi-k2.6"]);
   });
 
   it("stall breaker: after one stall, later calls skip the sick model and go straight to the fast model", async () => {
@@ -274,14 +285,14 @@ describe("llmFetch — rotation, breaker, and stall failover", () => {
       return jsonResponse(200, { ok: true });
     }));
     // First call pays the timeout once and marks the model as stalling.
-    await llmFetch("nvidia/nemotron-3-ultra-550b-a55b", { messages: [] });
-    expect(modelStalled("nvidia/nemotron-3-ultra-550b-a55b")).toBe(true);
+    await llmFetch("nvidia/nemotron-3-super-120b-a12b", { messages: [] });
+    expect(modelStalled("nvidia/nemotron-3-super-120b-a12b")).toBe(true);
     // Second call must NOT touch the sick model at all.
-    const { r, req } = await llmFetch("nvidia/nemotron-3-ultra-550b-a55b", { messages: [] });
+    const { r, req } = await llmFetch("nvidia/nemotron-3-super-120b-a12b", { messages: [] });
     expect(r.status).toBe(200);
     expect(req.model).toBe("moonshotai/kimi-k2.6");
     expect(models).toEqual([
-      "nvidia/nemotron-3-ultra-550b-a55b", "moonshotai/kimi-k2.6", // first call: stall + failover
+      "nvidia/nemotron-3-super-120b-a12b", "moonshotai/kimi-k2.6", // first call: stall + failover
       "moonshotai/kimi-k2.6",                                       // second call: direct
     ]);
   });
@@ -308,10 +319,10 @@ describe("llmFetch — rotation, breaker, and stall failover", () => {
       const body = JSON.parse(String(init.body)) as { model: string };
       return body.model.startsWith("nvidia/") ? jsonResponse(504) : jsonResponse(200, { ok: true });
     }));
-    await llmFetch("nvidia/nemotron-3-ultra-550b-a55b", { messages: [] });
-    expect(modelStalled("nvidia/nemotron-3-ultra-550b-a55b")).toBe(true);
+    await llmFetch("nvidia/nemotron-3-super-120b-a12b", { messages: [] });
+    expect(modelStalled("nvidia/nemotron-3-super-120b-a12b")).toBe(true);
     resetNimHealth(); // stands in for the 5-minute cooldown elapsing
-    expect(modelStalled("nvidia/nemotron-3-ultra-550b-a55b")).toBe(false);
+    expect(modelStalled("nvidia/nemotron-3-super-120b-a12b")).toBe(false);
   });
 
   it("FINAL ESCAPE (NIM-only): 429 on every key + backoff retry → NIM marked degraded and the failure surfaced honestly — zero off-NVIDIA traffic", async () => {
@@ -323,7 +334,7 @@ describe("llmFetch — rotation, breaker, and stall failover", () => {
       urls.push(String(url));
       return jsonResponse(429);
     }));
-    const { r, req } = await llmFetch("nvidia/nemotron-3-ultra-550b-a55b", { messages: [] });
+    const { r, req } = await llmFetch("nvidia/nemotron-3-super-120b-a12b", { messages: [] });
     // OpenRouter is removed: the throttle is surfaced honestly — it is NOT
     // silently rerouted to a third-party router with no credits (the source
     // of the live 402 outage).
