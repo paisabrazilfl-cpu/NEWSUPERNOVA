@@ -3,6 +3,7 @@ import {
   Sparkles, X, Image as ImageIcon, FileDown, Paperclip, Mic, Copy, Compass,
   BookOpen, ShieldCheck, MessagesSquare, Wrench, RotateCcw, Link2, Gauge,
   LayoutTemplate, Globe, KeyRound, Scale, BadgeCheck, Cpu,
+  Lock, Phone, MousePointerClick, ShieldAlert, Target,
 } from "lucide-react";
 
 /**
@@ -18,6 +19,11 @@ interface Item {
 }
 
 const CAPABILITIES: Item[] = [
+  { icon: Lock, title: "Operator sign-in — the whole console is private", body: "The dashboard now requires an operator password, and every data/action API is closed to anyone else. Sign in once and your session covers everything; sign out from Settings. The external API stays protected by its own key." },
+  { icon: Phone, title: "Run the swarm by phone (voice)", body: "Call a number and talk to ABBY: ask questions, dispatch a real orchestrated task, hear the result read back. Powered by a Vapi voice assistant wired to the swarm — the work runs even after you hang up." },
+  { icon: MousePointerClick, title: "Operates your accounts — API first, browser as fallback", body: "Connect Gmail and any Composio app via OAuth and the swarm acts for you (send mail, post, manage SaaS). For a site with no API, browser_login drives a Steel browser that signs in with credentials you store in the vault and does the task. Prefers the API; uses the browser only when needed." },
+  { icon: ShieldAlert, title: "Hard safety limits on account actions", body: "Enforced in code, never overridable: the swarm will NOT open financial accounts (bank, brokerage, credit, loan, crypto) or submit government IDs (SSN, passport, license, tax ID). Everything else runs end to end." },
+  { icon: Target, title: "Solves your request, then verifies it", body: "After the CLAWs report, ABBY re-checks the answer against your goal and keeps correcting — within a bounded budget — until it actually solves it, instead of handing back a half-answer. If it can't fully solve it, it says so honestly." },
   { icon: Cpu, title: "NVIDIA NIM model engine", body: "The swarm now runs on NVIDIA-hosted models — ABBY on Nemotron 3 Ultra 550B (1M context, agentic reasoning), the CLAWs on Nemotron Super, DeepSeek V4 Flash, and Qwen 3.5 MoE — each live-verified for chat, tool calling, and JSON mode. If the NVIDIA key is missing, every agent transparently falls back to its previous model, so nothing ever goes dark." },
   { icon: LayoutTemplate, title: "$0 on-brand image cards", body: "Quotes, hooks, news, and stat posts render as real 1080×1080 PNGs by code — terminal/cyber on-brand, at about $0 each. The swarm reaches for these before paid image generation, paying only when you genuinely need a photoreal picture." },
   { icon: Globe, title: "ASCII world stories", body: "Generate a stylized ASCII \"world\" story or triptych as a real, shareable image — a distinct on-brand visual format alongside the cards." },
@@ -40,7 +46,8 @@ const FIXES: Item[] = [
   { icon: KeyRound, title: "A working key is never called \"not connected\"", body: "Authenticated API calls auto-attach your stored token, and a 401 from a missing auth header is caught and retried — instead of being mis-reported as an invalid or expired key." },
   { icon: Scale, title: "Conflicting agent results resolved by evidence", body: "When two CLAWs disagree, ABBY trusts the one with concrete proof — a real deploy id beats an unauthenticated 401 — and gives one clear answer instead of echoing both." },
   { icon: ImageIcon, title: "No more \"I can't generate images\"", body: "Image requests now route to the real image tool every time, instead of being refused inline." },
-  { icon: Wrench, title: "Big generations don't fail anymore", body: "Large code and deck outputs no longer break on truncated tool-call arguments — the agent retries smaller and recovers." },
+  { icon: Wrench, title: "Big generations don't fail anymore", body: "Large code and deck outputs no longer break on truncated tool-call arguments — the agent retries smaller and recovers, and big files (e.g. a PDF) save in chunks instead of failing." },
+  { icon: RotateCcw, title: "No more spinning on the same call", body: "If an agent repeats an identical tool call or makes no progress for a few steps, the loop stops and it concludes honestly with what it has — no more burning the whole budget on a stuck call, and no invented download links." },
   { icon: RotateCcw, title: "Interrupted ≠ failed", body: "A deploy or restart now shows as amber \"interrupted,\" not a red CLAW \"failure,\" so the failure count reflects real failures only." },
   { icon: Link2, title: "Source material actually reaches the CLAWs", body: "What you paste or upload is grounded into each directive, so agents work from your data instead of guessing." },
   { icon: MessagesSquare, title: "Answers, not internal state", body: "Agents stopped dumping raw self-audit / navel-gazing logs and now return the actual result." },

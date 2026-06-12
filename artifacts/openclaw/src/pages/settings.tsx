@@ -267,6 +267,17 @@ function VaultPanel() {
               Add / Update Secret
             </div>
 
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              Store API keys here, or a website login so the swarm can operate it for you when the
+              site has no API. For a site login, add two secrets — e.g.{" "}
+              <code className="px-1 py-0.5 rounded bg-muted text-foreground font-mono">MYSITE_EMAIL</code>{" "}
+              and{" "}
+              <code className="px-1 py-0.5 rounded bg-muted text-foreground font-mono">MYSITE_PASSWORD</code>{" "}
+              — then ask the swarm to do the task on that site; it logs in via a Steel browser using
+              these by name. Values are encrypted and never shown to the agents. For Gmail/Google,
+              prefer <span className="text-foreground">Connect Apps</span> (OAuth) above instead of a stored password.
+            </p>
+
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-1.5">
                 <label className="text-xs uppercase tracking-wider text-muted-foreground font-mono">
