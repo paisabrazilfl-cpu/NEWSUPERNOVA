@@ -28,6 +28,9 @@ import {
   AGENT_PERSONAS,
   ABBY_ID,
   resolveModel,
+  SECONDARY_CHAT_MODEL,
+  rescueRawToolCalls,
+  stripToolTokenNoise,
   ANTI_HALLUCINATION_DIRECTIVE,
   TOOL_CALL_DISCIPLINE,
   EXECUTION_DOCTRINE,
@@ -278,9 +281,9 @@ export async function reconcileStaleWork(): Promise<void> {
  * engine is 429-rate-limited or 5xxing). A Mistral NIM build — a different
  * model family from the nemotron/qwen/deepseek CLAW primaries, all served from
  * the same NVIDIA NIM endpoint — so a CLAW-model outage stays inside the swarm
- * (and inside NVIDIA).
+ * (and inside NVIDIA). Shared with the chat routes via SECONDARY_CHAT_MODEL
+ * (imported from ./routes/ai).
  */
-const SECONDARY_CHAT_MODEL = "mistralai/mistral-medium-3.5-128b";
 
 async function completeChat(model: string, system: string, user: string, maxTokens = 800): Promise<string> {
   const startedAt = new Date();
@@ -372,7 +375,7 @@ async function completeChat(model: string, system: string, user: string, maxToke
   const data = (await r.json()) as {
     choices?: Array<{ message?: { content?: string } }>;
   };
-  const out = data?.choices?.[0]?.message?.content?.trim() || "(no response)";
+  const out = stripToolTokenNoise(data?.choices?.[0]?.message?.content?.trim() ?? "") || "(no response)";
   traceLlmRun({ name: "completeChat", model, input: { system, user }, output: out, startedAt });
   return out;
 }
@@ -401,6 +404,30 @@ type ChatMessage =
  * message (content and/or tool_calls). Falls back to a tool-free call if the
  * model/provider rejects the `tools` parameter.
  */
+/**
+ * Normalize a provider assistant message: when the model emitted raw Kimi-style
+ * tool-call tokens as plain text (provider failed to parse them), rescue them
+ * into real tool_calls so the action still executes, and strip the markup so
+ * it never reaches the operator's chat.
+ */
+function normalizeAssistantMessage(msg: { content?: string | null; tool_calls?: ToolCallReq[] } | undefined): AssistantMessage {
+  let content = msg?.content ?? null;
+  let toolCalls = msg?.tool_calls;
+  if ((!toolCalls || toolCalls.length === 0) && typeof content === "string" && content.includes("<|tool_call")) {
+    const rescued = rescueRawToolCalls(content);
+    if (rescued.calls.length) {
+      toolCalls = rescued.calls.map((c, i) => ({
+        id: `rescued_${Date.now()}_${i}`,
+        type: "function" as const,
+        function: { name: c.name, arguments: c.arguments },
+      }));
+      logger.warn({ count: toolCalls.length }, "rescued raw tool-call tokens the provider failed to parse into tool_calls");
+    }
+    content = rescued.clean || null;
+  }
+  return { role: "assistant", content, tool_calls: toolCalls };
+}
+
 async function completeChatTurn(
   model: string,
   messages: ChatMessage[],
@@ -436,7 +463,7 @@ async function completeChatTurn(
           const m3 = d3?.choices?.[0]?.message;
           if (m3) {
             logger.info({ model, budget }, "tool turn recovered via 402 budget-fit retry");
-            return { role: "assistant", content: m3.content ?? null, tool_calls: m3.tool_calls };
+            return normalizeAssistantMessage(m3);
           }
         }
       } catch (e) {
@@ -460,7 +487,7 @@ async function completeChatTurn(
           const fmsg = fdata?.choices?.[0]?.message;
           if (fmsg) {
             logger.info({ from: llmReq.model, to: fb.model }, "tool turn recovered on secondary model after primary failure");
-            return { role: "assistant", content: fmsg.content ?? null, tool_calls: fmsg.tool_calls };
+            return normalizeAssistantMessage(fmsg);
           }
         }
       }
@@ -472,12 +499,7 @@ async function completeChatTurn(
   const data = (await r.json()) as {
     choices?: Array<{ message?: AssistantMessage }>;
   };
-  const msg = data?.choices?.[0]?.message;
-  return {
-    role: "assistant",
-    content: msg?.content ?? null,
-    tool_calls: msg?.tool_calls,
-  };
+  return normalizeAssistantMessage(data?.choices?.[0]?.message);
 }
 
 function summarizeArgs(args: Record<string, unknown>): string {

@@ -94526,6 +94526,27 @@ function requestsConnectedAccountAction(message) {
 var CHAT_HISTORY_LIMIT = 16;
 var ABBY_ID2 = 1;
 var ABBY_DEFAULT_MODEL = "moonshotai/kimi-k2.6";
+var SECONDARY_CHAT_MODEL = "mistralai/mistral-medium-3.5-128b";
+function stripToolTokenNoise(text2) {
+  if (!text2 || !text2.includes("<|tool_call")) return text2;
+  return text2.replace(/<\|tool_calls_section_begin\|>[\s\S]*?<\|tool_calls_section_end\|>/g, " ").replace(/<\|tool_call_begin\|>[\s\S]*?<\|tool_call_end\|>/g, " ").replace(/<\|tool_call(?:s_section)?_(?:begin|end)\|>|<\|tool_call_argument_begin\|>/g, " ").replace(/[ \t]{2,}/g, " ").trim();
+}
+function rescueRawToolCalls(text2) {
+  const calls = [];
+  if (!text2 || !text2.includes("<|tool_call")) return { clean: text2, calls };
+  const re = /<\|tool_call_begin\|>\s*(?:functions[._])?([\w][\w.-]*?)(?:[:.]\d+)?\s*<\|tool_call_argument_begin\|>\s*([\s\S]*?)<\|tool_call_end\|>/g;
+  let m;
+  while (m = re.exec(text2)) {
+    const name = m[1].trim();
+    const args = m[2].trim();
+    try {
+      JSON.parse(args);
+      calls.push({ name, arguments: args });
+    } catch {
+    }
+  }
+  return { clean: stripToolTokenNoise(text2), calls };
+}
 function resolveModel(agentId, agentModel, override) {
   const candidate = typeof override === "string" && override.trim() ? override : agentModel ?? ABBY_DEFAULT_MODEL;
   if (agentId === ABBY_ID2 && !candidate.startsWith("x-ai/") && !candidate.startsWith("nvidia/nemotron") && !candidate.startsWith("moonshotai/")) {
@@ -94648,13 +94669,14 @@ ${a.extractedText}` });
   };
   let fullResponse = "";
   const finishWith = async (text2, usedModel, via) => {
-    if (text2.trim()) {
+    const stored = stripToolTokenNoise(text2.trim());
+    if (stored) {
       await db.insert(messagesTable).values({
         channelId,
         agentId: agent.id,
         agentName: agent.name,
         agentColor: agent.color,
-        content: text2.trim(),
+        content: stored,
         messageType: "agent",
         metadata: JSON.stringify({ model: usedModel, generatedBy: via })
       });
@@ -94766,11 +94788,20 @@ The agents are starting now; their work and results will stream into this channe
     }
   }
   try {
-    const { r: orRes, req: llmReq } = await llmFetch(model, {
+    let { r: orRes, req: llmReq } = await llmFetch(model, {
       stream: true,
       messages: chatMessages,
       max_tokens: 700
     });
+    if (!orRes.ok && llmReq.model !== SECONDARY_CHAT_MODEL) {
+      const primaryErr = (await orRes.text()).slice(0, 200);
+      req.log.warn({ status: orRes.status, model: llmReq.model, primaryErr }, "primary chat model failed; retrying on secondary");
+      ({ r: orRes, req: llmReq } = await llmFetch(SECONDARY_CHAT_MODEL, {
+        stream: true,
+        messages: chatMessages,
+        max_tokens: 700
+      }));
+    }
     if (!orRes.ok) {
       const errText = await orRes.text();
       req.log.error({ status: orRes.status, provider: llmReq.provider, model: llmReq.model, errText }, "LLM provider error");
@@ -94809,13 +94840,14 @@ The agents are starting now; their work and results will stream into this channe
         }
       }
     }
-    if (fullResponse.trim()) {
+    const storedResponse = stripToolTokenNoise(fullResponse.trim());
+    if (storedResponse) {
       await db.insert(messagesTable).values({
         channelId,
         agentId: agent.id,
         agentName: agent.name,
         agentColor: agent.color,
-        content: fullResponse.trim(),
+        content: storedResponse,
         messageType: "agent",
         metadata: JSON.stringify({ model, generatedBy: "openrouter" })
       });
@@ -94851,7 +94883,10 @@ router7.post("/ai/complete", async (req, res) => {
     { role: "user", content: message }
   ];
   try {
-    const { r, req: llmReq } = await llmFetch(model, { messages, max_tokens: 512 });
+    let { r, req: llmReq } = await llmFetch(model, { messages, max_tokens: 512 });
+    if (!r.ok && llmReq.model !== SECONDARY_CHAT_MODEL) {
+      ({ r, req: llmReq } = await llmFetch(SECONDARY_CHAT_MODEL, { messages, max_tokens: 512 }));
+    }
     if (!r.ok) {
       const errText = (await r.text()).slice(0, 200);
       res.status(502).json({ error: `${providerLabel(llmReq)} error ${r.status} (${llmReq.model}): ${errText}` });
@@ -94996,7 +95031,6 @@ async function reconcileStaleWork() {
     logger.error({ err }, "reconcileStaleWork failed");
   }
 }
-var SECONDARY_CHAT_MODEL = "mistralai/mistral-medium-3.5-128b";
 async function completeChat(model, system, user, maxTokens = 800) {
   const startedAt = /* @__PURE__ */ new Date();
   let r;
@@ -95075,9 +95109,26 @@ async function completeChat(model, system, user, maxTokens = 800) {
     throw new Error(`NVIDIA NIM ${r.status}: ${errText}`);
   }
   const data = await r.json();
-  const out = data?.choices?.[0]?.message?.content?.trim() || "(no response)";
+  const out = stripToolTokenNoise(data?.choices?.[0]?.message?.content?.trim() ?? "") || "(no response)";
   traceLlmRun({ name: "completeChat", model, input: { system, user }, output: out, startedAt });
   return out;
+}
+function normalizeAssistantMessage(msg) {
+  let content = msg?.content ?? null;
+  let toolCalls = msg?.tool_calls;
+  if ((!toolCalls || toolCalls.length === 0) && typeof content === "string" && content.includes("<|tool_call")) {
+    const rescued = rescueRawToolCalls(content);
+    if (rescued.calls.length) {
+      toolCalls = rescued.calls.map((c, i) => ({
+        id: `rescued_${Date.now()}_${i}`,
+        type: "function",
+        function: { name: c.name, arguments: c.arguments }
+      }));
+      logger.warn({ count: toolCalls.length }, "rescued raw tool-call tokens the provider failed to parse into tool_calls");
+    }
+    content = rescued.clean || null;
+  }
+  return { role: "assistant", content, tool_calls: toolCalls };
 }
 async function completeChatTurn(model, messages, tools) {
   const payload = { messages, stream: false, max_tokens: 8e3 };
@@ -95104,7 +95155,7 @@ async function completeChatTurn(model, messages, tools) {
           const m3 = d3?.choices?.[0]?.message;
           if (m3) {
             logger.info({ model, budget }, "tool turn recovered via 402 budget-fit retry");
-            return { role: "assistant", content: m3.content ?? null, tool_calls: m3.tool_calls };
+            return normalizeAssistantMessage(m3);
           }
         }
       } catch (e) {
@@ -95125,7 +95176,7 @@ async function completeChatTurn(model, messages, tools) {
           const fmsg = fdata?.choices?.[0]?.message;
           if (fmsg) {
             logger.info({ from: llmReq.model, to: fb.model }, "tool turn recovered on secondary model after primary failure");
-            return { role: "assistant", content: fmsg.content ?? null, tool_calls: fmsg.tool_calls };
+            return normalizeAssistantMessage(fmsg);
           }
         }
       }
@@ -95135,12 +95186,7 @@ async function completeChatTurn(model, messages, tools) {
     throw new Error(`NVIDIA NIM ${r.status}: ${errText}`);
   }
   const data = await r.json();
-  const msg = data?.choices?.[0]?.message;
-  return {
-    role: "assistant",
-    content: msg?.content ?? null,
-    tool_calls: msg?.tool_calls
-  };
+  return normalizeAssistantMessage(data?.choices?.[0]?.message);
 }
 function summarizeArgs(args) {
   return Object.entries(args).map(([k, v]) => `${k}=${JSON.stringify(v).slice(0, 60)}`).join(" ").slice(0, 160);

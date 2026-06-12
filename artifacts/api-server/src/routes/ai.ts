@@ -328,6 +328,48 @@ export const ABBY_ID = 1;
 // defaults to the fast engine; the heavy models remain selectable per-agent.
 export const ABBY_DEFAULT_MODEL = "moonshotai/kimi-k2.6";
 
+// Secondary chat model used when a primary turn fails (429-throttled or 5xxing
+// pool). A Mistral NIM build — a different model family from the kimi/nemotron/
+// qwen primaries, served from the same NVIDIA NIM endpoint — so an outage on
+// one pool stays inside the swarm with the persona intact.
+export const SECONDARY_CHAT_MODEL = "mistralai/mistral-medium-3.5-128b";
+
+// ─── Raw tool-token rescue ───────────────────────────────────────────────────
+// Kimi-family models sometimes emit their NATIVE tool-call markup as plain text
+// when the provider fails to parse it into tool_calls (observed live
+// 2026-06-12: a CLAW's deploy script rendered raw into the chat as
+// "<|tool_call_begin|>…" and the action never executed). rescueRawToolCalls()
+// recovers those calls so the work still happens; stripToolTokenNoise() removes
+// the markup so it never reaches the operator's screen.
+
+export interface RescuedToolCall { name: string; arguments: string }
+
+export function stripToolTokenNoise(text: string): string {
+  if (!text || !text.includes("<|tool_call")) return text;
+  return text
+    .replace(/<\|tool_calls_section_begin\|>[\s\S]*?<\|tool_calls_section_end\|>/g, " ")
+    .replace(/<\|tool_call_begin\|>[\s\S]*?<\|tool_call_end\|>/g, " ")
+    .replace(/<\|tool_call(?:s_section)?_(?:begin|end)\|>|<\|tool_call_argument_begin\|>/g, " ")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
+
+export function rescueRawToolCalls(text: string): { clean: string; calls: RescuedToolCall[] } {
+  const calls: RescuedToolCall[] = [];
+  if (!text || !text.includes("<|tool_call")) return { clean: text, calls };
+  const re = /<\|tool_call_begin\|>\s*(?:functions[._])?([\w][\w.-]*?)(?:[:.]\d+)?\s*<\|tool_call_argument_begin\|>\s*([\s\S]*?)<\|tool_call_end\|>/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    const name = m[1]!.trim();
+    const args = m[2]!.trim();
+    try {
+      JSON.parse(args); // only rescue calls whose arguments are valid JSON
+      calls.push({ name, arguments: args });
+    } catch { /* malformed arguments — strip as noise, don't execute */ }
+  }
+  return { clean: stripToolTokenNoise(text), calls };
+}
+
 // ABBY must run on an orchestrator-grade model: Kimi K2.6 (fast NIM engine,
 // live-verified tool calling), NVIDIA Nemotron, or a Grok (x-ai/) model.
 // Anything else (from the DB or a request override) is forced back to the
@@ -513,13 +555,14 @@ router.post("/ai/chat", async (req, res) => {
 
   // Shared helper: persist the assistant reply + close the stream.
   const finishWith = async (text: string, usedModel: string, via: string) => {
-    if (text.trim()) {
+    const stored = stripToolTokenNoise(text.trim());
+    if (stored) {
       await db.insert(messagesTable).values({
         channelId,
         agentId: agent.id,
         agentName: agent.name,
         agentColor: agent.color,
-        content: text.trim(),
+        content: stored,
         messageType: "agent",
         metadata: JSON.stringify({ model: usedModel, generatedBy: via }),
       });
@@ -690,11 +733,23 @@ router.post("/ai/chat", async (req, res) => {
   }
 
   try {
-    const { r: orRes, req: llmReq } = await llmFetch(model, {
+    let { r: orRes, req: llmReq } = await llmFetch(model, {
       stream: true,
       messages: chatMessages,
       max_tokens: 700,
     });
+
+    // A throttled/5xx primary must not kill the conversation: retry once on
+    // the swarm's secondary model (different NIM pool), persona intact.
+    if (!orRes.ok && llmReq.model !== SECONDARY_CHAT_MODEL) {
+      const primaryErr = (await orRes.text()).slice(0, 200);
+      req.log.warn({ status: orRes.status, model: llmReq.model, primaryErr }, "primary chat model failed; retrying on secondary");
+      ({ r: orRes, req: llmReq } = await llmFetch(SECONDARY_CHAT_MODEL, {
+        stream: true,
+        messages: chatMessages,
+        max_tokens: 700,
+      }));
+    }
 
     if (!orRes.ok) {
       const errText = await orRes.text();
@@ -740,13 +795,14 @@ router.post("/ai/chat", async (req, res) => {
     }
 
     // Save the complete response as a message in the DB
-    if (fullResponse.trim()) {
+    const storedResponse = stripToolTokenNoise(fullResponse.trim());
+    if (storedResponse) {
       await db.insert(messagesTable).values({
         channelId,
         agentId: agent.id,
         agentName: agent.name,
         agentColor: agent.color,
-        content: fullResponse.trim(),
+        content: storedResponse,
         messageType: "agent",
         metadata: JSON.stringify({ model, generatedBy: "openrouter" }),
       });
@@ -786,7 +842,11 @@ router.post("/ai/complete", async (req, res) => {
   ];
 
   try {
-    const { r, req: llmReq } = await llmFetch(model, { messages, max_tokens: 512 });
+    let { r, req: llmReq } = await llmFetch(model, { messages, max_tokens: 512 });
+    // Same one-shot secondary retry as the streaming chat path.
+    if (!r.ok && llmReq.model !== SECONDARY_CHAT_MODEL) {
+      ({ r, req: llmReq } = await llmFetch(SECONDARY_CHAT_MODEL, { messages, max_tokens: 512 }));
+    }
     if (!r.ok) {
       const errText = (await r.text()).slice(0, 200);
       res.status(502).json({ error: `${providerLabel(llmReq)} error ${r.status} (${llmReq.model}): ${errText}` });
