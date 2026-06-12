@@ -54307,17 +54307,18 @@ function clip(s, n) {
 function heliconeEnabled() {
   return !!process.env["HELICONE_API_KEY"];
 }
-function llmBaseUrl() {
-  return heliconeEnabled() ? OPENROUTER_VIA_HELICONE : OPENROUTER_DIRECT;
-}
 function heliconeHeaders(extra) {
   const key = process.env["HELICONE_API_KEY"];
   if (!key) return {};
   return {
     "Helicone-Auth": `Bearer ${key}`,
+    "Helicone-Target-Url": NVIDIA_NIM_BASE,
     "Helicone-Cache-Enabled": "false",
     ...extra
   };
+}
+function llmBaseUrl() {
+  return heliconeEnabled() ? HELICONE_GATEWAY : NVIDIA_NIM_BASE;
 }
 function nimKeyPool() {
   const keys = [];
@@ -54352,7 +54353,7 @@ function reportNimHttpFailure(status) {
     nimDisabledUntil = Date.now() + NIM_AUTH_COOLDOWN_MS;
     logger.error(
       { status, cooldownMinutes: NIM_AUTH_COOLDOWN_MS / 6e4 },
-      "NVIDIA NIM rejected the API key \u2014 falling back to OpenRouter for all models. Fix/rotate NVIDIA_API_KEY on the server."
+      "NVIDIA NIM rejected the API key \u2014 marked unhealthy; calls will fail to Buddy until fixed. Fix/rotate NVIDIA_API_KEY on the server."
     );
   }
 }
@@ -54373,7 +54374,7 @@ function reportNimDegraded(reason) {
   nimDegradedUntil = Date.now() + nimDegradedCooldownMs();
   logger.error(
     { reason, cooldownMs: nimDegradedCooldownMs() },
-    "NVIDIA NIM is throttled/overloaded on every pooled key \u2014 routing ALL NIM models to their OpenRouter fallbacks for the cooldown."
+    "NVIDIA NIM is throttled/overloaded on every pooled key \u2014 marked degraded for the cooldown; Buddy is the only fallback."
   );
 }
 function modelStalled(model) {
@@ -54390,47 +54391,42 @@ function isNimModel(model) {
   return NIM_PREFIXES.some((p) => model.startsWith(p));
 }
 function chatRequestFor(model) {
-  if (isNimModel(model) && nimConfigured() && nimHealthy() && !nimDegraded()) {
-    const key = currentNimKey();
-    const bodyExtras = {
-      // Verified live 2026-06-10: qwen/qwen3.5-* 500s without explicit
-      // sampling params, and Nemotron's default thinking budget can exceed the
-      // swarm's patience — so default thinking off (NIM_ENABLE_THINKING=on to
-      // re-enable) and set NVIDIA-recommended sampling.
-      temperature: 0.6,
-      top_p: 0.95
-    };
-    if (model.startsWith("nvidia/nemotron")) {
-      const thinking = (process.env["NIM_ENABLE_THINKING"] ?? "off").toLowerCase() === "on";
-      bodyExtras["chat_template_kwargs"] = { enable_thinking: thinking };
-    }
-    return {
-      url: `${NVIDIA_NIM_BASE}/chat/completions`,
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      model,
-      provider: "nvidia-nim",
-      bodyExtras
-    };
-  }
-  return openRouterRequestFor(model);
+  return nimRequestFor(model);
 }
-function openRouterRequestFor(model) {
-  const effectiveModel = isNimModel(model) ? NIM_MODEL_FALLBACKS[model] ?? NIM_GENERIC_FALLBACK : model;
-  const orKey = process.env["OPENROUTER_API_KEY"];
-  if (!orKey) throw new Error("OPENROUTER_API_KEY is not set");
+function nimRequestFor(model, opts) {
+  if (!nimConfigured()) throw new Error("NVIDIA_API_KEY is not set");
+  const effectiveModel = isNimModel(model) ? model : NIM_MODEL_FALLBACKS[model] ?? NIM_GENERIC_FALLBACK;
+  const healthy = nimHealthy() && !nimDegraded();
+  void opts;
+  void healthy;
+  const key = currentNimKey();
+  const bodyExtras = {
+    // Verified live 2026-06-10: qwen/qwen3.5-* 500s without explicit sampling
+    // params, and Nemotron's default thinking budget can exceed the swarm's
+    // patience — so default thinking off (NIM_ENABLE_THINKING=on to re-enable)
+    // and set NVIDIA-recommended sampling.
+    temperature: 0.6,
+    top_p: 0.95
+  };
+  if (effectiveModel.startsWith("nvidia/nemotron")) {
+    const thinking = (process.env["NIM_ENABLE_THINKING"] ?? "off").toLowerCase() === "on";
+    bodyExtras["chat_template_kwargs"] = { enable_thinking: thinking };
+  }
   return {
     url: `${llmBaseUrl()}/chat/completions`,
     headers: {
-      Authorization: `Bearer ${orKey}`,
+      Authorization: `Bearer ${key}`,
       "Content-Type": "application/json",
-      "HTTP-Referer": "https://openclaw.abbyclaw.io",
       "X-Title": "OPENCLAW OMEGA",
       ...heliconeHeaders()
     },
     model: effectiveModel,
-    provider: "openrouter",
-    bodyExtras: {}
+    provider: "nvidia-nim",
+    bodyExtras
   };
+}
+function openRouterRequestFor(model) {
+  return nimRequestFor(model, { bypassHealthGate: true });
 }
 function llmTimeoutMs() {
   const v = Number(process.env["LLM_TIMEOUT_MS"]);
@@ -54816,6 +54812,20 @@ async function composioListToolkits(search, limit = 50) {
     };
   });
 }
+async function composioListTools(toolkitSlug, limit = 100) {
+  const params = new URLSearchParams({ toolkit_slug: toolkitSlug.toLowerCase(), limit: String(limit) });
+  const data = await composioApi("GET", `/tools?${params.toString()}`);
+  const items = data["items"] ?? [];
+  return items.map((t) => {
+    const ip = t["input_parameters"] ?? {};
+    return {
+      slug: String(t["slug"] ?? ""),
+      name: String(t["name"] ?? ""),
+      description: String(t["description"] ?? ""),
+      required: ip["required"] ?? []
+    };
+  });
+}
 async function composioListConnections() {
   const data = await composioApi("GET", "/connected_accounts");
   const items = data["items"] ?? [];
@@ -54871,7 +54881,6 @@ async function composioDeleteConnection(connectionId) {
 function integrationStatus() {
   const has = (k) => !!process.env[k];
   return [
-    { key: "openrouter", name: "OpenRouter", category: "llm", envVar: "OPENROUTER_API_KEY", configured: has("OPENROUTER_API_KEY") },
     { key: "nvidia-nim", name: "NVIDIA NIM", category: "llm", envVar: "NVIDIA_API_KEY", configured: has("NVIDIA_API_KEY") },
     { key: "neurobuddy", name: "Buddy AI (NeuroBuddy)", category: "llm", envVar: "NEUROBUDDY_API_KEY", configured: has("NEUROBUDDY_API_KEY") },
     { key: "helicone", name: "Helicone", category: "observability", envVar: "HELICONE_API_KEY", configured: has("HELICONE_API_KEY") },
@@ -54889,14 +54898,13 @@ function integrationStatus() {
     { key: "buddy", name: "Buddy AI (fallback LLM)", category: "llm", envVar: "BUDDY_API_KEY", configured: has("BUDDY_API_KEY") && has("BUDDY_BASE_URL") }
   ];
 }
-var OPENROUTER_DIRECT, OPENROUTER_VIA_HELICONE, NVIDIA_NIM_BASE, nimKeyIndex, NIM_AUTH_COOLDOWN_MS, nimDisabledUntil, nimDegradedUntil, MODEL_STALL_COOLDOWN_MS, modelStallUntil, NIM_PREFIXES, NIM_MODEL_FALLBACKS, NIM_GENERIC_FALLBACK, NIM_FAST_MODEL, E2B_PKG, E2B_TIMEOUT_MS;
+var NVIDIA_NIM_BASE, HELICONE_GATEWAY, nimKeyIndex, NIM_AUTH_COOLDOWN_MS, nimDisabledUntil, nimDegradedUntil, MODEL_STALL_COOLDOWN_MS, modelStallUntil, NIM_PREFIXES, NIM_MODEL_FALLBACKS, NIM_GENERIC_FALLBACK, NIM_FAST_MODEL, E2B_PKG, E2B_TIMEOUT_MS;
 var init_integrations = __esm({
   "src/lib/integrations.ts"() {
     "use strict";
     init_logger2();
-    OPENROUTER_DIRECT = "https://openrouter.ai/api/v1";
-    OPENROUTER_VIA_HELICONE = "https://openrouter.helicone.ai/api/v1";
     NVIDIA_NIM_BASE = "https://integrate.api.nvidia.com/v1";
+    HELICONE_GATEWAY = "https://gateway.helicone.ai/v1";
     nimKeyIndex = 0;
     NIM_AUTH_COOLDOWN_MS = 10 * 6e4;
     nimDisabledUntil = 0;
@@ -54914,16 +54922,16 @@ var init_integrations = __esm({
       "qwen/qwen3.5-"
     ];
     NIM_MODEL_FALLBACKS = {
-      "nvidia/nemotron-3-ultra-550b-a55b": "x-ai/grok-4.3",
-      "nvidia/nemotron-3-super-120b-a12b": "x-ai/grok-4.20",
-      "deepseek-ai/deepseek-v4-flash": "x-ai/grok-build-0.1",
-      "deepseek-ai/deepseek-v4-pro": "qwen/qwen3.7-max",
-      "qwen/qwen3.5-397b-a17b": "qwen/qwen3.7-plus",
-      "qwen/qwen3.5-122b-a10b": "qwen/qwen3.6-plus",
-      "mistralai/mistral-medium-3.5-128b": "mistral/mistral-large",
-      "z-ai/glm-5.1": "x-ai/grok-4.3"
+      "nvidia/nemotron-3-ultra-550b-a55b": "nvidia/nemotron-3-super-120b-a12b",
+      "nvidia/nemotron-3-super-120b-a12b": "qwen/qwen3.5-122b-a10b",
+      "deepseek-ai/deepseek-v4-flash": "qwen/qwen3.5-122b-a10b",
+      "deepseek-ai/deepseek-v4-pro": "deepseek-ai/deepseek-v4-flash",
+      "qwen/qwen3.5-397b-a17b": "qwen/qwen3.5-122b-a10b",
+      "qwen/qwen3.5-122b-a10b": "nvidia/nemotron-3-super-120b-a12b",
+      "mistralai/mistral-medium-3.5-128b": "qwen/qwen3.5-122b-a10b",
+      "z-ai/glm-5.1": "qwen/qwen3.5-122b-a10b"
     };
-    NIM_GENERIC_FALLBACK = "x-ai/grok-4.3";
+    NIM_GENERIC_FALLBACK = "qwen/qwen3.5-122b-a10b";
     NIM_FAST_MODEL = "moonshotai/kimi-k2.6";
     E2B_PKG = "@e2b/code-interpreter";
     E2B_TIMEOUT_MS = 3e4;
@@ -89455,9 +89463,44 @@ The operator connects apps in Settings \u2192 Connect Apps (Composio).`;
           ].join("\n");
         }
       },
+      composio_tools: {
+        name: "composio_tools",
+        description: "List the REAL action slugs available for a connected app (e.g. gmail \u2192 GMAIL_SEND_EMAIL, GMAIL_CREATE_EMAIL_DRAFT). Call this BEFORE composio_action whenever you are unsure of the exact slug \u2014 do NOT guess slugs from memory (guesses like GMAIL_DRAFT_EMAIL or GET_PROFILE return 404 and waste the run). Pass `toolkit` (the app slug) and optionally `search` to filter (e.g. 'send', 'draft').",
+        parameters: {
+          type: "object",
+          properties: {
+            toolkit: { type: "string", description: "App slug to list tools for, e.g. 'gmail', 'github', 'notion'." },
+            search: { type: "string", description: "Optional case-insensitive filter on slug/name, e.g. 'send' or 'draft'." }
+          },
+          required: ["toolkit"]
+        },
+        run: async (args) => {
+          if (!composioConfigured()) return "error: Composio is not configured (set COMPOSIO_API_KEY).";
+          const tk = args["toolkit"] != null ? String(args["toolkit"]) : "";
+          if (!tk) return "error: composio_tools needs a `toolkit` (app slug like 'gmail').";
+          let tools;
+          try {
+            tools = await composioListTools(tk);
+          } catch (e) {
+            return `error: could not list Composio tools for '${tk}': ${String(e).slice(0, 200)}`;
+          }
+          const q = args["search"] != null ? String(args["search"]).toLowerCase() : "";
+          const filtered = q ? tools.filter((t) => t.slug.toLowerCase().includes(q) || t.name.toLowerCase().includes(q)) : tools;
+          if (!filtered.length) {
+            return `No Composio tools matched${q ? ` "${q}"` : ""} for toolkit '${tk}'. Try composio_tools with no search, or check the app slug via composio_apps.`;
+          }
+          const lines = filtered.slice(0, 60).map((t) => `${t.slug} \u2014 ${t.name}${t.required.length ? ` (required: ${t.required.join(", ")})` : ""}`);
+          return [
+            `Composio '${tk}' tools (${filtered.length}${q ? ` matching "${q}"` : ""}):`,
+            ...lines,
+            "",
+            "Call composio_action with toolkit + action=<one of these slugs> + arguments={...the required fields...}."
+          ].join("\n");
+        }
+      },
       composio_action: {
         name: "composio_action",
-        description: "Execute an authenticated action on a connected SaaS app (Gmail, Slack, GitHub, Notion, Calendar, Sheets, Instagram, \u2026) via Composio. Call composio_apps FIRST to confirm the app is live; the connected account is auto-resolved from the toolkit. TWO modes: (1) NAMED action \u2014 pass `toolkit` + `action` (a Composio tool slug like GMAIL_SEND_EMAIL) + `arguments`. (2) RAW PROXY \u2014 pass `toolkit` + `endpoint` (the app's API path) + `method` (GET/POST/\u2026); put call data in `arguments` (a key/value object) and it is sent as query parameters. Example \u2014 publish an Instagram post (2 steps): first endpoint:'/me/media', method:'POST', arguments:{image_url:'https://\u2026public.png', caption:'\u2026'} \u2192 returns a creation id; then endpoint:'/me/media_publish', method:'POST', arguments:{creation_id:'<that id>'}. Use proxy mode for Instagram/Graph-API. Disabled unless the operator enabled execution.",
+        description: "Execute an authenticated action on a connected SaaS app (Gmail, Slack, GitHub, Notion, Calendar, Sheets, Instagram, \u2026) via Composio. Call composio_apps FIRST to confirm the app is live; if unsure of the exact action slug, call composio_tools to look it up \u2014 NEVER guess a slug from memory (guesses 404 and waste the run). The connected account is auto-resolved from the toolkit. TWO modes: (1) NAMED action (PREFERRED) \u2014 pass `toolkit` + `action` (a real Composio slug, e.g. GMAIL_SEND_EMAIL, GMAIL_CREATE_EMAIL_DRAFT) + `arguments` (the action's documented fields). (2) RAW PROXY \u2014 pass `toolkit` + `endpoint` (the app's FULL native API path) + `method`; arguments become query params. Proxy paths are app-specific and NOT interchangeable: Gmail uses '/gmail/v1/users/me/...', Instagram/Graph uses '/me/media' \u2014 reusing one app's path shape on another is why '/me/messages' 404s on Gmail. For Gmail PREFER the NAMED action GMAIL_SEND_EMAIL over a hand-built proxy path. Disabled unless the operator enabled execution.",
         parameters: {
           type: "object",
           properties: {
@@ -89743,9 +89786,9 @@ ${clip3(res.body, 4e3)}`;
       // CRAWLER — browser
       4: ["memory_write", "memory_search", "web_search", "tier1_sources", "web_scrape", "http_request", "calculator", "vault_list", "save_artifact", "image_generate", "send_message"],
       // VAULT — memory/RAG
-      5: ["http_request", "web_scrape", "web_search", "tier1_sources", "marketing_playbook", "code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_action", "instagram_post", "browser_login", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task", "save_artifact", "image_generate", "render_card", "send_message"],
+      5: ["http_request", "web_scrape", "web_search", "tier1_sources", "marketing_playbook", "code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_tools", "composio_action", "instagram_post", "browser_login", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task", "save_artifact", "image_generate", "render_card", "send_message"],
       // WIRE — APIs + scheduling
-      6: ["web_scrape", "web_search", "tier1_sources", "marketing_playbook", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_action", "instagram_post", "browser_login", "save_artifact", "image_generate", "render_card", "send_message"]
+      6: ["web_scrape", "web_search", "tier1_sources", "marketing_playbook", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_tools", "composio_action", "instagram_post", "browser_login", "save_artifact", "image_generate", "render_card", "send_message"]
       // MR.NICE — social
     };
     ABBY_ID = 1;
@@ -94323,7 +94366,6 @@ init_tools();
 init_sources();
 init_marketing();
 var router7 = (0, import_express7.Router)();
-var OPENROUTER_BASE = llmBaseUrl();
 var AGENT_PERSONAS = {
   1: `You are ABBY, orchestrator of the ABBY CLAW agent swarm inside OPENCLAW OMEGA \u2014 a Discord-style command center. You exist to get the operator's goals DONE through real, verified work.
 
@@ -94355,6 +94397,17 @@ EVIDENCE DISCIPLINE (non-negotiable):
 - Your code_exec / cloud_code_exec sandbox is ISOLATED and CANNOT see the application's repository or filesystem, and you have NO tool to read or write project files. If asked to inspect, build, test, or modify the codebase, state plainly that you cannot do so from this environment \u2014 do not invent file paths, file contents, build output, or results.
 - If a tool fails or returns an error, report it verbatim. Never convert a failure into success.
 - If something is not verified, say "unverified" or "unknown". Never guess and present it as fact. Any estimate, score, or matrix you produce must be labelled as an estimate \u2014 never reported as a measured result.`;
+var TOOL_CALL_DISCIPLINE = `
+
+TOOL-CALL DISCIPLINE (non-negotiable \u2014 how to form, retry, and interpret tool calls):
+- DISCOVER, NEVER GUESS: tool/action slugs, endpoint paths, and parameter names come from a DISCOVERY call made THIS run (composio_apps \u2192 composio_tools for Composio; the service's official docs fetched via web_scrape/http_request otherwise) \u2014 never from memory. A 404 "Tool not found" means YOUR GUESSED NAME is wrong, not that the capability is missing. After ONE slug guess fails, the next call MUST be discovery, not another guess.
+- PATHS ARE APP-SPECIFIC: never transplant one app's path shape onto another. Gmail is '/gmail/v1/users/me/...'; Instagram/Graph is '/me/...'; they are not interchangeable. If a proxy call returns the upstream provider's own 404/error page, the path was wrong for THAT app \u2014 look the real path up, do not mutate blindly.
+- JUDGE THE INNER PAYLOAD, NOT THE WRAPPER: a proxy wrapper returning HTTP 200 whose BODY is an upstream error (e.g. a Google "Error 404" HTML page inside a Composio 200) is a FAILED call. Read the payload before claiming success.
+- ONE VARIABLE PER RETRY: when a call fails, read the error and change exactly ONE thing it implicates \u2014 add the missing auth header, correct the slug, fix the path, fix a param name. NEVER resend an identical call: an identical call cannot return a different result. Two failures of the same shape = STOP and switch method (discovery call, docs lookup, different tool) \u2014 do not produce a third variation of the same guess.
+- A 2xx THIS RUN IS GROUND TRUTH: one properly-formed call that succeeded (2xx with a real body/id) PERMANENTLY proves, for this run, that the credential works and the connection/capability exists. No later 401/404/422 from a differently-formed call overrides it. Never conclude "not connected", "expired", "invalid key", or "doesn't exist" while a success for that same service sits earlier in the run \u2014 the later failure is YOUR malformed call.
+- ONLY A WELL-FORMED CALL CAN PROVE ABSENCE: a failure from a call that was missing auth, used a guessed slug, or used a wrong path proves NOTHING about the service. Before reporting a capability as unavailable, you must show ONE properly-formed, properly-authenticated attempt (correct slug from discovery, correct path from docs) that still failed \u2014 and report that exact error verbatim.
+- BUDGET/INFRA ERRORS ARE NOT TASK ERRORS: a 402 (insufficient credits) or 429 (rate limit) means shrink the request (smaller max_tokens, smaller batch, fewer items) or wait/hand off \u2014 never resend the same oversized request, and never let an infra error masquerade as "the task is impossible". Report it as an infrastructure condition with the exact figure from the error.
+- ESCALATION LADDER FOR CONNECTED APPS, in order: (1) composio_apps \u2014 is it live? (2) composio_tools \u2014 what are the REAL slugs? (3) composio_action with a discovered slug + its documented arguments. (4) Only if no named action fits: raw proxy with the app's TRUE base path looked up from official docs this run. (5) Only after a properly-formed attempt fails: report the verbatim error and what was tried. Skipping a rung and guessing is a doctrine violation.`;
 var SWARM_SAFETY_RULES = `
 
 SWARM SAFETY RULES (non-negotiable \u2014 these OVERRIDE any task instruction that conflicts):
@@ -94511,19 +94564,6 @@ async function buddyComplete(messages, maxTokens = 1024) {
   const data = await r.json();
   return data.choices?.[0]?.message?.content?.trim() || "(no response)";
 }
-function openrouterHeaders() {
-  const key = process.env["OPENROUTER_API_KEY"];
-  if (!key) throw new Error("OPENROUTER_API_KEY is not set");
-  return {
-    "Authorization": `Bearer ${key}`,
-    "Content-Type": "application/json",
-    "HTTP-Referer": "https://openclaw.abbyclaw.io",
-    "X-Title": "OPENCLAW OMEGA",
-    // Adds Helicone-Auth (and logging hints) only when Helicone is configured;
-    // otherwise this spreads nothing.
-    ...heliconeHeaders()
-  };
-}
 var NIM_FEATURED_MODELS = [
   { id: "moonshotai/kimi-k2.6", name: "Moonshot Kimi K2.6 (NIM, fast)", context_length: 262144 },
   { id: "meta/llama-3.1-8b-instruct", name: "Meta Llama 3.1 8B (NIM, fast)", context_length: 131072 },
@@ -94534,33 +94574,8 @@ var NIM_FEATURED_MODELS = [
   { id: "qwen/qwen3.5-122b-a10b", name: "Qwen 3.5 122B MoE (NIM)", context_length: 262144 },
   { id: "mistralai/mistral-medium-3.5-128b", name: "Mistral Medium 3.5 128B (NIM)", context_length: 131072 }
 ];
-router7.get("/ai/models", async (req, res) => {
-  try {
-    const r = await fetch(`${OPENROUTER_BASE}/models`, { headers: openrouterHeaders() });
-    const data = await r.json();
-    const featured = [
-      "x-ai/grok-4.3",
-      "x-ai/grok-build-0.1",
-      "x-ai/grok-4.20",
-      "x-ai/grok-4.20-multi-agent",
-      "qwen/qwen3.7-plus",
-      "qwen/qwen3.7-max",
-      "qwen/qwen3.6-plus",
-      "qwen/qwen3.6-max-preview",
-      "openai/gpt-4o",
-      "openai/o4-mini",
-      "anthropic/claude-opus-4-5",
-      "anthropic/claude-sonnet-4-5",
-      "meta-llama/llama-4-maverick",
-      "google/gemini-2.5-pro",
-      "mistral/mistral-large"
-    ];
-    const models = (data.data ?? []).filter((m) => featured.includes(m.id));
-    res.json({ models: [...NIM_FEATURED_MODELS, ...models] });
-  } catch (err) {
-    req.log.error({ err }, "Failed to fetch OpenRouter models");
-    res.status(500).json({ error: "Failed to fetch models" });
-  }
+router7.get("/ai/models", async (_req, res) => {
+  res.json({ models: NIM_FEATURED_MODELS });
 });
 router7.post("/ai/chat", async (req, res) => {
   const { message, agentId, channelId, model: overrideModel, attachmentIds } = req.body ?? {};
@@ -94588,7 +94603,7 @@ router7.post("/ai/chat", async (req, res) => {
   }
   const model = resolveModel(resolvedAgentId, agent.model, overrideModel);
   const persona = AGENT_PERSONAS[resolvedAgentId] ?? `You are ${agent.name}, an AI agent in the ABBY CLAW swarm.`;
-  const systemPrompt = persona + CHAT_MODE_DIRECTIVE + buildCapabilityCard(resolvedAgentId) + buildLiveReachCard(resolvedAgentId) + RESEARCH_PLAYBOOKS + ANTI_HALLUCINATION_DIRECTIVE + SWARM_SAFETY_RULES + await buildVaultCard();
+  const systemPrompt = persona + CHAT_MODE_DIRECTIVE + buildCapabilityCard(resolvedAgentId) + buildLiveReachCard(resolvedAgentId) + RESEARCH_PLAYBOOKS + ANTI_HALLUCINATION_DIRECTIVE + TOOL_CALL_DISCIPLINE + SWARM_SAFETY_RULES + await buildVaultCard();
   let attachments = [];
   if (Array.isArray(attachmentIds) && attachmentIds.length) {
     const ids = attachmentIds.map((n) => Number(n)).filter((n) => Number.isFinite(n)).slice(0, 8);
@@ -94882,7 +94897,7 @@ router7.post("/ai/complete", async (req, res) => {
     return;
   }
   const model = resolveModel(resolvedAgentId, agent?.model, overrideModel);
-  const systemPrompt = (resolvedAgentId ? AGENT_PERSONAS[resolvedAgentId] ?? "" : "") + buildCapabilityCard(resolvedAgentId) + ANTI_HALLUCINATION_DIRECTIVE + SWARM_SAFETY_RULES;
+  const systemPrompt = (resolvedAgentId ? AGENT_PERSONAS[resolvedAgentId] ?? "" : "") + buildCapabilityCard(resolvedAgentId) + ANTI_HALLUCINATION_DIRECTIVE + TOOL_CALL_DISCIPLINE + SWARM_SAFETY_RULES;
   const messages = [
     ...systemPrompt ? [{ role: "system", content: systemPrompt }] : [],
     { role: "user", content: message }
@@ -94965,7 +94980,17 @@ a returned id/body, a file the tool confirms it wrote \u2014 WINS over a bare as
 or a call that was mis-formed. Example: a CLAW that got HTTP 201 with a real
 deploy id genuinely deployed; another CLAW's 401 from a request sent with no auth
 header is its own mistake, not a contradiction \u2014 state the deploy succeeded and
-note the 401 was an unauthenticated call. Give ONE evidence-based DIRECT ANSWER.`;
+note the 401 was an unauthenticated call. Give ONE evidence-based DIRECT ANSWER.
+
+A VERIFIED TOOL RESULT OUTRANKS YOUR OWN INFERENCE: if any CLAW got a concrete
+success earlier in THIS run \u2014 an HTTP 2xx with a real body/id (e.g. a Gmail
+profile 200 returning the address, a 201 with a deploy id) \u2014 you MUST NOT later
+conclude the opposite ("not connected", "no access", "doesn't exist") from
+guessed slugs, mis-formed calls, or unauthenticated 401/404s. The earlier 2xx is
+ground truth; a later failure usually means the wrong slug/path/auth was used,
+not that the capability is absent. When your draft conclusion contradicts a 2xx
+already observed this run, the 2xx wins \u2014 say the connection/capability IS
+present and attribute the failure to the malformed call.`;
 var MAX_AGENT_STEPS = Number(process.env["MAX_AGENT_STEPS"]) > 0 ? Number(process.env["MAX_AGENT_STEPS"]) : 24;
 var MAX_IDENTICAL_CALL_ATTEMPTS = 3;
 var MAX_NO_PROGRESS_STREAK = 3;
@@ -95027,7 +95052,7 @@ async function reconcileStaleWork() {
     logger.error({ err }, "reconcileStaleWork failed");
   }
 }
-var SECONDARY_CHAT_MODEL = "x-ai/grok-4.3";
+var SECONDARY_CHAT_MODEL = "mistralai/mistral-medium-3.5-128b";
 function buddyIdentityJunk(text2) {
   return /\bBOS[-_ ]?OMEGA\b|predictive cognitive|cognitive (engine|architecture|system)|psychological intervention|GLOBAL_STATE/i.test(text2);
 }
@@ -95049,6 +95074,32 @@ async function completeChat(model, system, user, maxTokens = 800) {
   }
   if (!r.ok) {
     const errText = (await r.text()).slice(0, 200);
+    if (r.status === 402) {
+      const afford = errText.match(/can only afford\s+(\d+)/i);
+      const budget = afford ? Math.max(64, Math.floor(parseInt(afford[1], 10) * 0.9)) : Math.floor(maxTokens / 4);
+      if (budget < maxTokens) {
+        try {
+          const { r: r2 } = await llmFetch(model, {
+            messages: [
+              { role: "system", content: system },
+              { role: "user", content: user }
+            ],
+            stream: false,
+            max_tokens: budget
+          });
+          if (r2.ok) {
+            const d2 = await r2.json();
+            const o2 = d2?.choices?.[0]?.message?.content?.trim();
+            if (o2) {
+              traceLlmRun({ name: "completeChat", model: `${model} (402 budget-fit ${budget}t)`, input: { system, user }, output: o2, startedAt });
+              return o2;
+            }
+          }
+        } catch (e) {
+          logger.warn({ e, budget }, "402 budget-fit retry failed; falling through");
+        }
+      }
+    }
     try {
       const primary = chatRequestFor(model);
       const fb = chatRequestFor(SECONDARY_CHAT_MODEL);
@@ -95095,8 +95146,8 @@ async function completeChat(model, system, user, maxTokens = 800) {
         logger.warn({ e }, "Buddy fallback failed after OpenRouter error");
       }
     }
-    traceLlmRun({ name: "completeChat", model, input: { system, user }, output: null, startedAt, error: `OpenRouter ${r.status}: ${errText}` });
-    throw new Error(`OpenRouter ${r.status}: ${errText}`);
+    traceLlmRun({ name: "completeChat", model, input: { system, user }, output: null, startedAt, error: `NVIDIA NIM ${r.status}: ${errText}` });
+    throw new Error(`NVIDIA NIM ${r.status}: ${errText}`);
   }
   const data = await r.json();
   const out = data?.choices?.[0]?.message?.content?.trim() || "(no response)";
@@ -95117,6 +95168,24 @@ async function completeChatTurn(model, messages, tools) {
   }
   if (!r.ok) {
     const errText = (await r.text()).slice(0, 200);
+    if (r.status === 402) {
+      const afford = errText.match(/can only afford\s+(\d+)/i);
+      const budget = afford ? Math.max(256, Math.floor(parseInt(afford[1], 10) * 0.9)) : 1500;
+      try {
+        const fitted = { ...payload, max_tokens: budget };
+        const { r: r3 } = await llmFetch(model, fitted);
+        if (r3.ok) {
+          const d3 = await r3.json();
+          const m3 = d3?.choices?.[0]?.message;
+          if (m3) {
+            logger.info({ model, budget }, "tool turn recovered via 402 budget-fit retry");
+            return { role: "assistant", content: m3.content ?? null, tool_calls: m3.tool_calls };
+          }
+        }
+      } catch (e) {
+        logger.warn({ e, budget }, "402 budget-fit retry failed (tool turn); falling through");
+      }
+    }
     try {
       const fb = chatRequestFor(SECONDARY_CHAT_MODEL);
       if (fb.model !== llmReq.model || fb.url !== llmReq.url) {
@@ -95151,7 +95220,7 @@ async function completeChatTurn(model, messages, tools) {
         logger.warn({ e }, "Buddy fallback failed after OpenRouter error (tool turn)");
       }
     }
-    throw new Error(`OpenRouter ${r.status}: ${errText}`);
+    throw new Error(`NVIDIA NIM ${r.status}: ${errText}`);
   }
   const data = await r.json();
   const msg = data?.choices?.[0]?.message;
@@ -95235,7 +95304,7 @@ ${scraped.slice(0, 1400)}${scraped.length > 1400 ? "\n\u2026" : ""}`,
     const toolGuide = toolNames.length ? `
 
 You are an autonomous tool-using agent. Call tools to gather real data and perform real work instead of guessing \u2014 chain multiple calls when needed, and avoid repeating a call that already returned (it wastes time and budget). When the directive is fully satisfied, stop calling tools and reply with your final concrete result (no preamble).${buildCapabilityCard(agent.id)}` : "";
-    const system = persona + toolGuide + buildLiveReachCard(agent.id) + EXECUTION_DOCTRINE + RESEARCH_PLAYBOOKS + ANTI_HALLUCINATION_DIRECTIVE + SWARM_SAFETY_RULES + CODING_LIFECYCLE_DOCTRINE + ACCOUNT_POLICY_DOCTRINE + await buildVaultCard();
+    const system = persona + toolGuide + buildLiveReachCard(agent.id) + EXECUTION_DOCTRINE + RESEARCH_PLAYBOOKS + ANTI_HALLUCINATION_DIRECTIVE + TOOL_CALL_DISCIPLINE + SWARM_SAFETY_RULES + CODING_LIFECYCLE_DOCTRINE + ACCOUNT_POLICY_DOCTRINE + await buildVaultCard();
     const messages = [
       { role: "system", content: system },
       {
@@ -95529,7 +95598,7 @@ ${sourceContext ?? ""}`);
     }
     await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, ABBY_ID2));
     const roster = claws.map((c) => `${c.id}=${c.name} (${c.role ?? "agent"})`).join(", ");
-    const planSystem = (AGENT_PERSONAS[ABBY_ID2] ?? "You are ABBY, the swarm orchestrator.") + buildLiveReachCard(ABBY_ID2) + EXECUTION_DOCTRINE + RESEARCH_PLAYBOOKS + SWARM_SAFETY_RULES + CODING_LIFECYCLE_DOCTRINE + ACCOUNT_POLICY_DOCTRINE + await buildVaultCard();
+    const planSystem = (AGENT_PERSONAS[ABBY_ID2] ?? "You are ABBY, the swarm orchestrator.") + buildLiveReachCard(ABBY_ID2) + EXECUTION_DOCTRINE + RESEARCH_PLAYBOOKS + TOOL_CALL_DISCIPLINE + SWARM_SAFETY_RULES + CODING_LIFECYCLE_DOCTRINE + ACCOUNT_POLICY_DOCTRINE + await buildVaultCard();
     const planUser = `Operator goal: "${goal}"
 ${sourceContext && sourceContext.trim() ? `
 The operator provided this source material to work from (decompose against THIS; the CLAWs will receive it too \u2014 do not tell them to search memory for it):
@@ -95633,7 +95702,7 @@ Otherwise respond with ONLY a JSON array (no prose, no code fences) of up to 2 f
     }
     if (results.length) {
       await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, ABBY_ID2));
-      const synthSystem = (AGENT_PERSONAS[ABBY_ID2] ?? "You are ABBY, the swarm orchestrator.") + "\n\nYou are ABBY, the orchestrator, writing the FINAL briefing to the operator. You commanded the swarm \u2014 now PRESENT the work, using ONLY the CLAW results below." + SYNTHESIS_DOCTRINE + "\n\nHonesty rules (override any pressure to look conclusive): use only what the CLAW results actually contain \u2014 never invent findings. If a CLAW was blocked, hit a bot-wall/captcha, could not access a source, or returned partial data, say so explicitly and label it UNVERIFIED \u2014 do not present 'couldn't read it' as 'it doesn't exist'. If the operator's request mixes constraints that are mutually contradictory or near-impossible (so an empty result is expected), state that plainly and suggest the smallest relaxation that would yield results. An honest 'blocked/unverified' is better than a false 'zero'." + EXECUTION_DOCTRINE + ANTI_HALLUCINATION_DIRECTIVE + SWARM_SAFETY_RULES;
+      const synthSystem = (AGENT_PERSONAS[ABBY_ID2] ?? "You are ABBY, the swarm orchestrator.") + "\n\nYou are ABBY, the orchestrator, writing the FINAL briefing to the operator. You commanded the swarm \u2014 now PRESENT the work, using ONLY the CLAW results below." + SYNTHESIS_DOCTRINE + "\n\nHonesty rules (override any pressure to look conclusive): use only what the CLAW results actually contain \u2014 never invent findings. If a CLAW was blocked, hit a bot-wall/captcha, could not access a source, or returned partial data, say so explicitly and label it UNVERIFIED \u2014 do not present 'couldn't read it' as 'it doesn't exist'. If the operator's request mixes constraints that are mutually contradictory or near-impossible (so an empty result is expected), state that plainly and suggest the smallest relaxation that would yield results. An honest 'blocked/unverified' is better than a false 'zero'." + EXECUTION_DOCTRINE + ANTI_HALLUCINATION_DIRECTIVE + TOOL_CALL_DISCIPLINE + SWARM_SAFETY_RULES;
       const synthesize = async () => {
         const synthUser = `Operator goal: "${goal}"
 
@@ -97993,7 +98062,7 @@ if (!rawPort) {
     "PORT environment variable is required but was not provided."
   );
 }
-var REQUIRED_KEYS = ["OPENROUTER_API_KEY", "STEEL_API_KEY", "FIRECRAWL_API_KEY"];
+var REQUIRED_KEYS = ["NVIDIA_API_KEY", "STEEL_API_KEY", "FIRECRAWL_API_KEY"];
 var missingKeys = REQUIRED_KEYS.filter((k) => !process.env[k]);
 if (missingKeys.length > 0) {
   logger.warn(
