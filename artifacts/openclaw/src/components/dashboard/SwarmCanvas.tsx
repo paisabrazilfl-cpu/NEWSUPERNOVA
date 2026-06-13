@@ -1,15 +1,46 @@
-import { useListAgents, getListAgentsQueryKey } from "@workspace/api-client-react";
-import { motion, useReducedMotion } from "framer-motion";
+import {
+  useListAgents,
+  getListAgentsQueryKey,
+  useGetSwarmStatus,
+  getGetSwarmStatusQueryKey,
+  useListChannels,
+  getListChannelsQueryKey,
+} from "@workspace/api-client-react";
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { Radio } from "lucide-react";
 import { agentState } from "@/lib/agentState";
 
 interface SwarmCanvasProps {
   onAgentClick: (id: number) => void;
 }
 
+// How long after the last channel activity the swarm still counts as "being
+// talked to". lastActivity is bumped on every message insert, so this keeps the
+// cue lit for a beat after the operator speaks / a reply lands, instead of
+// flickering off the instant an agent returns to idle.
+const TALKING_WINDOW_MS = 30_000;
+
 export function SwarmCanvas({ onAgentClick }: SwarmCanvasProps) {
   const { data: agents = [] } = useListAgents({ query: { refetchInterval: 3000, queryKey: getListAgentsQueryKey() } });
+  const { data: status } = useGetSwarmStatus({ query: { refetchInterval: 3000, queryKey: getGetSwarmStatusQueryKey() } });
+  const { data: channels = [] } = useListChannels({ query: { refetchInterval: 4000, queryKey: getListChannelsQueryKey() } });
   const reduceMotion = useReducedMotion();
+
+  // "Being talked to" = the swarm is actively working OR a channel saw activity
+  // (a message in/out) within the talking window. Re-evaluated on every poll
+  // tick (3–4s), which is well inside the 30s window.
+  const working = !(status?.paused ?? false) && ((status?.activeAgents ?? 0) > 0 || (status?.runningTasks ?? 0) > 0);
+  const lastActivityMs = useMemo(() => {
+    let newest = 0;
+    for (const c of channels) {
+      const t = c.lastActivity ? Date.parse(c.lastActivity) : 0;
+      if (t > newest) newest = t;
+    }
+    return newest;
+  }, [channels]);
+  const recentlyEngaged = lastActivityMs > 0 && Date.now() - lastActivityMs < TALKING_WINDOW_MS;
+  const talking = working || recentlyEngaged;
 
   // Measure the actual container so the layout is responsive (fixes orbs clipping
   // off-screen on mobile, where the old fixed pixel radius was larger than half
@@ -64,6 +95,52 @@ export function SwarmCanvas({ onAgentClick }: SwarmCanvasProps) {
 
   return (
     <div ref={containerRef} className="w-full h-full relative overflow-y-auto bg-background/50">
+      {/* Whole-canvas "being talked to" backdrop: a soft cyan radial glow that
+          fades in while the swarm is engaged, so the activity reads even from a
+          glance across the room. */}
+      <AnimatePresence>
+        {talking && (
+          <motion.div
+            key="talking-backdrop"
+            className="absolute inset-0 pointer-events-none -z-0"
+            style={{ background: "radial-gradient(circle at 50% 45%, rgba(0,229,255,0.12), transparent 60%)" }}
+            initial={{ opacity: 0 }}
+            animate={reduceMotion ? { opacity: 0.6 } : { opacity: [0.45, 0.8, 0.45] }}
+            exit={{ opacity: 0 }}
+            transition={reduceMotion ? { duration: 0.4 } : { duration: 2.6, repeat: Infinity, ease: "easeInOut" }}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Floating status badge: an explicit, words-not-just-motion cue for whether
+          the swarm is currently being talked to. */}
+      <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 pointer-events-none">
+        <div
+          className={
+            "flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold backdrop-blur transition-colors " +
+            (talking
+              ? "border-[#00e5ff]/50 bg-[#00e5ff]/10 text-[#00e5ff]"
+              : "border-card-border bg-card/60 text-muted-foreground")
+          }
+          data-testid="swarm-talking-badge"
+          data-talking={talking ? "true" : "false"}
+        >
+          <span className="relative flex h-2.5 w-2.5 items-center justify-center">
+            {talking && !reduceMotion && (
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#00e5ff] opacity-75" />
+            )}
+            <span className={"relative inline-flex h-2.5 w-2.5 rounded-full " + (talking ? "bg-[#00e5ff]" : "bg-muted-foreground")} />
+          </span>
+          {talking ? (
+            <span className="inline-flex items-center gap-1.5">
+              <Radio className="w-3.5 h-3.5" /> Swarm is engaged — being talked to
+            </span>
+          ) : (
+            "Swarm idle"
+          )}
+        </div>
+      </div>
+
       <div className="relative w-full h-full flex items-center justify-center" style={{ minHeight: graphHeight }}>
       {/* Connections (SVG) — only drawn between agents that are actively working,
           so a calm swarm shows no lines. Animation is gated on reduced-motion. */}
@@ -95,6 +172,11 @@ export function SwarmCanvas({ onAgentClick }: SwarmCanvasProps) {
           const view = agentState(agent.status);
           const StateIcon = view.icon;
           const animate = view.active && !reduceMotion;
+          // The orb "pings" (outer echo sphere radiates) when the swarm is being
+          // talked to, or when this specific agent is active. Reduced motion keeps
+          // a steady doubled ring instead.
+          const ping = !reduceMotion && (talking || view.active);
+          const echoColor = view.active || view.attention ? view.color : agent.color;
 
           return (
             <motion.div
@@ -107,6 +189,34 @@ export function SwarmCanvas({ onAgentClick }: SwarmCanvasProps) {
               onClick={() => onAgentClick(agent.id)}
               data-testid={`canvas-node-${agent.id}`}
             >
+              {/* Doubled sphere — a second concentric orb around the node. Two
+                  staggered echo rings radiate outward when the swarm is being
+                  talked to (sonar "ping"); otherwise a single steady faint ring
+                  so the orb still reads as doubled at rest. */}
+              {ping ? (
+                <>
+                  <motion.div
+                    className="absolute left-1/2 top-1/2 rounded-full border-2 -z-10"
+                    style={{ width: 64, height: 64, x: "-50%", y: "-50%", borderColor: echoColor }}
+                    initial={{ scale: 1, opacity: 0.5 }}
+                    animate={{ scale: 1.9, opacity: 0 }}
+                    transition={{ duration: 2.2, repeat: Infinity, ease: "easeOut" }}
+                  />
+                  <motion.div
+                    className="absolute left-1/2 top-1/2 rounded-full border-2 -z-10"
+                    style={{ width: 64, height: 64, x: "-50%", y: "-50%", borderColor: echoColor }}
+                    initial={{ scale: 1, opacity: 0.5 }}
+                    animate={{ scale: 1.9, opacity: 0 }}
+                    transition={{ duration: 2.2, repeat: Infinity, ease: "easeOut", delay: 1.1 }}
+                  />
+                </>
+              ) : (
+                <div
+                  className="absolute left-1/2 top-1/2 rounded-full border -z-10"
+                  style={{ width: 84, height: 84, transform: "translate(-50%, -50%)", borderColor: `${echoColor}40` }}
+                />
+              )}
+
               {/* Ambient glow — only for active states, calmed for everyone else. */}
               <motion.div
                 className="absolute inset-0 rounded-full blur-md -z-10"
