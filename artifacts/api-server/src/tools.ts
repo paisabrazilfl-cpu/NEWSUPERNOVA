@@ -56,6 +56,7 @@ import { checkPostAllowed, recordPost } from "./lib/postLimit";
 
 const STEEL_BASE = "https://api.steel.dev/v1";
 const FIRECRAWL_BASE = "https://api.firecrawl.dev/v1";
+const FREECRAWL_BASE = process.env["FREECRAWL_URL"] ?? "https://freecrawl-api.onrender.com";
 
 /**
  * Absolute, publicly-reachable base URL for serving saved files. Saved artifacts
@@ -522,6 +523,20 @@ export async function steelScrape(url: string): Promise<string> {
   }
 }
 
+/** FreeCrawl fallback scrape — used when Steel is unavailable or blocked. */
+async function freecrawlScrape(url: string): Promise<string> {
+  const r = await fetch(`${FREECRAWL_BASE}/scrape`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url, formats: ["markdown", "text"], include_links: false }),
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!r.ok) throw new Error(`FreeCrawl ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  const data = (await r.json()) as Record<string, unknown>;
+  if (data["error"]) throw new Error(String(data["error"]));
+  return (data["markdown"] as string) || (data["text"] as string) || "";
+}
+
 async function steelScreenshot(url: string): Promise<number> {
   const key = process.env["STEEL_API_KEY"];
   if (!key) throw new Error("STEEL_API_KEY is not set");
@@ -757,7 +772,17 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
           return `error: github.com web pages are JavaScript-rendered and not scrapable. Use http_request (GET) against the GitHub REST API instead — it is auto-authenticated. Try: ${apiHint}`;
         }
       } catch { /* ignore; validated above */ }
-      const content = await steelScrape(url);
+      let content: string;
+      try {
+        content = await steelScrape(url);
+      } catch (steelErr) {
+        // Steel unavailable — fall back to FreeCrawl (self-hosted, always on)
+        try {
+          content = await freecrawlScrape(url);
+        } catch {
+          return `error scraping ${url}: ${String(steelErr)}`;
+        }
+      }
       return clip(content, 8000);
     },
   },
@@ -805,6 +830,82 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
       if (!Number.isFinite(limit)) limit = 5;
       limit = Math.max(1, Math.min(10, Math.floor(limit)));
       return webSearch(query, limit);
+    },
+  },
+
+  site_crawl: {
+    name: "site_crawl",
+    description:
+      "Recursively crawl an entire website and return all pages as clean Markdown. Use when you need to ingest a whole docs site, knowledge base, or multi-page resource — not just a single page. Returns a job_id immediately; poll with site_crawl_status to get results. Backed by FreeCrawl (self-hosted).",
+    parameters: {
+      type: "object",
+      properties: {
+        url: { type: "string", description: "Root URL to start crawling from." },
+        max_pages: { type: "integer", description: "Max pages to crawl (default 30, max 200).", minimum: 1, maximum: 200 },
+        max_depth: { type: "integer", description: "Link depth to follow (default 2, max 5).", minimum: 1, maximum: 5 },
+        include_patterns: {
+          type: "array",
+          items: { type: "string" },
+          description: "Regex patterns — only crawl URLs matching at least one. Leave empty to crawl all same-domain pages.",
+        },
+      },
+      required: ["url"],
+    },
+    run: async (args) => {
+      const url = String(args["url"] ?? "").trim();
+      if (!/^https?:\/\//i.test(url)) return "error: valid absolute http(s) url required.";
+      const maxPages = Math.min(Number(args["max_pages"] ?? 30), 200);
+      const maxDepth = Math.min(Number(args["max_depth"] ?? 2), 5);
+      const includePatterns = (args["include_patterns"] as string[] | undefined) ?? [];
+      try {
+        const r = await fetch(`${FREECRAWL_BASE}/crawl`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url, max_pages: maxPages, max_depth: maxDepth, include_patterns: includePatterns }),
+          signal: AbortSignal.timeout(15_000),
+        });
+        if (!r.ok) return `error: FreeCrawl ${r.status} — ${(await r.text()).slice(0, 200)}`;
+        const data = (await r.json()) as Record<string, unknown>;
+        return `crawl job queued. job_id=${data["job_id"]} status=${data["status"]} url=${url} max_pages=${maxPages}. Poll with site_crawl_status to get results.`;
+      } catch (err) {
+        return `error: ${String(err)}`;
+      }
+    },
+  },
+
+  site_crawl_status: {
+    name: "site_crawl_status",
+    description:
+      "Poll a site_crawl job and return its status and completed page content. Call after site_crawl to retrieve crawled Markdown pages.",
+    parameters: {
+      type: "object",
+      properties: {
+        job_id: { type: "string", description: "The job_id returned by site_crawl." },
+        include_pages: { type: "boolean", description: "Set true to get the full Markdown content of all crawled pages (default false — just status/counts)." },
+      },
+      required: ["job_id"],
+    },
+    run: async (args) => {
+      const jobId = String(args["job_id"] ?? "").trim();
+      const includePages = Boolean(args["include_pages"] ?? false);
+      try {
+        const r = await fetch(
+          `${FREECRAWL_BASE}/crawl/${jobId}?include_pages=${includePages}`,
+          { signal: AbortSignal.timeout(15_000) },
+        );
+        if (!r.ok) return `error: FreeCrawl ${r.status} — ${(await r.text()).slice(0, 200)}`;
+        const data = (await r.json()) as Record<string, unknown>;
+        const pages = (data["pages"] as Array<Record<string, unknown>> | undefined) ?? [];
+        const summary = `job_id=${jobId} status=${data["status"]} pages_done=${data["pages_done"]}/${data["pages_found"]}`;
+        if (!includePages || pages.length === 0) return summary;
+        const pageTexts = pages
+          .slice(0, 20)
+          .map((p) => `### ${p["url"]}\n${String(p["markdown"] ?? p["text"] ?? "(no content)").slice(0, 2000)}`)
+          .join("\n\n---\n\n");
+        return clip(`${summary}\n\n${pageTexts}`, 12000);
+      } catch (err) {
+        return `error: ${String(err)}`;
+      }
     },
   },
 
@@ -1874,10 +1975,10 @@ const ALL_TOOLS = Object.keys(TOOL_REGISTRY);
 
 export const AGENT_TOOLS: Record<number, string[]> = {
   1: ALL_TOOLS, // ABBY — full authority
-  2: ["code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "http_request", "web_scrape", "web_search", "tier1_sources", "memory_search", "memory_write", "vault_list", "save_artifact", "image_generate", "send_message"], // FORGE — code
-  3: ["web_scrape", "web_screenshot", "web_search", "tier1_sources", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "sandbox_exec", "browser_login", "save_artifact", "image_generate", "send_message"], // CRAWLER — browser
-  4: ["memory_write", "memory_search", "web_search", "tier1_sources", "web_scrape", "http_request", "calculator", "vault_list", "save_artifact", "image_generate", "send_message"], // VAULT — memory/RAG
-  5: ["http_request", "web_scrape", "web_search", "tier1_sources", "marketing_playbook", "code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_tools", "composio_action", "instagram_post", "browser_login", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task", "save_artifact", "image_generate", "render_card", "send_message"], // WIRE — APIs + scheduling
+  2: ["code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "http_request", "web_scrape", "web_search", "tier1_sources", "site_crawl", "site_crawl_status", "memory_search", "memory_write", "vault_list", "save_artifact", "image_generate", "send_message"], // FORGE — code
+  3: ["web_scrape", "web_screenshot", "web_search", "tier1_sources", "site_crawl", "site_crawl_status", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "sandbox_exec", "browser_login", "save_artifact", "image_generate", "send_message"], // CRAWLER — browser
+  4: ["memory_write", "memory_search", "web_search", "tier1_sources", "web_scrape", "site_crawl", "site_crawl_status", "http_request", "calculator", "vault_list", "save_artifact", "image_generate", "send_message"], // VAULT — memory/RAG
+  5: ["http_request", "web_scrape", "web_search", "tier1_sources", "site_crawl", "site_crawl_status", "marketing_playbook", "code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_tools", "composio_action", "instagram_post", "browser_login", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task", "save_artifact", "image_generate", "render_card", "send_message"], // WIRE — APIs + scheduling
   6: ["web_scrape", "web_search", "tier1_sources", "marketing_playbook", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_tools", "composio_action", "instagram_post", "browser_login", "save_artifact", "image_generate", "render_card", "send_message"], // MR.NICE — social
 };
 
