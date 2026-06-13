@@ -94611,23 +94611,27 @@ function rescueRawToolCalls(text2) {
 }
 function resolveModel(agentId, agentModel, override) {
   const candidate = typeof override === "string" && override.trim() ? override : agentModel ?? ABBY_DEFAULT_MODEL;
-  if (agentId === ABBY_ID2 && !candidate.startsWith("x-ai/") && !candidate.startsWith("z-ai/") && !candidate.startsWith("nvidia/nemotron") && !candidate.startsWith("moonshotai/")) {
+  if (agentId === ABBY_ID2 && !candidate.startsWith("x-ai/") && !candidate.startsWith("z-ai/") && !candidate.startsWith("openai/") && !candidate.startsWith("nvidia/nemotron") && !candidate.startsWith("moonshotai/") && !candidate.startsWith("deepseek-ai/")) {
     return ABBY_DEFAULT_MODEL;
   }
   return candidate;
 }
 var NIM_FEATURED_MODELS = [
   { id: "moonshotai/kimi-k2.6", name: "Moonshot Kimi K2.6 (NIM, fast)", context_length: 262144 },
+  { id: "openai/gpt-oss-120b", name: "OpenAI GPT-OSS 120B (NIM, reasoning)", context_length: 131072 },
   { id: "meta/llama-3.1-8b-instruct", name: "Meta Llama 3.1 8B (NIM, fast)", context_length: 131072 },
   // nemotron-3-ultra-550b removed from the catalog 2026-06-12 (operator order):
   // repeat staller (45-60s zero-byte hangs on 06-10, ~68s on a one-token probe
   // today). NIM_MODEL_BANS in lib/integrations.ts hard-remaps any residual
   // selection of it at the request layer.
   { id: "nvidia/nemotron-3-super-120b-a12b", name: "NVIDIA Nemotron 3 Super 120B (NIM)", context_length: 1e6 },
+  { id: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", name: "NVIDIA Nemotron Nano 30B Reasoning (NIM)", context_length: 131072 },
+  { id: "deepseek-ai/deepseek-v4-pro", name: "DeepSeek V4 Pro (NIM)", context_length: 1e6 },
   { id: "deepseek-ai/deepseek-v4-flash", name: "DeepSeek V4 Flash (NIM)", context_length: 1e6 },
   { id: "qwen/qwen3.5-397b-a17b", name: "Qwen 3.5 397B MoE (NIM)", context_length: 262144 },
   { id: "qwen/qwen3.5-122b-a10b", name: "Qwen 3.5 122B MoE (NIM)", context_length: 262144 },
   { id: "mistralai/mistral-medium-3.5-128b", name: "Mistral Medium 3.5 128B (NIM)", context_length: 131072 },
+  { id: "mistralai/mistral-small-4-119b-2603", name: "Mistral Small 4 119B (NIM)", context_length: 131072 },
   { id: "z-ai/glm-5.1", name: "Zhipu GLM-5.1 (NIM)", context_length: 131072 }
 ];
 router7.get("/ai/models", async (_req, res) => {
