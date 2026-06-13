@@ -41,11 +41,31 @@ export async function copyLegacyData(): Promise<void> {
   if (!url) return; // no-op unless explicitly migrating
 
   logger.info("LEGACY_DATABASE_URL is set — running one-time data copy into the current database.");
-  const src = new pg.Client({ connectionString: url, ssl: { rejectUnauthorized: false }, connectionTimeoutMillis: 15_000 });
-  try {
-    await src.connect();
-  } catch (e) {
-    logger.error({ err: String(e) }, "legacy copy: cannot connect to LEGACY_DATABASE_URL — skipping (server still starts).");
+
+  // SSL depends on the endpoint: external Render/Supabase hosts (a dotted
+  // hostname) require TLS; an internal Render host (bare "dpg-…-a", no dot) is
+  // plain TCP and FAILS if TLS is forced. Try the likely mode first, then fall
+  // back to the other — so the same code works for internal, external, or pooler.
+  let hostHasDot = true;
+  try { hostHasDot = new URL(url).hostname.includes("."); } catch { /* keep default */ }
+  const sslModes: Array<false | { rejectUnauthorized: boolean }> = hostHasDot
+    ? [{ rejectUnauthorized: false }, false]
+    : [false, { rejectUnauthorized: false }];
+
+  let src: InstanceType<typeof pg.Client> | null = null;
+  for (const ssl of sslModes) {
+    const candidate = new pg.Client({ connectionString: url, ssl, connectionTimeoutMillis: 15_000 });
+    try {
+      await candidate.connect();
+      src = candidate;
+      break;
+    } catch (e) {
+      logger.warn({ ssl: !!ssl, err: String(e) }, "legacy copy: connect attempt failed — trying the other SSL mode");
+      try { await candidate.end(); } catch { /* ignore */ }
+    }
+  }
+  if (!src) {
+    logger.error("legacy copy: cannot connect to LEGACY_DATABASE_URL on either SSL mode — skipping (server still starts).");
     return;
   }
 

@@ -99078,11 +99078,29 @@ async function copyLegacyData() {
   const url2 = process.env["LEGACY_DATABASE_URL"];
   if (!url2) return;
   logger.info("LEGACY_DATABASE_URL is set \u2014 running one-time data copy into the current database.");
-  const src = new esm_default.Client({ connectionString: url2, ssl: { rejectUnauthorized: false }, connectionTimeoutMillis: 15e3 });
+  let hostHasDot = true;
   try {
-    await src.connect();
-  } catch (e) {
-    logger.error({ err: String(e) }, "legacy copy: cannot connect to LEGACY_DATABASE_URL \u2014 skipping (server still starts).");
+    hostHasDot = new URL(url2).hostname.includes(".");
+  } catch {
+  }
+  const sslModes = hostHasDot ? [{ rejectUnauthorized: false }, false] : [false, { rejectUnauthorized: false }];
+  let src = null;
+  for (const ssl of sslModes) {
+    const candidate = new esm_default.Client({ connectionString: url2, ssl, connectionTimeoutMillis: 15e3 });
+    try {
+      await candidate.connect();
+      src = candidate;
+      break;
+    } catch (e) {
+      logger.warn({ ssl: !!ssl, err: String(e) }, "legacy copy: connect attempt failed \u2014 trying the other SSL mode");
+      try {
+        await candidate.end();
+      } catch {
+      }
+    }
+  }
+  if (!src) {
+    logger.error("legacy copy: cannot connect to LEGACY_DATABASE_URL on either SSL mode \u2014 skipping (server still starts).");
     return;
   }
   const summary = {};
