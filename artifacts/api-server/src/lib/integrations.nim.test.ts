@@ -312,6 +312,38 @@ describe("llmFetch — rotation, breaker, and stall failover", () => {
     delete process.env["NIM_429_BACKOFF_MS"];
   });
 
+  it("on 429 across the whole pool, fails over to the fast NIM model (separate throttle budget) and succeeds", async () => {
+    process.env["NVIDIA_API_KEY"] = "nvapi-only";
+    process.env["NIM_429_BACKOFF_MS"] = "5";
+    const models: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
+      const m = (JSON.parse(String(init.body)) as { model: string }).model;
+      models.push(m);
+      // The throttled model 429s on every key; the fast model has separate budget.
+      return m.startsWith("moonshotai/") ? jsonResponse(200, { ok: true }) : jsonResponse(429);
+    }));
+    const { r, req } = await llmFetch("nvidia/nemotron-3-super-120b-a12b", { messages: [] });
+    expect(r.status).toBe(200);
+    expect(req.model).toBe("moonshotai/kimi-k2.6");
+    expect(models[0]).toBe("nvidia/nemotron-3-super-120b-a12b"); // requested model tried first
+    expect(models).toContain("moonshotai/kimi-k2.6"); // then failed over to the fast model
+    delete process.env["NIM_429_BACKOFF_MS"];
+  });
+
+  it("when NIM is DEGRADED, a fresh call skips the throttled model and goes straight to the fast model", async () => {
+    process.env["NVIDIA_API_KEY"] = "nvapi-only";
+    reportNimDegraded("test: throttled across the pool");
+    const models: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
+      models.push((JSON.parse(String(init.body)) as { model: string }).model);
+      return jsonResponse(200, { ok: true });
+    }));
+    const { r, req } = await llmFetch("nvidia/nemotron-3-super-120b-a12b", { messages: [] });
+    expect(r.status).toBe(200);
+    expect(req.model).toBe("moonshotai/kimi-k2.6");
+    expect(models).toEqual(["moonshotai/kimi-k2.6"]); // never hit the throttled slow model
+  });
+
   it("a 5xx also marks the model stalled, and resetNimHealth clears the mark", async () => {
     process.env["NVIDIA_API_KEY"] = "nvapi-a";
     process.env["OPENROUTER_API_KEY"] = "or-test";

@@ -54497,7 +54497,7 @@ async function timedFetch(req, payload, externalSignal) {
 async function llmFetch(model, payload) {
   const { signal: externalSignal, ...body } = payload;
   let req = chatRequestFor(model);
-  if (req.provider === "nvidia-nim" && req.model !== NIM_FAST_MODEL && modelStalled(req.model)) {
+  if (req.provider === "nvidia-nim" && req.model !== NIM_FAST_MODEL && (modelStalled(req.model) || nimDegraded())) {
     req = chatRequestFor(NIM_FAST_MODEL);
   }
   let r;
@@ -54530,11 +54530,20 @@ async function llmFetch(model, payload) {
     req = chatRequestFor(model);
     r = await timedFetch(req, body, externalSignal);
   }
-  if (!r.ok && req.provider === "nvidia-nim" && r.status === 429) {
-    const backoffMs = Number(process.env["NIM_429_BACKOFF_MS"]) || 2500;
-    logger.warn({ model: req.model, backoffMs }, "NIM rate-limited on every pooled key \u2014 backing off and retrying once.");
-    await new Promise((resolve) => setTimeout(resolve, backoffMs));
+  if (!r.ok && req.provider === "nvidia-nim" && r.status === 429 && req.model !== NIM_FAST_MODEL) {
+    logger.warn({ model: req.model }, "NIM 429 on every pooled key \u2014 failing over to the fast model (separate throttle budget).");
+    req = chatRequestFor(NIM_FAST_MODEL);
     r = await timedFetch(req, body, externalSignal);
+  }
+  if (!r.ok && req.provider === "nvidia-nim" && r.status === 429) {
+    const base = Number(process.env["NIM_429_BACKOFF_MS"]) || 2500;
+    const attempts = Math.max(1, Number(process.env["NIM_429_RETRIES"]) || 2);
+    for (let i = 0; i < attempts && !r.ok && r.status === 429; i++) {
+      const wait = Math.round(base * 2 ** i * (0.5 + Math.random()));
+      logger.warn({ model: req.model, attempt: i + 1, waitMs: wait }, "NIM still rate-limited \u2014 backing off before retry.");
+      await new Promise((resolve) => setTimeout(resolve, wait));
+      r = await timedFetch(req, body, externalSignal);
+    }
   }
   if (!r.ok && req.provider === "nvidia-nim" && r.status >= 500 && req.model !== NIM_FAST_MODEL) {
     logger.warn({ model: req.model, status: r.status }, "NIM answered 5xx \u2014 retrying on the fast NIM model.");

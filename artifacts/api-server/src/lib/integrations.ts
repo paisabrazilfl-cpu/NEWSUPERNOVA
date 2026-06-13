@@ -408,9 +408,12 @@ export async function llmFetch(
   // Lift the AbortSignal out of the body — it must steer fetch(), not be JSON.stringified.
   const { signal: externalSignal, ...body } = payload as { signal?: AbortSignal } & Record<string, unknown>;
   let req = chatRequestFor(model);
-  // Stall breaker: a model that recently produced no response within the time
-  // budget routes straight to the fast NIM model — don't re-pay the timeout.
-  if (req.provider === "nvidia-nim" && req.model !== NIM_FAST_MODEL && modelStalled(req.model)) {
+  // Fast-model preference: a model that recently stalled, OR a NIM that is
+  // currently DEGRADED (throttled/overloaded across the pool), routes straight
+  // to the fast NIM model — don't re-pay the timeout or re-hammer the throttled
+  // slow models. This is the "next calls skip the gauntlet" the degraded breaker
+  // is meant to provide (previously recorded but never acted on).
+  if (req.provider === "nvidia-nim" && req.model !== NIM_FAST_MODEL && (modelStalled(req.model) || nimDegraded())) {
     req = chatRequestFor(NIM_FAST_MODEL);
   }
   let r: Response;
@@ -460,14 +463,26 @@ export async function llmFetch(
     r = await timedFetch(req, body, externalSignal);
   }
 
-  // Still rate-limited after exhausting the pool (single key, free-tier RPM —
-  // observed live 2026-06-10 as a burst of 429s): back off briefly and retry
-  // once instead of surfacing a transient 429 to the operator.
-  if (!r.ok && req.provider === "nvidia-nim" && r.status === 429) {
-    const backoffMs = Number(process.env["NIM_429_BACKOFF_MS"]) || 2_500;
-    logger.warn({ model: req.model, backoffMs }, "NIM rate-limited on every pooled key — backing off and retrying once.");
-    await new Promise((resolve) => setTimeout(resolve, backoffMs));
+  // Still rate-limited after exhausting the key pool. A model throttled across
+  // EVERY key is usually a per-MODEL RPM cap, so first fail over to the fast
+  // model (separate throttle budget) before backing off — observed live
+  // 2026-06-13 as 429 on all 10 pooled keys, which left ABBY stalling.
+  if (!r.ok && req.provider === "nvidia-nim" && r.status === 429 && req.model !== NIM_FAST_MODEL) {
+    logger.warn({ model: req.model }, "NIM 429 on every pooled key — failing over to the fast model (separate throttle budget).");
+    req = chatRequestFor(NIM_FAST_MODEL);
     r = await timedFetch(req, body, externalSignal);
+  }
+  // Then bounded exponential backoff with jitter (default 2 attempts) instead of
+  // surfacing a transient 429 — tunable via NIM_429_BACKOFF_MS / NIM_429_RETRIES.
+  if (!r.ok && req.provider === "nvidia-nim" && r.status === 429) {
+    const base = Number(process.env["NIM_429_BACKOFF_MS"]) || 2_500;
+    const attempts = Math.max(1, Number(process.env["NIM_429_RETRIES"]) || 2);
+    for (let i = 0; i < attempts && !r.ok && r.status === 429; i++) {
+      const wait = Math.round(base * 2 ** i * (0.5 + Math.random())); // exponential + jitter
+      logger.warn({ model: req.model, attempt: i + 1, waitMs: wait }, "NIM still rate-limited — backing off before retry.");
+      await new Promise((resolve) => setTimeout(resolve, wait));
+      r = await timedFetch(req, body, externalSignal);
+    }
   }
 
   // NIM-side 5xx (Nemotron 504s under load — observed live) → fast NIM model.
