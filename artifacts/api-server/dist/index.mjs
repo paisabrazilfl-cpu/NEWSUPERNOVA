@@ -55007,7 +55007,7 @@ var init_integrations = __esm({
     NIM_MODEL_BANS = {
       "nvidia/nemotron-3-ultra-550b-a55b": "moonshotai/kimi-k2.6"
     };
-    NIM_FAST_MODEL = "moonshotai/kimi-k2.6";
+    NIM_FAST_MODEL = process.env["NIM_FAST_MODEL"] || "meta/llama-3.1-8b-instruct";
     E2B_PKG = "@e2b/code-interpreter";
     E2B_TIMEOUT_MS = 3e4;
   }

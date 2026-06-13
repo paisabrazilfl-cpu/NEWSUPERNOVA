@@ -347,7 +347,13 @@ export function nimEscapeRequestFor(model: string): LlmChatRequest {
 // short completion while nemotron-3-ultra-550b 504'd under load). Used as the
 // same-provider retry target when the requested NIM model stalls or 5xxes —
 // the persona and tools stay intact, only the engine swaps.
-const NIM_FAST_MODEL = "moonshotai/kimi-k2.6";
+// The degraded/stall escape engine. MUST be a model that stays available under
+// load — it's where EVERY call routes when NIM is marked degraded, so a heavily
+// rate-limited model here causes a total outage (observed live 2026-06-13:
+// moonshotai/kimi-k2.6 was 429-throttled per-model while nemotron/llama/gpt-oss
+// returned 200, yet the breaker forced everything onto kimi → all calls failed).
+// Defaults to the small, reliably-available Llama 3.1 8B; override via env.
+const NIM_FAST_MODEL = process.env["NIM_FAST_MODEL"] || "meta/llama-3.1-8b-instruct";
 
 // Time budget for the upstream to START responding (headers received). Without
 // this, one stalled Nemotron request hangs an agent turn forever — observed
