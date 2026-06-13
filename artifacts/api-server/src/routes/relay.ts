@@ -55,6 +55,47 @@ router.get("/relay", async (_req, res) => {
   });
 });
 
+// GET /api/relay/peer-agents — the OTHER swarm's live agents, fetched server-side
+// from the peer's external API (Bearer RELAY_API_KEY = the peer's OPENCLAW_API_KEY).
+// Lets the canvas draw the peer (e.g. T800-AURA) as an inner ring beside the local
+// (Aura) outer ring, so the operator can see which side is working. Non-fatal:
+// when the relay is off or the peer is unreachable it returns an empty list.
+router.get("/relay/peer-agents", async (_req, res) => {
+  const peerName = relayPeerName();
+  if (!relayEnabled()) {
+    res.json({ enabled: false, peerName, agents: [] });
+    return;
+  }
+  const base = process.env["RELAY_PEER_URL"]!.replace(/\/$/, "");
+  const key = process.env["RELAY_API_KEY"]!;
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), 8000);
+  try {
+    const r = await fetch(`${base}/api/external/v1/agents`, {
+      headers: { Authorization: `Bearer ${key}` },
+      signal: ac.signal,
+    });
+    if (!r.ok) {
+      res.json({ enabled: true, peerName, agents: [], error: `peer HTTP ${r.status}` });
+      return;
+    }
+    const data = (await r.json()) as { agents?: Array<Record<string, unknown>> };
+    const agents = (data.agents ?? []).map((a) => ({
+      id: Number(a["id"]),
+      name: String(a["name"] ?? ""),
+      role: (a["role"] as string | null) ?? null,
+      status: String(a["status"] ?? "idle"),
+      color: String(a["color"] ?? "#8a8f98"),
+      avatarInitials: (a["avatarInitials"] as string | null) ?? null,
+    }));
+    res.json({ enabled: true, peerName, agents });
+  } catch (err) {
+    res.json({ enabled: true, peerName, agents: [], error: String(err).slice(0, 200) });
+  } finally {
+    clearTimeout(timer);
+  }
+});
+
 router.get("/relay/:id", async (req, res) => {
   const [row] = await db
     .select()
