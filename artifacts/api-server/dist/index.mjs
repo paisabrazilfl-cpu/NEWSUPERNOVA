@@ -55044,7 +55044,7 @@ async function substituteSecrets(input, used) {
   if (names.size === 0) return input;
   const resolved = /* @__PURE__ */ new Map();
   for (const name of names) {
-    const value = await getSecretValue(name);
+    const value = await getSecretValue(name) ?? process.env[name] ?? null;
     if (value !== null) {
       resolved.set(name, value);
       used?.add(value);
