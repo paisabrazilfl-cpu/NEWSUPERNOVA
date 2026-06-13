@@ -88569,6 +88569,18 @@ async function steelScrape(url2) {
     return direct;
   }
 }
+async function freecrawlScrape(url2) {
+  const r = await fetch(`${FREECRAWL_BASE}/scrape`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url: url2, formats: ["markdown", "text"], include_links: false }),
+    signal: AbortSignal.timeout(3e4)
+  });
+  if (!r.ok) throw new Error(`FreeCrawl ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  const data = await r.json();
+  if (data["error"]) throw new Error(String(data["error"]));
+  return data["markdown"] || data["text"] || "";
+}
 async function steelScreenshot(url2) {
   const key = process.env["STEEL_API_KEY"];
   if (!key) throw new Error("STEEL_API_KEY is not set");
@@ -88806,7 +88818,7 @@ async function runTool(toolName, args, ctx) {
   }
   return sanitizeForStorage(await def.run(args, ctx));
 }
-var STEEL_BASE, FIRECRAWL_BASE, artifactChunks, ARTIFACT_CHUNK_TTL_MS, ARTIFACT_CHUNK_MAX_CHARS, MEMORY_CANDIDATE_LIMIT, INTERNAL_META_RE, CODE_TIMEOUT_MS, CODE_OUTPUT_CAP, sandboxMode, TOOL_REGISTRY, ALL_TOOLS, AGENT_TOOLS, ABBY_ID, SWARM_ROSTER;
+var STEEL_BASE, FIRECRAWL_BASE, FREECRAWL_BASE, artifactChunks, ARTIFACT_CHUNK_TTL_MS, ARTIFACT_CHUNK_MAX_CHARS, MEMORY_CANDIDATE_LIMIT, INTERNAL_META_RE, CODE_TIMEOUT_MS, CODE_OUTPUT_CAP, sandboxMode, TOOL_REGISTRY, ALL_TOOLS, AGENT_TOOLS, ABBY_ID, SWARM_ROSTER;
 var init_tools = __esm({
   "src/tools.ts"() {
     "use strict";
@@ -88828,6 +88840,7 @@ var init_tools = __esm({
     init_postLimit();
     STEEL_BASE = "https://api.steel.dev/v1";
     FIRECRAWL_BASE = "https://api.firecrawl.dev/v1";
+    FREECRAWL_BASE = process.env["FREECRAWL_URL"] ?? "https://freecrawl-api.onrender.com";
     artifactChunks = /* @__PURE__ */ new Map();
     ARTIFACT_CHUNK_TTL_MS = 15 * 6e4;
     ARTIFACT_CHUNK_MAX_CHARS = 30 * 1024 * 1024;
@@ -88859,7 +88872,16 @@ var init_tools = __esm({
             }
           } catch {
           }
-          const content = await steelScrape(url2);
+          let content;
+          try {
+            content = await steelScrape(url2);
+          } catch (steelErr) {
+            try {
+              content = await freecrawlScrape(url2);
+            } catch {
+              return `error scraping ${url2}: ${String(steelErr)}`;
+            }
+          }
           return clip3(content, 8e3);
         }
       },
@@ -88901,6 +88923,78 @@ var init_tools = __esm({
           if (!Number.isFinite(limit)) limit = 5;
           limit = Math.max(1, Math.min(10, Math.floor(limit)));
           return webSearch(query, limit);
+        }
+      },
+      site_crawl: {
+        name: "site_crawl",
+        description: "Recursively crawl an entire website and return all pages as clean Markdown. Use when you need to ingest a whole docs site, knowledge base, or multi-page resource \u2014 not just a single page. Returns a job_id immediately; poll with site_crawl_status to get results. Backed by FreeCrawl (self-hosted).",
+        parameters: {
+          type: "object",
+          properties: {
+            url: { type: "string", description: "Root URL to start crawling from." },
+            max_pages: { type: "integer", description: "Max pages to crawl (default 30, max 200).", minimum: 1, maximum: 200 },
+            max_depth: { type: "integer", description: "Link depth to follow (default 2, max 5).", minimum: 1, maximum: 5 },
+            include_patterns: {
+              type: "array",
+              items: { type: "string" },
+              description: "Regex patterns \u2014 only crawl URLs matching at least one. Leave empty to crawl all same-domain pages."
+            }
+          },
+          required: ["url"]
+        },
+        run: async (args) => {
+          const url2 = String(args["url"] ?? "").trim();
+          if (!/^https?:\/\//i.test(url2)) return "error: valid absolute http(s) url required.";
+          const maxPages = Math.min(Number(args["max_pages"] ?? 30), 200);
+          const maxDepth = Math.min(Number(args["max_depth"] ?? 2), 5);
+          const includePatterns = args["include_patterns"] ?? [];
+          try {
+            const r = await fetch(`${FREECRAWL_BASE}/crawl`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ url: url2, max_pages: maxPages, max_depth: maxDepth, include_patterns: includePatterns }),
+              signal: AbortSignal.timeout(15e3)
+            });
+            if (!r.ok) return `error: FreeCrawl ${r.status} \u2014 ${(await r.text()).slice(0, 200)}`;
+            const data = await r.json();
+            return `crawl job queued. job_id=${data["job_id"]} status=${data["status"]} url=${url2} max_pages=${maxPages}. Poll with site_crawl_status to get results.`;
+          } catch (err) {
+            return `error: ${String(err)}`;
+          }
+        }
+      },
+      site_crawl_status: {
+        name: "site_crawl_status",
+        description: "Poll a site_crawl job and return its status and completed page content. Call after site_crawl to retrieve crawled Markdown pages.",
+        parameters: {
+          type: "object",
+          properties: {
+            job_id: { type: "string", description: "The job_id returned by site_crawl." },
+            include_pages: { type: "boolean", description: "Set true to get the full Markdown content of all crawled pages (default false \u2014 just status/counts)." }
+          },
+          required: ["job_id"]
+        },
+        run: async (args) => {
+          const jobId = String(args["job_id"] ?? "").trim();
+          const includePages = Boolean(args["include_pages"] ?? false);
+          try {
+            const r = await fetch(
+              `${FREECRAWL_BASE}/crawl/${jobId}?include_pages=${includePages}`,
+              { signal: AbortSignal.timeout(15e3) }
+            );
+            if (!r.ok) return `error: FreeCrawl ${r.status} \u2014 ${(await r.text()).slice(0, 200)}`;
+            const data = await r.json();
+            const pages = data["pages"] ?? [];
+            const summary = `job_id=${jobId} status=${data["status"]} pages_done=${data["pages_done"]}/${data["pages_found"]}`;
+            if (!includePages || pages.length === 0) return summary;
+            const pageTexts = pages.slice(0, 20).map((p) => `### ${p["url"]}
+${String(p["markdown"] ?? p["text"] ?? "(no content)").slice(0, 2e3)}`).join("\n\n---\n\n");
+            return clip3(`${summary}
+
+${pageTexts}`, 12e3);
+          } catch (err) {
+            return `error: ${String(err)}`;
+          }
         }
       },
       http_request: {
@@ -89823,13 +89917,13 @@ ${clip3(res.body, 4e3)}`;
     AGENT_TOOLS = {
       1: ALL_TOOLS,
       // ABBY — full authority
-      2: ["code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "http_request", "web_scrape", "web_search", "tier1_sources", "memory_search", "memory_write", "vault_list", "save_artifact", "image_generate", "send_message"],
+      2: ["code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "http_request", "web_scrape", "web_search", "tier1_sources", "site_crawl", "site_crawl_status", "memory_search", "memory_write", "vault_list", "save_artifact", "image_generate", "send_message"],
       // FORGE — code
-      3: ["web_scrape", "web_screenshot", "web_search", "tier1_sources", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "sandbox_exec", "browser_login", "save_artifact", "image_generate", "send_message"],
+      3: ["web_scrape", "web_screenshot", "web_search", "tier1_sources", "site_crawl", "site_crawl_status", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "sandbox_exec", "browser_login", "save_artifact", "image_generate", "send_message"],
       // CRAWLER — browser
-      4: ["memory_write", "memory_search", "web_search", "tier1_sources", "web_scrape", "http_request", "calculator", "vault_list", "save_artifact", "image_generate", "send_message"],
+      4: ["memory_write", "memory_search", "web_search", "tier1_sources", "web_scrape", "site_crawl", "site_crawl_status", "http_request", "calculator", "vault_list", "save_artifact", "image_generate", "send_message"],
       // VAULT — memory/RAG
-      5: ["http_request", "web_scrape", "web_search", "tier1_sources", "marketing_playbook", "code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_tools", "composio_action", "instagram_post", "browser_login", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task", "save_artifact", "image_generate", "render_card", "send_message"],
+      5: ["http_request", "web_scrape", "web_search", "tier1_sources", "site_crawl", "site_crawl_status", "marketing_playbook", "code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_tools", "composio_action", "instagram_post", "browser_login", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task", "save_artifact", "image_generate", "render_card", "send_message"],
       // WIRE — APIs + scheduling
       6: ["web_scrape", "web_search", "tier1_sources", "marketing_playbook", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_tools", "composio_action", "instagram_post", "browser_login", "save_artifact", "image_generate", "render_card", "send_message"]
       // MR.NICE — social
