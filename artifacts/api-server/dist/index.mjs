@@ -54469,7 +54469,7 @@ function nimRequestFor(model, opts) {
     bodyExtras
   };
 }
-function openRouterRequestFor(model) {
+function nimEscapeRequestFor(model) {
   return nimRequestFor(model, { bypassHealthGate: true });
 }
 function llmTimeoutMs() {
@@ -54506,9 +54506,9 @@ async function llmFetch(model, payload) {
     try {
       r = await timedFetch(req, payload);
     } catch (err2) {
-      logger.warn({ err: String(err2) }, "Fast NIM model also stalled \u2014 escaping to OpenRouter.");
+      logger.warn({ err: String(err2) }, "Fast NIM model also stalled \u2014 taking the guaranteed NIM escape.");
       reportNimDegraded("stall on primary and fast NIM models");
-      req = openRouterRequestFor(model);
+      req = nimEscapeRequestFor(model);
       r = await timedFetch(req, payload);
     }
   }
@@ -54539,13 +54539,13 @@ async function llmFetch(model, payload) {
   }
   if (!r.ok && req.provider === "nvidia-nim") {
     reportNimDegraded(`HTTP ${r.status} after key rotation, backoff, and fast-model retry`);
-    req = openRouterRequestFor(model);
+    req = nimEscapeRequestFor(model);
     r = await timedFetch(req, payload);
   }
   return { r, req };
 }
-function providerLabel(req) {
-  return req.provider === "nvidia-nim" ? "NVIDIA NIM" : "OpenRouter";
+function providerLabel(_req) {
+  return "NVIDIA NIM";
 }
 function formatHits(provider, query, hits) {
   if (!hits.length) return `no web results for "${query}" (via ${provider}).`;
@@ -94564,6 +94564,7 @@ CODING & CHANGE DISCIPLINE (HARDENED \u2014 mandatory whenever you write code, e
 - BRANCH-PER-PUSH, METHODICAL NAME: every push goes to a NEW branch whose name encodes the DATE and WHAT CHANGED (e.g. 2026-06-09-add-composio-connect-flow). The branch name is the changelog.
 - ALWAYS BRANCH FROM THE LATEST, NEVER REGRESS: before branching, sync to the newest main (the superset of all work) so your branch contains the latest version of the project with ZERO loss of function. Verify BEFORE merging, then merge. If a change would drop existing functionality, STOP \u2014 do not merge.
 - FOLLOW THE FULL LIFECYCLE on every coding task, in order: (1) Self-Reflection \u2014 review your reasoning, assumptions, and likely mistakes before acting; (2) Planning \u2014 write a concrete step-by-step plan before changing anything; (3) Execution \u2014 perform the planned edits/commands; (4) Observation \u2014 check what actually happened after each step; (5) Verification \u2014 confirm it works via tests, builds, and logs; (6) Playwright Validation / UI Smoke \u2014 for ANY UI change, open the app in a browser, click through, and confirm the feature works (if not run, say "browser: NOT RUN" and why); (7) Regression Check \u2014 confirm existing functionality still works (no loss); (8) Automated Test Run \u2014 run typecheck, lint, unit/integration, and build; (9) Post-Execution Review + Plan-vs-Execution Match \u2014 compare the result to the plan and detect any mismatch; (10) Root Cause Analysis + Correction Loop \u2014 on any failure, read the error, find the real cause, patch, and re-verify until green; (11) Reflective Alignment Check \u2014 state explicitly whether the final outcome matches the original plan.
+- DEFINITION OF DONE FOR CODE \u2014 A CLONE OR A README IS NOT A CODEBASE: a coding/build task is COMPLETE only when real, working SOURCE CODE exists AND you have RUN it (built, typechecked, tested, or executed) and OBSERVED the expected output. Cloning or forking a repository, scaffolding an empty project, listing files, writing a README or ANY .md/markdown/documentation, or describing what the code "would" do is NOT completion \u2014 those are scaffolding/support artifacts, never the deliverable. A cloned repo + docs with no functioning code, an empty skeleton, stubs, or TODOs = NOT DONE. "Full repo with code" means files that contain real implementation and actually do the job \u2014 not a directory tree and a write-up. Before you claim done, confirm every Acceptance Criterion against observed evidence: the code is implemented (no stubs/placeholders), it builds/typechecks clean, a real run or its tests produce the expected result, and it performs the task asked. If you could not run it, label the result UNVERIFIED and say why \u2014 never report un-run or docs-only work as "done" or "complete".
 - EVIDENCE-BASED REPORTING (no hallucination): report ONLY what you actually ran, observed, and verified. Never invent files, APIs, test results, or success. Keep an Execution Trace (commands run, files changed, tests/browser checks done). State the Acceptance Criteria and whether each is met. End with a Human-Readable Report: what changed, what passed, what failed, what is still blocked.`;
 var ACCOUNT_POLICY_DOCTRINE = `
 
@@ -95013,7 +95014,7 @@ The agents are starting now; their work and results will stream into this channe
         agentColor: agent.color,
         content: storedResponse,
         messageType: "agent",
-        metadata: JSON.stringify({ model, generatedBy: "openrouter" })
+        metadata: JSON.stringify({ model, generatedBy: "nvidia-nim" })
       });
     }
     sendEvent({ done: true, agentId: agent.id, agentName: agent.name, model });
@@ -95156,6 +95157,15 @@ deliverable exists and is complete. A status report, a plan, a partial answer,
 or "we couldn't" without exhausting the swarm's tools is NOT a solution.
 Judge ONLY on evidence present in the briefing/results. Be strict: when in
 doubt, the goal is NOT solved.
+CODE GOALS NEED WORKING CODE, NOT DOCS: when the operator asked for software, an
+app, a feature, a script, or a fix, the goal is solved ONLY if the briefing
+contains the actual working code AND evidence it runs \u2014 real code-execution
+output, a passing test, or verified behavior. A cloned/forked repository, a
+directory listing, a README or any markdown/.md write-up, an architecture
+description, or an empty scaffold with no functioning code does NOT solve a code
+goal \u2014 mark it NOT solved. "I created the files / wrote the docs / set up the
+repo" without code that demonstrably works is an automatic FAIL; a clone plus a
+README is not a codebase.
 A briefing that bounces the work back to the operator \u2014 asking what they want,
 asking them to confirm, or asking for an input they ALREADY provided \u2014 when a
 connected tool or named account could have done the task is an automatic FAIL:
