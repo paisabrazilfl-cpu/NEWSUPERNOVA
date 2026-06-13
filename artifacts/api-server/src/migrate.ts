@@ -181,6 +181,30 @@ CREATE TABLE IF NOT EXISTS "world_state" (
   "updated_at" timestamp DEFAULT now() NOT NULL
 );
 INSERT INTO "world_state" ("id") VALUES (1) ON CONFLICT ("id") DO NOTHING;
+
+-- Relay sessions — the primary/secondary collaboration loop between two
+-- OPENCLAW swarms (BOS-AURA = primary, T800-AURA = secondary). One logical
+-- session has ONE row on EACH side, keyed by the cross-service relay_id.
+-- Defined in the Drizzle schema (lib/db/schema/relay.ts) but previously absent
+-- from this boot migration, so GET/POST /api/relay 500'd ("relation
+-- relay_sessions does not exist") on any DB that was provisioned fresh (the
+-- standalone openclaw-db that replaced the auto-deleted free DB). IF NOT EXISTS
+-- is idempotent and never touches an existing table's data.
+CREATE TABLE IF NOT EXISTS "relay_sessions" (
+  "id" serial PRIMARY KEY NOT NULL,
+  "relay_id" text NOT NULL,
+  "role" text NOT NULL,
+  "goal" text NOT NULL,
+  "channel_id" integer DEFAULT 1 NOT NULL,
+  "round" integer DEFAULT 0 NOT NULL,
+  "status" text DEFAULT 'active' NOT NULL,
+  "last_actor" text,
+  "last_kind" text,
+  "last_payload" text,
+  "created_at" timestamp DEFAULT now() NOT NULL,
+  "updated_at" timestamp DEFAULT now() NOT NULL
+);
+CREATE INDEX IF NOT EXISTS "relay_sessions_relay_id_idx" ON "relay_sessions" ("relay_id");
 `;
 
 const SEED_AGENTS = `
