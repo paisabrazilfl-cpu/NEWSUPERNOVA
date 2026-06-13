@@ -316,21 +316,82 @@ async function firecrawlSearch(query: string, limit: number): Promise<string> {
     .join("\n\n")}`;
 }
 
+// SerpAPI — real Google results. The operator has a SerpAPI key; it just was
+// never wired into webSearch (only Tavily/Exa/Firecrawl were), so the key sat
+// unused while those ran out of credit. Highest quality, so it runs FIRST.
+// Reads SERP_API_KEY (preferred) or SERP_AI_API_KEY.
+async function serpapiSearch(query: string, limit: number): Promise<string> {
+  const key = process.env["SERP_API_KEY"] || process.env["SERP_AI_API_KEY"];
+  if (!key) throw new Error("SERP_API_KEY is not set");
+  const url = `https://serpapi.com/search.json?engine=google&num=${Math.max(1, Math.min(20, limit))}&q=${encodeURIComponent(query)}&api_key=${encodeURIComponent(key)}`;
+  const r = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+  if (!r.ok) throw new Error(`SerpAPI ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  const data = (await r.json()) as {
+    error?: string;
+    organic_results?: Array<{ title?: string; link?: string; snippet?: string }>;
+  };
+  if (data.error) throw new Error(`SerpAPI: ${data.error}`);
+  const results = (data.organic_results ?? []).slice(0, limit);
+  if (!results.length) return `no web results for "${query}".`;
+  return `[search provider: serpapi/google]\n${results
+    .map((x, i) => `${i + 1}. ${x.title ?? "(untitled)"}\n   ${x.link ?? ""}\n   ${clip((x.snippet ?? "").trim(), 300)}`)
+    .join("\n\n")}`;
+}
+
+// Keyless last-resort search: scrape DuckDuckGo's lightweight HTML results page
+// through FreeCrawl (self-hosted, always on). Needs NO API key or credits, so
+// web_search never fully fails just because the paid providers are throttled or
+// out of credit (observed live 2026-06-13: tavily 432 + exa 402 blinded the
+// whole swarm). Lower quality than Tavily/Exa, so it runs only after them.
+async function freecrawlSearch(query: string, limit: number): Promise<string> {
+  const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+  const r = await fetch(`${FREECRAWL_BASE}/scrape`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url, formats: ["markdown", "links"], include_links: true }),
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!r.ok) throw new Error(`FreeCrawl ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  const data = (await r.json()) as { markdown?: string; links?: string[]; error?: string };
+  if (data.error) throw new Error(String(data.error));
+  // DuckDuckGo HTML wraps each target in a redirect link (/l/?uddg=<encoded>).
+  const decode = (href: string): string | null => {
+    try {
+      const m = href.match(/[?&]uddg=([^&]+)/);
+      if (m) return decodeURIComponent(m[1]);
+      if (/^https?:\/\//i.test(href) && !/duckduckgo\.com/i.test(href)) return href;
+    } catch { /* ignore */ }
+    return null;
+  };
+  const seen = new Set<string>();
+  const urls: string[] = [];
+  for (const href of data.links ?? []) {
+    const t = decode(href);
+    if (t && !seen.has(t)) { seen.add(t); urls.push(t); }
+    if (urls.length >= limit) break;
+  }
+  const md = (data.markdown ?? "").trim();
+  if (!urls.length && !md) return `no web results for "${query}".`;
+  const list = urls.map((u, i) => `${i + 1}. ${u}`).join("\n");
+  return `[search provider: freecrawl/duckduckgo — keyless fallback]\n${list}${md ? `\n\n--- results page text ---\n${clip(md, 1500)}` : ""}`;
+}
+
 // ─── Multi-provider web search ───────────────────────────────────────────────
 // Tries the configured search providers in order of preference: Tavily (broad,
-// fast) → Exa (neural/semantic) → Firecrawl. Falls through to the next provider
-// on any error so a single provider outage doesn't blind the swarm.
+// fast) → Exa (neural/semantic) → Firecrawl → FreeCrawl/DuckDuckGo (keyless,
+// always on). Falls through to the next provider on any error so a single
+// provider outage — or all paid providers being out of credit — never blinds
+// the swarm.
 
 async function webSearch(query: string, limit: number): Promise<string> {
   const providers: Array<{ name: string; enabled: boolean; run: () => Promise<string> }> = [
+    { name: "serpapi", enabled: !!(process.env["SERP_API_KEY"] || process.env["SERP_AI_API_KEY"]), run: () => serpapiSearch(query, limit) },
     { name: "tavily", enabled: !!process.env["TAVILY_API_KEY"], run: () => tavilySearch(query, limit) },
     { name: "exa", enabled: !!process.env["EXA_API_KEY"], run: () => exaSearch(query, limit) },
     { name: "firecrawl", enabled: !!process.env["FIRECRAWL_API_KEY"], run: () => firecrawlSearch(query, limit) },
+    // Always-on keyless backstop — keeps search working when the paid keys fail.
+    { name: "freecrawl", enabled: true, run: () => freecrawlSearch(query, limit) },
   ].filter((p) => p.enabled);
-
-  if (!providers.length) {
-    return "error: no web search provider is configured (set TAVILY_API_KEY, EXA_API_KEY, or FIRECRAWL_API_KEY).";
-  }
 
   const errors: string[] = [];
   for (const provider of providers) {

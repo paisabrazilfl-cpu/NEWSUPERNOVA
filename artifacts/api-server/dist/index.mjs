@@ -88460,15 +88460,69 @@ ${results.map((x, i) => `${i + 1}. ${x.title ?? "(untitled)"}
    ${x.url ?? ""}
    ${clip3((x.description ?? "").trim(), 300)}`).join("\n\n")}`;
 }
+async function serpapiSearch(query, limit) {
+  const key = process.env["SERP_API_KEY"] || process.env["SERP_AI_API_KEY"];
+  if (!key) throw new Error("SERP_API_KEY is not set");
+  const url2 = `https://serpapi.com/search.json?engine=google&num=${Math.max(1, Math.min(20, limit))}&q=${encodeURIComponent(query)}&api_key=${encodeURIComponent(key)}`;
+  const r = await fetch(url2, { signal: AbortSignal.timeout(3e4) });
+  if (!r.ok) throw new Error(`SerpAPI ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  const data = await r.json();
+  if (data.error) throw new Error(`SerpAPI: ${data.error}`);
+  const results = (data.organic_results ?? []).slice(0, limit);
+  if (!results.length) return `no web results for "${query}".`;
+  return `[search provider: serpapi/google]
+${results.map((x, i) => `${i + 1}. ${x.title ?? "(untitled)"}
+   ${x.link ?? ""}
+   ${clip3((x.snippet ?? "").trim(), 300)}`).join("\n\n")}`;
+}
+async function freecrawlSearch(query, limit) {
+  const url2 = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+  const r = await fetch(`${FREECRAWL_BASE}/scrape`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url: url2, formats: ["markdown", "links"], include_links: true }),
+    signal: AbortSignal.timeout(3e4)
+  });
+  if (!r.ok) throw new Error(`FreeCrawl ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  const data = await r.json();
+  if (data.error) throw new Error(String(data.error));
+  const decode = (href) => {
+    try {
+      const m = href.match(/[?&]uddg=([^&]+)/);
+      if (m) return decodeURIComponent(m[1]);
+      if (/^https?:\/\//i.test(href) && !/duckduckgo\.com/i.test(href)) return href;
+    } catch {
+    }
+    return null;
+  };
+  const seen = /* @__PURE__ */ new Set();
+  const urls = [];
+  for (const href of data.links ?? []) {
+    const t = decode(href);
+    if (t && !seen.has(t)) {
+      seen.add(t);
+      urls.push(t);
+    }
+    if (urls.length >= limit) break;
+  }
+  const md = (data.markdown ?? "").trim();
+  if (!urls.length && !md) return `no web results for "${query}".`;
+  const list = urls.map((u, i) => `${i + 1}. ${u}`).join("\n");
+  return `[search provider: freecrawl/duckduckgo \u2014 keyless fallback]
+${list}${md ? `
+
+--- results page text ---
+${clip3(md, 1500)}` : ""}`;
+}
 async function webSearch(query, limit) {
   const providers = [
+    { name: "serpapi", enabled: !!(process.env["SERP_API_KEY"] || process.env["SERP_AI_API_KEY"]), run: () => serpapiSearch(query, limit) },
     { name: "tavily", enabled: !!process.env["TAVILY_API_KEY"], run: () => tavilySearch(query, limit) },
     { name: "exa", enabled: !!process.env["EXA_API_KEY"], run: () => exaSearch(query, limit) },
-    { name: "firecrawl", enabled: !!process.env["FIRECRAWL_API_KEY"], run: () => firecrawlSearch(query, limit) }
+    { name: "firecrawl", enabled: !!process.env["FIRECRAWL_API_KEY"], run: () => firecrawlSearch(query, limit) },
+    // Always-on keyless backstop — keeps search working when the paid keys fail.
+    { name: "freecrawl", enabled: true, run: () => freecrawlSearch(query, limit) }
   ].filter((p) => p.enabled);
-  if (!providers.length) {
-    return "error: no web search provider is configured (set TAVILY_API_KEY, EXA_API_KEY, or FIRECRAWL_API_KEY).";
-  }
   const errors = [];
   for (const provider of providers) {
     try {
