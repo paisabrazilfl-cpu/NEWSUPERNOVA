@@ -9,7 +9,7 @@
 import { Router } from "express";
 import { db, relaySessionsTable } from "@workspace/db";
 import { desc, eq } from "drizzle-orm";
-import { relayEnabled, relayRole, startRelay } from "../lib/relay";
+import { relayEnabled, relayRole, relaySelfName, relayPeerName, startRelay } from "../lib/relay";
 
 const router = Router();
 
@@ -44,7 +44,15 @@ router.get("/relay", async (_req, res) => {
     .from(relaySessionsTable)
     .orderBy(desc(relaySessionsTable.id))
     .limit(50);
-  res.json({ sessions: rows });
+  // Include the relay config so the UI can label which side is working without
+  // hardcoding swarm names (peerName = the OTHER swarm, e.g. T800-AURA on BOS).
+  res.json({
+    enabled: relayEnabled(),
+    role: relayRole(),
+    selfName: relaySelfName(),
+    peerName: relayPeerName(),
+    sessions: rows,
+  });
 });
 
 router.get("/relay/:id", async (req, res) => {

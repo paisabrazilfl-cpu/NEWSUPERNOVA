@@ -271,6 +271,15 @@ export async function cycleAndForward(o: {
   const maxRounds = relayMaxRounds();
   const peerName = relayPeerName();
   try {
+    // Mark THIS swarm as actively working this round so the operator's UI can
+    // show a live cue. Creating the row here (if missing) means a freshly
+    // started relay appears immediately, not only once the first cycle returns.
+    await upsertSession({
+      relayId: o.relayId, goal: o.goal, channelId: o.channelId, round: o.round,
+      status: "self-working", lastActor: relaySelfName(), lastKind: "turn",
+      lastPayload: o.inputText,
+    }).catch(() => {});
+
     const [latest] = await db
       .select({ id: messagesTable.id })
       .from(messagesTable)
@@ -304,11 +313,17 @@ export async function cycleAndForward(o: {
     }
 
     const nextRound = o.round + 1;
+    // Hand the next turn to the peer FIRST, then record the outcome so the
+    // status is truthful: "awaiting-peer" (the peer swarm is now working) only
+    // when the handoff actually reached it, otherwise "stalled".
+    const sendResult = await sendTurn({ relayId: o.relayId, round: nextRound, goal: o.goal, kind: "turn", payload: output });
+    const handedOff = sendResult === "relay: turn sent";
     await upsertSession({
       relayId: o.relayId, goal: o.goal, channelId: o.channelId, round: o.round,
-      status: "active", lastActor: relaySelfName(), lastKind: kind, lastPayload: output,
+      status: handedOff ? "awaiting-peer" : "stalled",
+      lastActor: relaySelfName(), lastKind: kind,
+      lastPayload: handedOff ? output : `[handoff failed: ${sendResult}]\n${output}`,
     });
-    await sendTurn({ relayId: o.relayId, round: nextRound, goal: o.goal, kind: "turn", payload: output });
   } catch (err) {
     logger.error({ err: String(err), relayId: o.relayId }, "relay: cycle failed");
     await upsertSession({

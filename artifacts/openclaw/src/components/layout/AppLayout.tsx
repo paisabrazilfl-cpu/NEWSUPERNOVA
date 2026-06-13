@@ -1,6 +1,7 @@
 import { Link, useLocation } from "wouter";
 import { Activity, LayoutGrid, Terminal, Settings as SettingsIcon, ShieldAlert, Clock, MessageSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { RelayBanner, RelayRailIndicator } from "./RelayIndicator";
 import { useGetSwarmStatus } from "@workspace/api-client-react";
 import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -71,6 +72,8 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
           })}
         </nav>
 
+        <RelayRailIndicator />
+
         {swarmStatus && (
           <Link href="/" data-testid="swarm-status-indicator">
             <div
@@ -85,7 +88,11 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
       </div>
 
       {/* ── Main content ── */}
-      <div className="flex-1 flex min-w-0 min-h-0 overflow-hidden relative z-10">{children}</div>
+      <div className="flex-1 flex min-w-0 min-h-0 overflow-hidden relative z-10">
+        {/* Floating relay cue — announces when the partner swarm (T800-AURA) is working. */}
+        <RelayBanner />
+        {children}
+      </div>
 
       {/* ── Bottom tab bar (mobile) — in normal flow, so it never overlaps content ── */}
       <nav className="md:hidden flex-shrink-0 flex items-stretch border-t border-card-border bg-card z-20" aria-label="Primary">
