@@ -70,8 +70,13 @@ export async function copyLegacyData(): Promise<void> {
   }
 
   const summary: Record<string, { copied: number; skipped: number }> = {};
+  // Optional scope: LEGACY_COPY_TABLES=attachments limits the copy to those
+  // tables (e.g. to top off a table that hit a transient source-DB blip) so we
+  // don't needlessly re-upsert the full history.
+  const only = (process.env["LEGACY_COPY_TABLES"] || "").split(",").map((s) => s.trim()).filter(Boolean);
+  const tablesToCopy = only.length ? TABLES.filter((t) => only.includes(t)) : TABLES;
   try {
-    for (const table of TABLES) {
+    for (const table of tablesToCopy) {
       try {
         const { rows } = await src.query(`SELECT * FROM "${table}"`);
         if (!rows.length) { summary[table] = { copied: 0, skipped: 0 }; continue; }
@@ -87,7 +92,9 @@ export async function copyLegacyData(): Promise<void> {
         // tables copy in seconds, not row-by-row. On a chunk error, fall back to
         // per-row for that chunk so one bad row never loses the rest.
         let copied = 0, skipped = 0;
-        const CHUNK = 100;
+        // Attachments hold large base64 blobs — small chunks avoid oversized
+        // statements; everything else batches big.
+        const CHUNK = table === "attachments" ? 10 : 100;
         const all = rows as Array<Record<string, unknown>>;
         for (let i = 0; i < all.length; i += CHUNK) {
           const chunk = all.slice(i, i + CHUNK);

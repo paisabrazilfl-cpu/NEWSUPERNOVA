@@ -99104,8 +99104,10 @@ async function copyLegacyData() {
     return;
   }
   const summary = {};
+  const only = (process.env["LEGACY_COPY_TABLES"] || "").split(",").map((s) => s.trim()).filter(Boolean);
+  const tablesToCopy = only.length ? TABLES.filter((t) => only.includes(t)) : TABLES;
   try {
-    for (const table of TABLES) {
+    for (const table of tablesToCopy) {
       try {
         const { rows } = await src.query(`SELECT * FROM "${table}"`);
         if (!rows.length) {
@@ -99119,7 +99121,7 @@ async function copyLegacyData() {
         const conflict = updates ? `ON CONFLICT ("id") DO UPDATE SET ${updates}` : `ON CONFLICT ("id") DO NOTHING`;
         const singleSql = `INSERT INTO "${table}" (${colList}) VALUES (${placeholders}) ${conflict}`;
         let copied = 0, skipped = 0;
-        const CHUNK = 100;
+        const CHUNK = table === "attachments" ? 10 : 100;
         const all = rows;
         for (let i = 0; i < all.length; i += CHUNK) {
           const chunk = all.slice(i, i + CHUNK);
