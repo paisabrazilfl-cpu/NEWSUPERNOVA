@@ -20502,27 +20502,27 @@ var require_router = __commonJS({
     var slice = Array.prototype.slice;
     var flatten = Array.prototype.flat;
     var methods = METHODS.map((method) => method.toLowerCase());
-    module.exports = Router19;
+    module.exports = Router20;
     module.exports.Route = Route;
-    function Router19(options) {
-      if (!(this instanceof Router19)) {
-        return new Router19(options);
+    function Router20(options) {
+      if (!(this instanceof Router20)) {
+        return new Router20(options);
       }
       const opts = options || {};
-      function router19(req, res, next) {
-        router19.handle(req, res, next);
+      function router20(req, res, next) {
+        router20.handle(req, res, next);
       }
-      Object.setPrototypeOf(router19, this);
-      router19.caseSensitive = opts.caseSensitive;
-      router19.mergeParams = opts.mergeParams;
-      router19.params = {};
-      router19.strict = opts.strict;
-      router19.stack = [];
-      return router19;
+      Object.setPrototypeOf(router20, this);
+      router20.caseSensitive = opts.caseSensitive;
+      router20.mergeParams = opts.mergeParams;
+      router20.params = {};
+      router20.strict = opts.strict;
+      router20.stack = [];
+      return router20;
     }
-    Router19.prototype = function() {
+    Router20.prototype = function() {
     };
-    Router19.prototype.param = function param(name, fn) {
+    Router20.prototype.param = function param(name, fn) {
       if (!name) {
         throw new TypeError("argument name is required");
       }
@@ -20542,7 +20542,7 @@ var require_router = __commonJS({
       params.push(fn);
       return this;
     };
-    Router19.prototype.handle = function handle(req, res, callback) {
+    Router20.prototype.handle = function handle(req, res, callback) {
       if (!callback) {
         throw new TypeError("argument callback is required");
       }
@@ -20669,7 +20669,7 @@ var require_router = __commonJS({
         }
       }
     };
-    Router19.prototype.use = function use(handler) {
+    Router20.prototype.use = function use(handler) {
       let offset = 0;
       let path3 = "/";
       if (typeof handler !== "function") {
@@ -20702,7 +20702,7 @@ var require_router = __commonJS({
       }
       return this;
     };
-    Router19.prototype.route = function route(path3) {
+    Router20.prototype.route = function route(path3) {
       const route2 = new Route(path3);
       const layer = new Layer(path3, {
         sensitive: this.caseSensitive,
@@ -20717,7 +20717,7 @@ var require_router = __commonJS({
       return route2;
     };
     methods.concat("all").forEach(function(method) {
-      Router19.prototype[method] = function(path3) {
+      Router20.prototype[method] = function(path3) {
         const route = this.route(path3);
         route[method].apply(route, slice.call(arguments, 1));
         return this;
@@ -20900,13 +20900,13 @@ var require_application = __commonJS({
     var compileTrust = require_utils3().compileTrust;
     var resolve = __require("node:path").resolve;
     var once = require_once();
-    var Router19 = require_router();
+    var Router20 = require_router();
     var slice = Array.prototype.slice;
     var flatten = Array.prototype.flat;
     var app2 = exports = module.exports = {};
     var trustProxyDefaultSymbol = "@@symbol:trust_proxy_default";
     app2.init = function init() {
-      var router19 = null;
+      var router20 = null;
       this.cache = /* @__PURE__ */ Object.create(null);
       this.engines = /* @__PURE__ */ Object.create(null);
       this.settings = /* @__PURE__ */ Object.create(null);
@@ -20915,13 +20915,13 @@ var require_application = __commonJS({
         configurable: true,
         enumerable: true,
         get: function getrouter() {
-          if (router19 === null) {
-            router19 = new Router19({
+          if (router20 === null) {
+            router20 = new Router20({
               caseSensitive: this.enabled("case sensitive routing"),
               strict: this.enabled("strict routing")
             });
           }
-          return router19;
+          return router20;
         }
       });
     };
@@ -20992,15 +20992,15 @@ var require_application = __commonJS({
       if (fns.length === 0) {
         throw new TypeError("app.use() requires a middleware function");
       }
-      var router19 = this.router;
+      var router20 = this.router;
       fns.forEach(function(fn2) {
         if (!fn2 || !fn2.handle || !fn2.set) {
-          return router19.use(path3, fn2);
+          return router20.use(path3, fn2);
         }
         debug(".use app under %s", path3);
         fn2.mountpath = path3;
         fn2.parent = this;
-        router19.use(path3, function mounted_app(req, res, next) {
+        router20.use(path3, function mounted_app(req, res, next) {
           var orig = req.app;
           fn2.handle(req, res, function(err) {
             Object.setPrototypeOf(req, orig.request);
@@ -23573,7 +23573,7 @@ var require_express = __commonJS({
     var EventEmitter = __require("node:events").EventEmitter;
     var mixin = require_merge_descriptors();
     var proto2 = require_application();
-    var Router19 = require_router();
+    var Router20 = require_router();
     var req = require_request();
     var res = require_response();
     exports = module.exports = createApplication;
@@ -23595,8 +23595,8 @@ var require_express = __commonJS({
     exports.application = proto2;
     exports.request = req;
     exports.response = res;
-    exports.Route = Router19.Route;
-    exports.Router = Router19;
+    exports.Route = Router20.Route;
+    exports.Router = Router20;
     exports.json = bodyParser.json;
     exports.raw = bodyParser.raw;
     exports.static = require_serve_static();
@@ -54181,6 +54181,40 @@ var init_attachments = __esm({
   }
 });
 
+// ../../lib/db/src/schema/relay.ts
+var relaySessionsTable, insertRelaySessionSchema;
+var init_relay = __esm({
+  "../../lib/db/src/schema/relay.ts"() {
+    "use strict";
+    init_pg_core();
+    init_drizzle_zod();
+    relaySessionsTable = pgTable("relay_sessions", {
+      id: serial("id").primaryKey(),
+      relayId: text("relay_id").notNull(),
+      // This swarm's role in the session: "primary" | "secondary".
+      role: text("role").notNull(),
+      goal: text("goal").notNull(),
+      channelId: integer("channel_id").notNull().default(1),
+      // Highest round number this side has processed (used for idempotent dedupe of
+      // re-delivered turns).
+      round: integer("round").notNull().default(0),
+      // active | done | no-action | aborted | error
+      status: text("status").notNull().default("active"),
+      lastActor: text("last_actor"),
+      // turn | question | result | no-action | done | continue
+      lastKind: text("last_kind"),
+      lastPayload: text("last_payload"),
+      createdAt: timestamp("created_at").notNull().defaultNow(),
+      updatedAt: timestamp("updated_at").notNull().defaultNow()
+    });
+    insertRelaySessionSchema = createInsertSchema(relaySessionsTable).omit({
+      id: true,
+      createdAt: true,
+      updatedAt: true
+    });
+  }
+});
+
 // ../../lib/db/src/schema/index.ts
 var schema_exports = {};
 __export(schema_exports, {
@@ -54198,10 +54232,12 @@ __export(schema_exports, {
   insertCronJobSchema: () => insertCronJobSchema,
   insertMessageSchema: () => insertMessageSchema,
   insertMonologueLineSchema: () => insertMonologueLineSchema,
+  insertRelaySessionSchema: () => insertRelaySessionSchema,
   insertTaskSchema: () => insertTaskSchema,
   insertToolCallSchema: () => insertToolCallSchema,
   messagesTable: () => messagesTable,
   monologueLinesTable: () => monologueLinesTable,
+  relaySessionsTable: () => relaySessionsTable,
   setVaultSecretSchema: () => setVaultSecretSchema,
   tasksTable: () => tasksTable,
   toolCallsTable: () => toolCallsTable,
@@ -54219,6 +54255,7 @@ var init_schema2 = __esm({
     init_memory();
     init_vault();
     init_attachments();
+    init_relay();
   }
 });
 
@@ -54240,11 +54277,13 @@ __export(src_exports, {
   insertCronJobSchema: () => insertCronJobSchema,
   insertMessageSchema: () => insertMessageSchema,
   insertMonologueLineSchema: () => insertMonologueLineSchema,
+  insertRelaySessionSchema: () => insertRelaySessionSchema,
   insertTaskSchema: () => insertTaskSchema,
   insertToolCallSchema: () => insertToolCallSchema,
   messagesTable: () => messagesTable,
   monologueLinesTable: () => monologueLinesTable,
   pool: () => pool,
+  relaySessionsTable: () => relaySessionsTable,
   setVaultSecretSchema: () => setVaultSecretSchema,
   tasksTable: () => tasksTable,
   toolCallsTable: () => toolCallsTable,
@@ -66517,20 +66556,20 @@ var require_router2 = __commonJS({
     function createConnectRouter(routerOptions) {
       const base = whichProtocols(routerOptions);
       const handlers = [];
-      const router19 = {
+      const router20 = {
         handlers,
         service: (service, implementation, options) => {
           const { protocols } = whichProtocols(options, base);
           handlers.push(...(0, universal_handler_js_1.createUniversalServiceHandlers)((0, implementation_js_1.createServiceImplSpec)(service, implementation), protocols));
-          return router19;
+          return router20;
         },
         rpc: (method, impl, opt) => {
           const { protocols } = whichProtocols(opt, base);
           handlers.push((0, universal_handler_js_1.createUniversalMethodHandler)((0, implementation_js_1.createMethodImplSpec)(method, impl), protocols));
-          return router19;
+          return router20;
         }
       };
-      return router19;
+      return router20;
     }
     function whichProtocols(options, base) {
       if (base && !options) {
@@ -67149,9 +67188,9 @@ var require_router_transport = __commonJS({
     var router_js_1 = require_router2();
     function createRouterTransport(routes, options) {
       var _a, _b;
-      const router19 = (0, router_js_1.createConnectRouter)(Object.assign(Object.assign({}, (_a = options === null || options === void 0 ? void 0 : options.router) !== null && _a !== void 0 ? _a : {}), { connect: true }));
-      routes(router19);
-      return (0, transport_js_1.createTransport)(Object.assign({ httpClient: (0, universal_handler_client_js_1.createUniversalHandlerClient)(router19.handlers), baseUrl: "https://in-memory", useBinaryFormat: true, interceptors: [], acceptCompression: [], sendCompression: null, compressMinBytes: Number.MAX_SAFE_INTEGER, readMaxBytes: Number.MAX_SAFE_INTEGER, writeMaxBytes: Number.MAX_SAFE_INTEGER }, (_b = options === null || options === void 0 ? void 0 : options.transport) !== null && _b !== void 0 ? _b : {}));
+      const router20 = (0, router_js_1.createConnectRouter)(Object.assign(Object.assign({}, (_a = options === null || options === void 0 ? void 0 : options.router) !== null && _a !== void 0 ? _a : {}), { connect: true }));
+      routes(router20);
+      return (0, transport_js_1.createTransport)(Object.assign({ httpClient: (0, universal_handler_client_js_1.createUniversalHandlerClient)(router20.handlers), baseUrl: "https://in-memory", useBinaryFormat: true, interceptors: [], acceptCompression: [], sendCompression: null, compressMinBytes: Number.MAX_SAFE_INTEGER, readMaxBytes: Number.MAX_SAFE_INTEGER, writeMaxBytes: Number.MAX_SAFE_INTEGER }, (_b = options === null || options === void 0 ? void 0 : options.transport) !== null && _b !== void 0 ? _b : {}));
     }
   }
 });
@@ -89807,13 +89846,13 @@ ${clip3(res.body, 4e3)}`;
 });
 
 // src/app.ts
-var import_express19 = __toESM(require_express2(), 1);
+var import_express20 = __toESM(require_express2(), 1);
 var import_cors = __toESM(require_lib3(), 1);
 var import_cookie_parser = __toESM(require_cookie_parser(), 1);
 var import_pino_http = __toESM(require_logger(), 1);
 
 // src/routes/index.ts
-var import_express18 = __toESM(require_express2(), 1);
+var import_express19 = __toESM(require_express2(), 1);
 
 // src/routes/health.ts
 var import_express = __toESM(require_express2(), 1);
@@ -96562,6 +96601,250 @@ function requireOperator(req, res, next) {
 
 // src/routes/external.ts
 init_embeddings();
+
+// src/lib/relay.ts
+init_drizzle_orm();
+init_src();
+init_logger2();
+function relayEnabled() {
+  const flag = (process.env["RELAY_ENABLED"] ?? "").toLowerCase();
+  const on = flag === "1" || flag === "true" || flag === "yes";
+  return on && !!process.env["RELAY_PEER_URL"] && !!process.env["RELAY_API_KEY"];
+}
+function relayRole() {
+  return (process.env["RELAY_ROLE"] ?? "").toLowerCase() === "primary" ? "primary" : "secondary";
+}
+function relaySelfName() {
+  return (process.env["RELAY_SELF_NAME"] ?? (relayRole() === "primary" ? "PRIMARY" : "SECONDARY")).slice(0, 40);
+}
+function relayPeerName() {
+  return (process.env["RELAY_PEER_NAME"] ?? "peer").slice(0, 40);
+}
+function relayMaxRounds() {
+  const v = Number(process.env["RELAY_MAX_ROUNDS"]);
+  return Number.isFinite(v) && v >= 1 && v <= 50 ? Math.floor(v) : 8;
+}
+var RELAY_DEFINITION_OF_DONE = [
+  "Definition of done \u2014 judge the MVP holistically across EVERY dimension, using every tool you have:",
+  "- CODE: written, executed, and verified to actually run (FORGE / code sandbox).",
+  "- GITHUB: changes committed and pushed / a PR opened where applicable (sandbox git tools).",
+  "- FRONT-END: any UI built and validated, not just described.",
+  "- RESEARCH: competitors and prior art searched on the LIVE internet (browser) and accounted for.",
+  "- TASK: the operator's goal fully satisfied end-to-end \u2014 a shippable result, not a draft or outline."
+].join("\n");
+function classifyOutput(text2) {
+  const body = (text2 ?? "").trim();
+  if (!body) return { kind: "no-action", summary: "(no output produced)" };
+  const lines = body.split("\n").map((l) => l.trim()).filter(Boolean);
+  for (const line2 of lines.slice(-5).reverse()) {
+    const m = /^(MVP-DONE|NO-ACTION|QUESTION|CONTINUE)\s*[:\-]\s*(.*)$/i.exec(line2);
+    if (m) {
+      const marker = m[1].toUpperCase();
+      const summary = (m[2] ?? "").slice(0, 500) || line2.slice(0, 500);
+      if (marker === "MVP-DONE") return { kind: "done", summary };
+      if (marker === "NO-ACTION") return { kind: "no-action", summary };
+      if (marker === "QUESTION") return { kind: "question", summary };
+      return { kind: "continue", summary };
+    }
+  }
+  return { kind: "result", summary: body.slice(0, 500) };
+}
+function decideTerminate(o) {
+  if (o.round >= o.maxRounds) return { stop: true, reason: "round-cap" };
+  if (o.role === "primary" && o.kind === "done") return { stop: true, reason: "primary-mvp-done" };
+  return { stop: false, reason: "continue" };
+}
+function wrapRelayGoal(o) {
+  const roleNote = o.role === "primary" ? `You are the PRIMARY swarm and the FINAL authority on whether the MVP is done. Only you may emit "MVP-DONE".` : `You are the SECONDARY swarm. Analyse this independently and do your part. You may NOT declare the MVP done \u2014 instead reply with your result, a QUESTION, or NO-ACTION.`;
+  return [
+    `[RELAY round ${o.round}] ${roleNote}`,
+    ``,
+    `Original operator goal:`,
+    `"""`,
+    o.goal.slice(0, 8e3),
+    `"""`,
+    ``,
+    `Latest input from the ${o.peerName} swarm (treat as your input for this round):`,
+    `"""`,
+    o.inputText.slice(0, 12e3),
+    `"""`,
+    ``,
+    RELAY_DEFINITION_OF_DONE,
+    ``,
+    `Do the real work now using all tools available to you. Then, on the FINAL line, emit EXACTLY ONE control marker:`,
+    `- "MVP-DONE: <one-line summary>"  (PRIMARY ONLY \u2014 the whole MVP meets the definition of done)`,
+    `- "QUESTION: <question>"          (you need the other swarm to decide/clarify before continuing)`,
+    `- "NO-ACTION: <why>"              (nothing further is needed from your side this round)`,
+    `- "CONTINUE: <next step>"         (work remains; the other swarm should take the next pass)`
+  ].join("\n");
+}
+async function sendTurn(turn) {
+  if (!relayEnabled()) return "relay disabled";
+  const base = process.env["RELAY_PEER_URL"].replace(/\/$/, "");
+  const key = process.env["RELAY_API_KEY"];
+  const url2 = `${base}/api/external/v1/relay`;
+  const ac = new AbortController();
+  const timer2 = setTimeout(() => ac.abort(), 3e4);
+  try {
+    const r = await fetch(url2, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ ...turn, from: relaySelfName() }),
+      signal: ac.signal
+    });
+    if (!r.ok) {
+      const body = (await r.text().catch(() => "")).slice(0, 200);
+      logger.warn({ status: r.status, body, relayId: turn.relayId }, "relay: peer rejected turn");
+      return `relay: HTTP ${r.status}`;
+    }
+    return "relay: turn sent";
+  } catch (err) {
+    logger.warn({ err: String(err), relayId: turn.relayId }, "relay: peer unreachable");
+    return "relay: peer unreachable";
+  } finally {
+    clearTimeout(timer2);
+  }
+}
+async function postRelayNote(channelId, content) {
+  try {
+    await db.insert(messagesTable).values({
+      channelId,
+      agentId: null,
+      agentName: "RELAY",
+      agentColor: "#22d3ee",
+      content: content.slice(0, 2e4),
+      messageType: "system",
+      metadata: JSON.stringify({ source: "relay" })
+    });
+  } catch (err) {
+    logger.warn({ err: String(err) }, "relay: failed to post note");
+  }
+}
+async function readCycleOutput(channelId, sinceId) {
+  const rows = await db.select().from(messagesTable).where(
+    and(
+      eq(messagesTable.channelId, channelId),
+      gt(messagesTable.id, sinceId),
+      eq(messagesTable.messageType, "agent")
+    )
+  ).orderBy(desc(messagesTable.id)).limit(1);
+  return rows[0]?.content?.trim() ?? "";
+}
+async function upsertSession(s) {
+  const [existing] = await db.select({ id: relaySessionsTable.id }).from(relaySessionsTable).where(eq(relaySessionsTable.relayId, s.relayId)).limit(1);
+  const values = {
+    role: relayRole(),
+    round: s.round,
+    status: s.status,
+    lastActor: s.lastActor,
+    lastKind: s.lastKind,
+    lastPayload: s.lastPayload.slice(0, 12e3),
+    updatedAt: /* @__PURE__ */ new Date()
+  };
+  if (existing) {
+    await db.update(relaySessionsTable).set(values).where(eq(relaySessionsTable.id, existing.id));
+  } else {
+    await db.insert(relaySessionsTable).values({
+      relayId: s.relayId,
+      goal: s.goal.slice(0, 8e3),
+      channelId: s.channelId,
+      ...values
+    });
+  }
+}
+async function cycleAndForward(o) {
+  if (!relayEnabled()) return;
+  const role = relayRole();
+  const maxRounds = relayMaxRounds();
+  const peerName = relayPeerName();
+  try {
+    await upsertSession({
+      relayId: o.relayId,
+      goal: o.goal,
+      channelId: o.channelId,
+      round: o.round,
+      status: "self-working",
+      lastActor: relaySelfName(),
+      lastKind: "turn",
+      lastPayload: o.inputText
+    }).catch(() => {
+    });
+    const [latest] = await db.select({ id: messagesTable.id }).from(messagesTable).orderBy(desc(messagesTable.id)).limit(1);
+    const sinceId = latest?.id ?? 0;
+    await orchestrateGoal({
+      goal: wrapRelayGoal({ role, round: o.round, peerName, goal: o.goal, inputText: o.inputText }),
+      channelId: o.channelId,
+      priority: "normal"
+    });
+    const output = await readCycleOutput(o.channelId, sinceId);
+    const { kind } = classifyOutput(output);
+    const term = decideTerminate({ role, round: o.round, maxRounds, kind });
+    if (term.stop) {
+      const status = term.reason === "round-cap" ? "aborted" : "done";
+      await upsertSession({
+        relayId: o.relayId,
+        goal: o.goal,
+        channelId: o.channelId,
+        round: o.round,
+        status,
+        lastActor: relaySelfName(),
+        lastKind: kind,
+        lastPayload: output
+      });
+      await postRelayNote(
+        o.channelId,
+        `RELAY ${o.relayId} ${status === "done" ? "COMPLETE" : "STOPPED"} at round ${o.round} (${term.reason}).
+${output.slice(0, 4e3)}`
+      );
+      await sendTurn({ relayId: o.relayId, round: o.round, goal: o.goal, kind: "done", payload: output });
+      return;
+    }
+    const nextRound = o.round + 1;
+    const sendResult = await sendTurn({ relayId: o.relayId, round: nextRound, goal: o.goal, kind: "turn", payload: output });
+    const handedOff = sendResult === "relay: turn sent";
+    await upsertSession({
+      relayId: o.relayId,
+      goal: o.goal,
+      channelId: o.channelId,
+      round: o.round,
+      status: handedOff ? "awaiting-peer" : "stalled",
+      lastActor: relaySelfName(),
+      lastKind: kind,
+      lastPayload: handedOff ? output : `[handoff failed: ${sendResult}]
+${output}`
+    });
+  } catch (err) {
+    logger.error({ err: String(err), relayId: o.relayId }, "relay: cycle failed");
+    await upsertSession({
+      relayId: o.relayId,
+      goal: o.goal,
+      channelId: o.channelId,
+      round: o.round,
+      status: "error",
+      lastActor: relaySelfName(),
+      lastKind: "no-action",
+      lastPayload: String(err).slice(0, 500)
+    }).catch(() => {
+    });
+  }
+}
+async function startRelay(o) {
+  const relayId = `relay-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const channelId = o.channelId ?? 1;
+  await postRelayNote(channelId, `RELAY ${relayId} START (round 1) \u2014 goal: ${o.goal.slice(0, 500)}`);
+  void cycleAndForward({ relayId, round: 1, goal: o.goal, inputText: o.goal, channelId }).catch(
+    (err) => logger.error({ err: String(err), relayId }, "relay: startRelay cycle crashed")
+  );
+  return relayId;
+}
+async function closeRelay(relayId, payload) {
+  const [existing] = await db.select().from(relaySessionsTable).where(eq(relaySessionsTable.relayId, relayId)).limit(1);
+  if (!existing) return;
+  await db.update(relaySessionsTable).set({ status: "done", lastKind: "done", lastActor: relayPeerName(), lastPayload: payload.slice(0, 12e3), updatedAt: /* @__PURE__ */ new Date() }).where(eq(relaySessionsTable.id, existing.id));
+  await postRelayNote(existing.channelId, `RELAY ${relayId} closed by ${relayPeerName()}.`);
+}
+
+// src/routes/external.ts
 var router10 = (0, import_express10.Router)();
 var VAULT_AGENT_ID = 4;
 var COMPOSIO_AGENT_ID2 = 5;
@@ -97118,6 +97401,37 @@ ${content}` : content);
     req.log.error({ err }, "External API: twin-lessons ingest failed");
     res.status(500).json({ error: "Failed to ingest twin lessons", ingested, skipped });
   }
+});
+router10.post("/external/v1/relay", async (req, res) => {
+  if (!relayEnabled()) {
+    res.status(503).json({ error: "Relay disabled \u2014 set RELAY_ENABLED + RELAY_PEER_URL + RELAY_API_KEY." });
+    return;
+  }
+  const body = req.body ?? {};
+  const relayId = String(body["relayId"] ?? "").slice(0, 120);
+  const round = Number(body["round"]);
+  const goal = String(body["goal"] ?? "").trim();
+  const kind = String(body["kind"] ?? "turn");
+  const payload = String(body["payload"] ?? "");
+  if (!relayId || !Number.isFinite(round) || !goal && kind !== "done") {
+    res.status(400).json({ error: "relayId, round and goal are required" });
+    return;
+  }
+  if (kind === "done" || kind === "closed") {
+    await closeRelay(relayId, payload).catch((err) => req.log.error({ err }, "relay: close failed"));
+    res.status(200).json({ status: "closed" });
+    return;
+  }
+  const [existing] = await db.select().from(relaySessionsTable).where(eq(relaySessionsTable.relayId, relayId)).limit(1);
+  if (existing && round <= existing.round) {
+    res.status(200).json({ status: "duplicate", round: existing.round });
+    return;
+  }
+  const channelId = existing?.channelId ?? DEFAULT_CHANNEL_ID3;
+  res.status(202).json({ status: "accepted", relayId, round });
+  void cycleAndForward({ relayId, round, goal, inputText: payload, channelId }).catch(
+    (err) => req.log.error({ err, relayId }, "relay: inbound cycle crashed")
+  );
 });
 function parseVapiToolCalls(body) {
   const message = body?.message;
@@ -97768,33 +98082,83 @@ router17.post("/world/reset", cycleAuth, async (req, res) => {
 });
 var world_default = router17;
 
-// src/routes/index.ts
+// src/routes/relay.ts
+var import_express18 = __toESM(require_express2(), 1);
+init_src();
+init_drizzle_orm();
 var router18 = (0, import_express18.Router)();
-router18.use(health_default);
-router18.use(auth_default);
-router18.use(external_default);
-router18.use(world_default);
-router18.use(uploads_default);
-router18.use("/agents", requireOperator, agents_default);
-router18.use("/channels", requireOperator, channels_default);
-router18.use("/tasks", requireOperator, tasks_default);
-router18.use(requireOperator, telemetry_default);
-router18.use("/swarm", requireOperator, swarm_default);
-router18.use(requireOperator, commands_default);
-router18.use(requireOperator, steel_default);
-router18.use(requireOperator, ai_default);
-router18.use(requireOperator, integrations_default);
-router18.use(requireOperator, selfCheck_default);
-router18.use(requireOperator, vault_default);
-router18.use(requireOperator, social_default);
-var routes_default = router18;
+router18.post("/relay", async (req, res) => {
+  if (!relayEnabled()) {
+    res.status(503).json({ error: "Relay disabled \u2014 set RELAY_ENABLED + RELAY_PEER_URL + RELAY_API_KEY." });
+    return;
+  }
+  if (relayRole() !== "primary") {
+    res.status(409).json({ error: "This swarm is not the relay PRIMARY \u2014 only the primary starts a relay." });
+    return;
+  }
+  const goal = String((req.body ?? {})["goal"] ?? "").trim();
+  if (!goal) {
+    res.status(400).json({ error: "goal is required" });
+    return;
+  }
+  const channelIdRaw = (req.body ?? {})["channelId"];
+  const channelId = Number.isFinite(Number(channelIdRaw)) ? Number(channelIdRaw) : void 0;
+  try {
+    const relayId = await startRelay({ goal, ...channelId ? { channelId } : {} });
+    res.status(201).json({ relayId, status: "started" });
+  } catch (err) {
+    req.log.error({ err }, "relay: start failed");
+    res.status(500).json({ error: "Failed to start relay" });
+  }
+});
+router18.get("/relay", async (_req, res) => {
+  const rows = await db.select().from(relaySessionsTable).orderBy(desc(relaySessionsTable.id)).limit(50);
+  res.json({
+    enabled: relayEnabled(),
+    role: relayRole(),
+    selfName: relaySelfName(),
+    peerName: relayPeerName(),
+    sessions: rows
+  });
+});
+router18.get("/relay/:id", async (req, res) => {
+  const [row] = await db.select().from(relaySessionsTable).where(eq(relaySessionsTable.relayId, String(req.params.id))).limit(1);
+  if (!row) {
+    res.status(404).json({ error: "relay session not found" });
+    return;
+  }
+  res.json({ session: row });
+});
+var relay_default = router18;
+
+// src/routes/index.ts
+var router19 = (0, import_express19.Router)();
+router19.use(health_default);
+router19.use(auth_default);
+router19.use(external_default);
+router19.use(world_default);
+router19.use(uploads_default);
+router19.use("/agents", requireOperator, agents_default);
+router19.use("/channels", requireOperator, channels_default);
+router19.use("/tasks", requireOperator, tasks_default);
+router19.use(requireOperator, telemetry_default);
+router19.use("/swarm", requireOperator, swarm_default);
+router19.use(requireOperator, commands_default);
+router19.use(requireOperator, steel_default);
+router19.use(requireOperator, ai_default);
+router19.use(requireOperator, integrations_default);
+router19.use(requireOperator, selfCheck_default);
+router19.use(requireOperator, vault_default);
+router19.use(requireOperator, social_default);
+router19.use(requireOperator, relay_default);
+var routes_default = router19;
 
 // src/app.ts
 init_logger2();
 import path2 from "path";
 import fs2 from "fs";
 import { fileURLToPath as fileURLToPath2 } from "url";
-var app = (0, import_express19.default)();
+var app = (0, import_express20.default)();
 app.use(
   (0, import_pino_http.default)({
     logger,
@@ -97819,8 +98183,8 @@ app.use(
   allowedOrigins.length ? (0, import_cors.default)({ origin: allowedOrigins, credentials: true }) : (0, import_cors.default)()
 );
 app.use((0, import_cookie_parser.default)());
-app.use(import_express19.default.json({ limit: "30mb" }));
-app.use(import_express19.default.urlencoded({ extended: true, limit: "30mb" }));
+app.use(import_express20.default.json({ limit: "30mb" }));
+app.use(import_express20.default.urlencoded({ extended: true, limit: "30mb" }));
 app.use("/api", routes_default);
 app.get("/healthz", (_req, res) => {
   res.json({ status: "ok", service: "bos-aura-api" });
@@ -97832,7 +98196,7 @@ var indexHtml = path2.join(staticPath, "index.html");
 var hasFrontend = process.env["NODE_ENV"] === "production" && fs2.existsSync(indexHtml);
 if (hasFrontend) {
   app.use(
-    import_express19.default.static(staticPath, {
+    import_express20.default.static(staticPath, {
       setHeaders: (res, filePath) => {
         if (filePath.endsWith("index.html")) {
           res.setHeader("Cache-Control", "no-cache");
