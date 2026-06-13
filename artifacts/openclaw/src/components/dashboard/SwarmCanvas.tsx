@@ -18,12 +18,13 @@ interface SwarmCanvasProps {
 }
 
 // How long after the last channel activity the swarm still counts as "being
-// talked to". lastActivity is bumped on every message insert, so this keeps the
-// cue lit for a beat after the operator speaks / a reply lands, instead of
-// flickering off the instant an agent returns to idle.
+// talked to". lastActivity is bumped on every message insert, so the cue lingers
+// a beat after the operator speaks instead of flickering off when an agent idles.
 const TALKING_WINDOW_MS = 30_000;
 
-// Minimal shape shared by local (Aura) and peer (T800) agents on the canvas.
+const OUTER_ORB = 54; // local (AURA) orb diameter, px
+const INNER_ORB = 30; // peer (T800) orb diameter, px
+
 interface CanvasAgent {
   id: number;
   name: string;
@@ -39,8 +40,8 @@ interface PeerAgentsResponse {
   agents: CanvasAgent[];
 }
 
-// Poll the OTHER swarm's agents (e.g. T800-AURA) so we can draw them as an inner
-// ring. Quiet failure: the relay route returns an empty list when off/unreachable.
+// Poll the OTHER swarm's agents (e.g. T800-AURA) for the inner ring. Quiet
+// failure: the relay route returns an empty list when off/unreachable.
 function usePeerAgents() {
   return useQuery<PeerAgentsResponse>({
     queryKey: ["relay-peer-agents"],
@@ -55,8 +56,10 @@ function usePeerAgents() {
   });
 }
 
-// A single orb (used for both rings). `orbPx` sizes the node + its echo spheres
-// so the inner (peer) ring can render smaller than the outer (local) ring.
+// A single orb, used for both rings. The inner ring passes `showLabel={false}`
+// (initials inside the orb are enough — full labels there collided with the
+// outer ring). `labelAbove` places the label radially OUTWARD (above for the top
+// half of the ring, below for the bottom) so labels never point into the centre.
 function AgentOrb({
   agent,
   x,
@@ -64,6 +67,8 @@ function AgentOrb({
   orbPx,
   talking,
   reduceMotion,
+  showLabel,
+  labelAbove,
   onClick,
 }: {
   agent: CanvasAgent;
@@ -72,16 +77,16 @@ function AgentOrb({
   orbPx: number;
   talking: boolean;
   reduceMotion: boolean;
+  showLabel: boolean;
+  labelAbove: boolean;
   onClick: () => void;
 }) {
   const view = agentState(agent.status);
   const StateIcon = view.icon;
   const animate = view.active && !reduceMotion;
-  // The orb "pings" (outer echo sphere radiates) when the swarm is being talked
-  // to, or when this specific agent is active. Reduced motion → steady ring.
   const ping = !reduceMotion && (talking || view.active);
   const echoColor = view.active || view.attention ? view.color : agent.color;
-  const fontPx = Math.round(orbPx * 0.31);
+  const fontPx = Math.round(orbPx * 0.32);
   const pingTransition: Transition = { duration: 2.2, repeat: Infinity, ease: "easeOut" };
 
   return (
@@ -90,39 +95,36 @@ function AgentOrb({
       style={{ x, y }}
       initial={{ opacity: 0, scale: 0.6 }}
       animate={{ opacity: 1, scale: 1 }}
-      whileHover={{ scale: 1.08, zIndex: 10 }}
+      whileHover={{ scale: 1.1, zIndex: 10 }}
       onClick={onClick}
       data-testid={`canvas-node-${agent.id}`}
     >
-      {/* Doubled sphere — a second concentric orb around the node. Two staggered
-          echo rings radiate outward when the swarm is being talked to (sonar
-          "ping"); otherwise a single steady faint ring so the orb reads as
-          doubled at rest. */}
+      {/* Echo "ping" rings — radiate outward while being talked to / active. */}
       {ping ? (
         <>
           <motion.div
             className="absolute left-1/2 top-1/2 rounded-full border-2 -z-10"
             style={{ width: orbPx, height: orbPx, x: "-50%", y: "-50%", borderColor: echoColor }}
             initial={{ scale: 1, opacity: 0.5 }}
-            animate={{ scale: 1.9, opacity: 0 }}
+            animate={{ scale: 1.8, opacity: 0 }}
             transition={pingTransition}
           />
           <motion.div
             className="absolute left-1/2 top-1/2 rounded-full border-2 -z-10"
             style={{ width: orbPx, height: orbPx, x: "-50%", y: "-50%", borderColor: echoColor }}
             initial={{ scale: 1, opacity: 0.5 }}
-            animate={{ scale: 1.9, opacity: 0 }}
+            animate={{ scale: 1.8, opacity: 0 }}
             transition={{ ...pingTransition, delay: 1.1 }}
           />
         </>
       ) : (
         <div
           className="absolute left-1/2 top-1/2 rounded-full border -z-10"
-          style={{ width: orbPx + 20, height: orbPx + 20, transform: "translate(-50%, -50%)", borderColor: `${echoColor}40` }}
+          style={{ width: orbPx + 14, height: orbPx + 14, transform: "translate(-50%, -50%)", borderColor: `${echoColor}33` }}
         />
       )}
 
-      {/* Ambient glow — only for active states, calmed for everyone else. */}
+      {/* Ambient glow — active states only. */}
       <motion.div
         className="absolute inset-0 rounded-full blur-md -z-10"
         style={{ backgroundColor: view.active ? view.color : agent.color }}
@@ -130,7 +132,7 @@ function AgentOrb({
         transition={animate ? { duration: 1.8, repeat: Infinity } : undefined}
       />
 
-      {/* Node body — ring colour reflects live state, not just brand colour. */}
+      {/* Node body. */}
       <div
         className="rounded-full bg-card border-2 flex items-center justify-center shadow-lg relative overflow-hidden"
         style={{ width: orbPx, height: orbPx, borderColor: view.active || view.attention ? view.color : `${agent.color}99` }}
@@ -141,14 +143,20 @@ function AgentOrb({
         </span>
       </div>
 
-      {/* Always-on label: human role + plain-English state (text + icon + colour). */}
-      <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1.5 text-center whitespace-nowrap">
-        <div className="text-[11px] font-semibold text-foreground leading-tight">{agent.role || agent.name}</div>
-        <div className="mt-0.5 inline-flex items-center gap-1 text-[10px] font-medium" style={{ color: view.color }}>
-          <StateIcon className={animate && agent.status === "executing" ? "w-3 h-3 animate-spin" : "w-3 h-3"} />
-          {view.label}
+      {showLabel && (
+        <div
+          className={
+            "absolute left-1/2 -translate-x-1/2 text-center whitespace-nowrap " +
+            (labelAbove ? "bottom-full mb-1.5" : "top-full mt-1.5")
+          }
+        >
+          <div className="text-[11px] font-semibold text-foreground leading-tight">{agent.name}</div>
+          <div className="mt-0.5 inline-flex items-center gap-1 text-[10px] font-medium" style={{ color: view.color }}>
+            <StateIcon className={animate && agent.status === "executing" ? "w-3 h-3 animate-spin" : "w-3 h-3"} />
+            {view.label}
+          </div>
         </div>
-      </div>
+      )}
     </motion.div>
   );
 }
@@ -177,9 +185,6 @@ export function SwarmCanvas({ onAgentClick }: SwarmCanvasProps) {
   const peerName = peer?.peerName || "T800-AURA";
   const hasPeer = peerAgents.length > 0;
 
-  // "Being talked to" = the swarm is actively working OR a channel saw activity
-  // (a message in/out) within the talking window. Re-evaluated on every poll
-  // tick (3–4s), which is well inside the 30s window.
   const working = !(status?.paused ?? false) && ((status?.activeAgents ?? 0) > 0 || (status?.runningTasks ?? 0) > 0);
   const lastActivityMs = useMemo(() => {
     let newest = 0;
@@ -191,11 +196,9 @@ export function SwarmCanvas({ onAgentClick }: SwarmCanvasProps) {
   }, [channels]);
   const recentlyEngaged = lastActivityMs > 0 && Date.now() - lastActivityMs < TALKING_WINDOW_MS;
   const localTalking = working || recentlyEngaged;
-  // The peer "ring" is talking when any of its agents is active.
   const peerTalking = peerAgents.some((a) => agentState(a.status).active);
   const talking = localTalking || peerTalking;
 
-  // Measure the actual container so the layout is responsive.
   const containerRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
   useEffect(() => {
@@ -208,18 +211,21 @@ export function SwarmCanvas({ onAgentClick }: SwarmCanvasProps) {
     return () => ro.disconnect();
   }, []);
 
-  // Outer ring (local / Aura) radius scaled to container WIDTH; inner ring
-  // (peer / T800) sits at ~half that, with a floor so its orbs never collide
-  // with the centre.
+  // Outer ring radius is sized so an orb (+half) never clips the container edge,
+  // even on a narrow phone. Inner ring keeps a guaranteed gap from the outer so
+  // the two rings stay visually distinct and never overlap.
   const radius = useMemo(() => {
     const w = size.w || 600;
-    return Math.min(240, Math.max(120, Math.round(w / 2 - 80)));
+    return Math.max(92, Math.min(230, Math.round(w / 2) - 40));
   }, [size]);
-  const innerRadius = Math.max(64, Math.round(radius * 0.52));
+  const innerRadius = useMemo(
+    () => Math.max(46, Math.min(Math.round(radius * 0.5), radius - 58)),
+    [radius],
+  );
 
-  // Reserve the outer ring's natural height (top+bottom orbs + label) and scroll
-  // if the viewport is shorter, so spacing never compresses.
-  const graphHeight = 2 * radius + 150;
+  // Reserve enough height for top+bottom orbs plus their (outward) labels; the
+  // canvas scrolls if the viewport is shorter, so spacing never compresses.
+  const graphHeight = 2 * radius + 110;
 
   const outerPositions = useMemo(() => ringPositions(agents as CanvasAgent[], radius, false), [agents, radius]);
   const innerPositions = useMemo(() => ringPositions(peerAgents, innerRadius, true), [peerAgents, innerRadius]);
@@ -228,8 +234,7 @@ export function SwarmCanvas({ onAgentClick }: SwarmCanvasProps) {
   const vbH = Math.max(size.h || 0, graphHeight);
 
   return (
-    <div ref={containerRef} className="w-full h-full relative overflow-y-auto bg-background/50">
-      {/* Whole-canvas "being talked to" backdrop. */}
+    <div ref={containerRef} className="w-full h-full relative overflow-y-auto overflow-x-hidden bg-background/50">
       <AnimatePresence>
         {talking && (
           <motion.div
@@ -244,48 +249,46 @@ export function SwarmCanvas({ onAgentClick }: SwarmCanvasProps) {
         )}
       </AnimatePresence>
 
-      {/* Floating status badge — explicit words, not just motion. */}
-      <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 pointer-events-none">
+      {/* Status badge — top-left so it never sits over the legend on narrow screens. */}
+      <div className="absolute top-3 left-3 z-20 pointer-events-none max-w-[60%]">
         <div
           className={
-            "flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold backdrop-blur transition-colors " +
+            "inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold backdrop-blur transition-colors " +
             (talking ? "border-[#00e5ff]/50 bg-[#00e5ff]/10 text-[#00e5ff]" : "border-card-border bg-card/60 text-muted-foreground")
           }
           data-testid="swarm-talking-badge"
           data-talking={talking ? "true" : "false"}
         >
-          <span className="relative flex h-2.5 w-2.5 items-center justify-center">
+          <span className="relative flex h-2.5 w-2.5 items-center justify-center shrink-0">
             {talking && !reduceMotion && (
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#00e5ff] opacity-75" />
             )}
             <span className={"relative inline-flex h-2.5 w-2.5 rounded-full " + (talking ? "bg-[#00e5ff]" : "bg-muted-foreground")} />
           </span>
-          {talking ? (
-            <span className="inline-flex items-center gap-1.5">
-              <Radio className="w-3.5 h-3.5" />
-              {peerTalking && !localTalking
-                ? `${peerName} is talking`
+          <span className="inline-flex items-center gap-1.5 truncate">
+            {talking && <Radio className="w-3.5 h-3.5 shrink-0" />}
+            {!talking
+              ? "Swarm idle"
+              : peerTalking && !localTalking
+                ? `${peerName} working`
                 : localTalking && peerTalking
                   ? `AURA ⇄ ${peerName}`
-                  : "Swarm is engaged — being talked to"}
-            </span>
-          ) : (
-            "Swarm idle"
-          )}
+                  : "Being talked to"}
+          </span>
         </div>
       </div>
 
-      {/* Legend: which ring is which (only when the peer ring is present). */}
+      {/* Legend — only when the peer ring is present. */}
       {hasPeer && (
         <div className="absolute top-3 right-3 z-20 pointer-events-none rounded-lg border border-card-border bg-card/70 backdrop-blur px-2.5 py-1.5 text-[10px] font-medium leading-tight">
-          <div className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full border-2 border-[#00e5ff]" /> AURA · outer</div>
-          <div className="mt-0.5 flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-[#a855f7]" /> {peerName} · inner</div>
+          <div className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full border-2 border-[#00e5ff] shrink-0" /> AURA · outer</div>
+          <div className="mt-1 flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-[#a855f7] shrink-0" /> {peerName} · inner</div>
         </div>
       )}
 
-      <div className="relative w-full h-full flex items-center justify-center" style={{ minHeight: graphHeight }}>
-        {/* Connections (SVG) — outer-ring agents actively working. */}
+      <div className="relative w-full flex items-center justify-center" style={{ minHeight: graphHeight, height: "100%" }}>
         <svg className="absolute inset-0 w-full h-full pointer-events-none" viewBox={`${-vbW / 2} ${-vbH / 2} ${vbW} ${vbH}`} preserveAspectRatio="none">
+          {/* Lines between actively-working outer agents. */}
           {outerPositions.map((pos1, i) =>
             outerPositions.slice(i + 1).map((pos2) => {
               const a1 = agents.find((a) => a.id === pos1.id);
@@ -304,8 +307,7 @@ export function SwarmCanvas({ onAgentClick }: SwarmCanvasProps) {
               );
             })
           )}
-          {/* Relay link: a pulsing spoke from centre to each peer (inner) orb when
-              the relay is engaged, so "who is talking to who" reads at a glance. */}
+          {/* Relay spokes: centre → each peer orb when engaged (who's talking to who). */}
           {hasPeer && talking && innerPositions.map((p) => (
             <motion.line
               key={`relay-${p.id}`}
@@ -318,7 +320,7 @@ export function SwarmCanvas({ onAgentClick }: SwarmCanvasProps) {
           ))}
         </svg>
 
-        {/* Inner ring — peer (T800) agents. Rendered first so outer orbs/labels win z-order. */}
+        {/* Inner ring — peer (T800) agents: initials only, no labels (kept the centre clean). */}
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           {peerAgents.map((agent) => {
             const pos = innerPositions.find((p) => p.id === agent.id) || { x: 0, y: 0 };
@@ -328,16 +330,18 @@ export function SwarmCanvas({ onAgentClick }: SwarmCanvasProps) {
                 agent={agent}
                 x={pos.x}
                 y={pos.y}
-                orbPx={48}
+                orbPx={INNER_ORB}
                 talking={peerTalking}
                 reduceMotion={reduceMotion}
+                showLabel={false}
+                labelAbove={false}
                 onClick={() => { /* peer agents are read-only here */ }}
               />
             );
           })}
         </div>
 
-        {/* Outer ring — local (Aura) agents. */}
+        {/* Outer ring — local (AURA) agents, with labels placed radially outward. */}
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           {(agents as CanvasAgent[]).map((agent) => {
             const pos = outerPositions.find((p) => p.id === agent.id) || { x: 0, y: 0 };
@@ -347,9 +351,11 @@ export function SwarmCanvas({ onAgentClick }: SwarmCanvasProps) {
                 agent={agent}
                 x={pos.x}
                 y={pos.y}
-                orbPx={64}
+                orbPx={OUTER_ORB}
                 talking={localTalking}
                 reduceMotion={reduceMotion}
+                showLabel
+                labelAbove={pos.y < -8}
                 onClick={() => onAgentClick(agent.id)}
               />
             );
