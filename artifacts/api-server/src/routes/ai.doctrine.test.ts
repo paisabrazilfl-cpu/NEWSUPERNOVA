@@ -477,4 +477,16 @@ describe("CODING_LIFECYCLE_DOCTRINE — hardened, non-optional engineering workf
     expect(CODING_LIFECYCLE_DOCTRINE).toContain("Execution Trace");
     expect(CODING_LIFECYCLE_DOCTRINE).toContain("Acceptance Criteria");
   });
+
+  it("teaches that a clone or a README is not a codebase — docs/scaffolds are not 'done'", () => {
+    expect(CODING_LIFECYCLE_DOCTRINE).toContain("DEFINITION OF DONE FOR CODE");
+    expect(CODING_LIFECYCLE_DOCTRINE).toContain("A CLONE OR A README IS NOT A CODEBASE");
+    const lower = CODING_LIFECYCLE_DOCTRINE.toLowerCase();
+    expect(lower).toContain("markdown");
+    expect(lower).toContain("scaffold");
+    expect(lower).toContain("not done");
+    // working code must be run/verified, not merely written or described
+    expect(lower).toContain("real implementation");
+    expect(lower).toContain("unverified");
+  });
 });

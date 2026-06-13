@@ -204,6 +204,15 @@ deliverable exists and is complete. A status report, a plan, a partial answer,
 or "we couldn't" without exhausting the swarm's tools is NOT a solution.
 Judge ONLY on evidence present in the briefing/results. Be strict: when in
 doubt, the goal is NOT solved.
+CODE GOALS NEED WORKING CODE, NOT DOCS: when the operator asked for software, an
+app, a feature, a script, or a fix, the goal is solved ONLY if the briefing
+contains the actual working code AND evidence it runs — real code-execution
+output, a passing test, or verified behavior. A cloned/forked repository, a
+directory listing, a README or any markdown/.md write-up, an architecture
+description, or an empty scaffold with no functioning code does NOT solve a code
+goal — mark it NOT solved. "I created the files / wrote the docs / set up the
+repo" without code that demonstrably works is an automatic FAIL; a clone plus a
+README is not a codebase.
 A briefing that bounces the work back to the operator — asking what they want,
 asking them to confirm, or asking for an input they ALREADY provided — when a
 connected tool or named account could have done the task is an automatic FAIL:

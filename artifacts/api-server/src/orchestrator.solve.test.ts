@@ -48,6 +48,14 @@ describe("SOLUTION_GATE_DOCTRINE — solves means solves", () => {
     expect(SOLUTION_GATE_DOCTRINE).toContain("CANNOT see the application");
     expect(SOLUTION_GATE_DOCTRINE.toLowerCase()).toContain("agent to clone, open, inspect, build, or test local files");
   });
+
+  it("fails a code goal that produced only a clone/README/scaffold instead of working code", () => {
+    expect(SOLUTION_GATE_DOCTRINE).toContain("CODE GOALS NEED WORKING CODE, NOT DOCS");
+    const lower = SOLUTION_GATE_DOCTRINE.toLowerCase();
+    expect(lower).toContain("is not a codebase");
+    expect(lower).toContain("evidence it runs");
+    expect(lower).toContain("automatic fail");
+  });
 });
 
 describe("directiveIsExecutable — code-level guard against impossible gate directives", () => {
