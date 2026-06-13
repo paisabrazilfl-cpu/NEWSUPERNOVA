@@ -2,7 +2,7 @@ import { Router } from "express";
 import { db } from "@workspace/db";
 import { agentsTable, messagesTable, attachmentsTable } from "@workspace/db";
 import { eq, and, inArray, desc } from "drizzle-orm";
-import { heliconeHeaders, integrationStatus, llmFetch, llmMaxTokens, providerLabel } from "../lib/integrations";
+import { integrationStatus, llmFetch, llmMaxTokens, providerLabel } from "../lib/integrations";
 import { listSecretNames } from "../lib/vault";
 import { buildCapabilityCard, getToolNamesForAgent } from "../tools";
 import { orchestrateGoal } from "../orchestrator";
@@ -372,9 +372,9 @@ export function rescueRawToolCalls(text: string): { clean: string; calls: Rescue
 
 // ABBY must run on an orchestrator-grade model: Kimi K2.6 (fast NIM engine,
 // live-verified tool calling), NVIDIA Nemotron, Grok (x-ai/), or GLM-5.1
-// (z-ai/). Anything else is forced back to the default.
-// When NVIDIA_API_KEY is absent, chatRequestFor() transparently remaps the NIM
-// id to its OpenRouter fallback at request time — never a dead model.
+// (z-ai/). Anything else is forced back to the default. NVIDIA NIM is the only
+// provider; if NVIDIA_API_KEY is absent, chatRequestFor() throws rather than
+// routing to any other service.
 export function resolveModel(agentId: number, agentModel: string | null | undefined, override: unknown): string {
   const candidate = (typeof override === "string" && override.trim())
     ? override
@@ -393,23 +393,8 @@ export function resolveModel(agentId: number, agentModel: string | null | undefi
   return candidate;
 }
 
-export function openrouterHeaders() {
-  // NIM-only deployment: this helper now signs requests for NVIDIA NIM. Kept
-  // under the old name so existing call-sites need no change.
-  const key = process.env["NVIDIA_API_KEY"];
-  if (!key) throw new Error("NVIDIA_API_KEY is not set");
-  return {
-    "Authorization": `Bearer ${key}`,
-    "Content-Type": "application/json",
-    "X-Title": "OPENCLAW OMEGA",
-    // Adds Helicone-Auth (and logging hints) only when Helicone is configured;
-    // otherwise this spreads nothing.
-    ...heliconeHeaders(),
-  };
-}
-
-// NVIDIA NIM models the swarm can run. The swarm runs entirely on NVIDIA NIM
-// (OpenRouter removed), so this curated list IS the model catalog. Live-verified
+// NVIDIA NIM models the swarm can run. The swarm runs entirely on NVIDIA NIM,
+// so this curated list IS the model catalog. Live-verified
 // against integrate.api.nvidia.com on 2026-06-10: completion + tools + json mode.
 const NIM_FEATURED_MODELS = [
   { id: "moonshotai/kimi-k2.6", name: "Moonshot Kimi K2.6 (NIM, fast)", context_length: 262144 },
@@ -819,7 +804,7 @@ router.post("/ai/chat", async (req, res) => {
         agentColor: agent.color,
         content: storedResponse,
         messageType: "agent",
-        metadata: JSON.stringify({ model, generatedBy: "openrouter" }),
+        metadata: JSON.stringify({ model, generatedBy: "nvidia-nim" }),
       });
     }
 
@@ -870,8 +855,8 @@ router.post("/ai/complete", async (req, res) => {
     const data = await r.json() as { choices?: { message?: { content?: string } }[] };
     const content = data.choices?.[0]?.message?.content ?? "";
     // Report the engine that ACTUALLY served the request — llmFetch may have
-    // rotated keys, failed over to the fast NIM model, or reroute to OpenRouter,
-    // and the operator needs ground truth, not the requested model id.
+    // rotated keys or failed over to the fast NIM model, and the operator needs
+    // ground truth, not the requested model id.
     res.json({ content, model: llmReq.model, provider: llmReq.provider, requestedModel: model, agentId: resolvedAgentId });
   } catch (err) {
     req.log.error({ err }, "AI complete error");

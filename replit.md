@@ -66,10 +66,10 @@ A Discord-style multi-agent AI orchestrator dashboard for monitoring and directi
 - Do not ask to fix things that can be self-fixed — self-reflect, plan, execute, verify
 - Keep the cyberpunk dark aesthetic: zinc-950 background, neon cyan/purple accents
 
-## OpenRouter AI Integration
+## NVIDIA NIM AI Integration
 
-- `OPENROUTER_API_KEY` — stored as a shared env var
-- Base URL: `https://openrouter.ai/api/v1` — OpenAI-compatible with streaming SSE
+- `NVIDIA_API_KEY` — the swarm's ONLY LLM provider (build.nvidia.com). No fallback provider; pool more keys with `NVIDIA_API_KEY_2`, `_3`, …
+- Base URL: `https://integrate.api.nvidia.com/v1` — OpenAI-compatible with streaming SSE
 - Backend routes: `POST /api/ai/chat` (SSE streaming), `POST /api/ai/complete` (non-streaming), `GET /api/ai/models`
 - Each agent has a cyberpunk persona system prompt in `artifacts/api-server/src/routes/ai.ts`
 - Client hook: `artifacts/openclaw/src/hooks/useAiStream.ts` — fetch-based SSE reader with abort, clear, token accumulation
@@ -77,15 +77,15 @@ A Discord-style multi-agent AI orchestrator dashboard for monitoring and directi
 - Streaming tokens appear live in a banner above the input (agent-colored neon border + cursor blink)
 - On completion, full response is saved to the `messages` table and ChatStream picks it up via polling
 
-**Agent → Model mapping:**
+**Agent → Model mapping** (seed defaults in `artifacts/api-server/src/migrate.ts`; operator can override per-agent in the UI):
 | Agent | Model |
 |-------|-------|
-| ABBY | `x-ai/grok-4.3` |
-| FORGE | `qwen/qwen3.7-plus` |
-| CRAWLER | `x-ai/grok-build-0.1` |
-| VAULT | `qwen/qwen3.7-max` |
-| WIRE | `x-ai/grok-4.20` |
-| MR.NICE | `qwen/qwen3.6-plus` |
+| ABBY | `moonshotai/kimi-k2.6` |
+| CLAW-1 (Code Executor) | `qwen/qwen3.5-397b-a17b` |
+| CLAW-2 (Browser Agent) | `deepseek-ai/deepseek-v4-flash` |
+| CLAW-3 (Memory & RAG) | `qwen/qwen3.5-122b-a10b` |
+| CLAW-4 (API Connector) | `nvidia/nemotron-3-super-120b-a12b` |
+| MR.NICE (Social Agent) | `qwen/qwen3.5-122b-a10b` |
 
 ## Steel Dev Browser API
 

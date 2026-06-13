@@ -1,11 +1,11 @@
 /**
- * NVIDIA NIM provider routing — the contract that makes the 2026-06-10 model
- * migration safe: NIM models route to integrate.api.nvidia.com when
- * NVIDIA_API_KEY is set, and transparently remap to their legacy OpenRouter
- * equivalents when it is not (zero loss of function on a key-less deploy).
+ * NVIDIA NIM provider routing — the contract for the swarm's only LLM provider:
+ * every model id routes to integrate.api.nvidia.com when NVIDIA_API_KEY is set,
+ * and the request builder throws when it is not. These tests also guard that a
+ * stray OPENROUTER_API_KEY is NEVER used — OpenRouter has been fully removed.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { isNimModel, nimConfigured, chatRequestFor, openRouterRequestFor, NIM_MODEL_FALLBACKS, NIM_MODEL_BANS, reportNimHttpFailure, resetNimHealth, nimHealthy, nimDegraded, reportNimDegraded, nimKeyPool, advanceNimKey, llmFetch, modelStalled } from "./integrations";
+import { isNimModel, nimConfigured, chatRequestFor, nimEscapeRequestFor, NIM_MODEL_FALLBACKS, NIM_MODEL_BANS, reportNimHttpFailure, resetNimHealth, nimHealthy, nimDegraded, reportNimDegraded, nimKeyPool, advanceNimKey, llmFetch, modelStalled } from "./integrations";
 
 const ENV_KEYS = ["NVIDIA_API_KEY", "NVIDIA_API_KEY_2", "OPENROUTER_API_KEY", "HELICONE_API_KEY", "NIM_ENABLE_THINKING", "LLM_TIMEOUT_MS"] as const;
 const saved: Record<string, string | undefined> = {};
@@ -158,10 +158,10 @@ describe("NIM degraded breaker — a VALID key that is throttled/overloaded is m
     expect(chatRequestFor("z-ai/glm-5.1").provider).toBe("nvidia-nim");
   });
 
-  it("openRouterRequestFor (the escape builder) now builds a NIM request — never a removed provider", () => {
+  it("nimEscapeRequestFor (the escape builder) builds a NIM request — never a removed provider", () => {
     process.env["NVIDIA_API_KEY"] = "nvapi-healthy";
     process.env["OPENROUTER_API_KEY"] = "or-test"; // present but must never be used
-    const r = openRouterRequestFor("nvidia/nemotron-3-super-120b-a12b");
+    const r = nimEscapeRequestFor("nvidia/nemotron-3-super-120b-a12b");
     expect(r.provider).toBe("nvidia-nim");
     expect(r.url).toContain("nvidia.com");
     expect(r.model).toBe("nvidia/nemotron-3-super-120b-a12b");

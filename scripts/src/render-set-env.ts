@@ -8,10 +8,10 @@
  *
  * The ONLY hard requirement is RENDER_API_KEY. Every integration key is
  * push-if-present, so the script never fails just because one isn't set locally
- * (e.g. you're only rotating OPENROUTER_API_KEY).
+ * (e.g. you're only rotating NVIDIA_API_KEY).
  *
  * Usage:
- *   RENDER_API_KEY=<key> OPENROUTER_API_KEY=<key> [GEMINI_API_KEY=… …] \
+ *   RENDER_API_KEY=<key> NVIDIA_API_KEY=<key> [GEMINI_API_KEY=… …] \
  *     pnpm --filter @workspace/scripts run render:set-env
  *
  * Optional: RENDER_SERVICE_ID to target a different service.
@@ -23,7 +23,6 @@ const RENDER_API = "https://api.render.com/v1";
 // Every env var the app understands. Pushed only when present locally; anything
 // not set locally keeps its current value on Render (never wiped).
 const MANAGED_KEYS = [
-  "OPENROUTER_API_KEY",
   "NVIDIA_API_KEY",
   "STEEL_API_KEY",
   "FIRECRAWL_API_KEY",
@@ -99,7 +98,7 @@ async function main() {
   }
   if (!pushed.length) {
     throw new Error(
-      "No managed keys present in the local environment to push. Set at least one (e.g. OPENROUTER_API_KEY) alongside RENDER_API_KEY.",
+      "No managed keys present in the local environment to push. Set at least one (e.g. NVIDIA_API_KEY) alongside RENDER_API_KEY.",
     );
   }
 

@@ -6,7 +6,7 @@
  * feed, that is unfakeable proof of real agentic tool execution. If it
  * hallucinates, the hash is wrong → FAIL.
  *
- * Needs a running server with a tool-capable LLM configured (OPENROUTER_API_KEY).
+ * Needs a running server with a tool-capable LLM configured (NVIDIA_API_KEY).
  *   BASE_URL  (default http://localhost:3001)
  */
 import { createHash } from "node:crypto";

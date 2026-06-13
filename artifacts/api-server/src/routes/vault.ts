@@ -77,8 +77,9 @@ router.put("/vault", async (req, res) => {
     // …) turn On without waiting for a server restart. Boot still re-loads the vault.
     process.env[name] = value;
     // A rotated NVIDIA key must take effect immediately — the NIM breaker may
-    // still be tripped by the OLD key's 401/403s, which would leave the swarm
-    // on OpenRouter for the rest of the cooldown despite a now-valid key.
+    // still be tripped by the OLD key's 401/403s, which (since NIM is the only
+    // provider) would keep the swarm failing for the rest of the cooldown
+    // despite a now-valid key.
     if (name === "NVIDIA_API_KEY") resetNimHealth();
     res.status(200).json(fmt(row));
   } catch (err) {

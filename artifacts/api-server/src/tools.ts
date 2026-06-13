@@ -1,7 +1,7 @@
 /**
  * OPENCLAW OMEGA — Agent Tool Registry
  *
- * Real, executable tools the autonomous CLAWs can call via OpenRouter native
+ * Real, executable tools the autonomous CLAWs can call via NVIDIA NIM native
  * function-calling. Each tool has a JSON-schema declaration (sent to the model)
  * and a `run` implementation (executed server-side). Tools return a plain string
  * that is fed back to the model as the tool result.
@@ -2042,7 +2042,7 @@ export function buildCapabilityCard(agentId: number): string {
   return card;
 }
 
-/** OpenAI/OpenRouter tool schema for the given agent's allowed tools. */
+/** OpenAI-compatible (NVIDIA NIM) tool schema for the given agent's allowed tools. */
 export function getOpenAiToolsForAgent(agentId: number): Array<Record<string, unknown>> {
   return getToolNamesForAgent(agentId)
     .map((n) => TOOL_REGISTRY[n])

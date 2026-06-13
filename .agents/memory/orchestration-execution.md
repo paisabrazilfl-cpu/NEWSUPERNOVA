@@ -7,7 +7,7 @@ description: How real agent orchestration runs and the invariant that keeps dash
 
 Agent commands execute **in-process, fire-and-forget**: `POST /api/commands` returns
 immediately and a background `executeAgentCommand` / `orchestrateGoal` does the real
-work (OpenRouter model call, optional Steel scrape, DB writes), surfaced via the
+work (NVIDIA NIM model call, optional Steel scrape, DB writes), surfaced via the
 dashboard's polling.
 
 ## Invariant: boot-time reconciliation

@@ -57,8 +57,8 @@ export function heliconeHeaders(extra?: Record<string, string>): Record<string, 
 // OpenAI-compatible chat endpoint for NVIDIA-hosted models (Nemotron, DeepSeek,
 // Qwen 3.5, Mistral NIM builds, …). Activated by NVIDIA_API_KEY — store it in
 // the vault (loadVaultIntoEnv puts it in process.env at boot) or set it as an
-// env var. OpenRouter has been removed: every model id resolves to NVIDIA NIM —
-// there is no non-NIM provider or fallback.
+// env var. Every model id resolves to NVIDIA NIM — there is no other LLM
+// provider or fallback.
 
 const NVIDIA_NIM_BASE = "https://integrate.api.nvidia.com/v1";
 const HELICONE_GATEWAY = "https://gateway.helicone.ai/v1";
@@ -191,10 +191,9 @@ export function reportModelStall(model: string): void {
   );
 }
 
-// Model-id prefixes served by NVIDIA NIM rather than OpenRouter. Note the
-// deliberate asymmetry with OpenRouter naming: NIM uses `mistralai/` + `meta/`,
-// OpenRouter uses `mistral/` + `meta-llama/`; NIM Qwen ids are `qwen/qwen3.5-*`
-// while the legacy OpenRouter Qwens are `qwen/qwen3.6-*` / `qwen/qwen3.7-*`.
+// Model-id prefixes served by NVIDIA NIM. NIM uses `mistralai/` + `meta/` and
+// `qwen/qwen3.5-*`; any id outside these prefixes is treated as a non-catalog id
+// and remapped to a real NIM model in nimRequestFor.
 const NIM_PREFIXES = [
   "nvidia/",
   "deepseek-ai/",
@@ -217,9 +216,9 @@ export function isNimModel(model: string): boolean {
 }
 
 // NIM-internal fallback for each swarm model: a sibling NIM model to use when
-// the primary is throttled/5xx. OpenRouter has been removed, so every fallback
-// is itself a NIM id served from integrate.api.nvidia.com. NIM_FAST_MODEL is the
-// last-resort fast engine inside the gauntlet.
+// the primary is throttled/5xx. Every fallback is itself a NIM id served from
+// integrate.api.nvidia.com. NIM_FAST_MODEL is the last-resort fast engine inside
+// the gauntlet.
 export const NIM_MODEL_FALLBACKS: Record<string, string> = {
   "nvidia/nemotron-3-super-120b-a12b": "qwen/qwen3.5-122b-a10b",
   "deepseek-ai/deepseek-v4-flash": "qwen/qwen3.5-122b-a10b",
@@ -264,19 +263,17 @@ export function llmMaxTokens(): number {
 
 // NOTE deliberately NO reverse legacy→NIM upgrade at request time. There used
 // to be one (built from NIM_MODEL_FALLBACKS) and it broke the safety net live
-// on 2026-06-10: every fallback target (x-ai/grok-4.3 & co.) got "upgraded"
-// straight back into the SAME overloaded NIM model it was escaping from, so
-// the OpenRouter fallback was unreachable whenever NIM was configured —
-// healthy-but-throttled NIM left the swarm with no working model at all.
-// Stale legacy ids in the DB are handled once at boot (AGENT_MODEL_UPGRADES in
-// migrate.ts); fallback ids must always resolve to their REAL provider.
+// on 2026-06-10: every fallback target got "upgraded" straight back into the
+// SAME overloaded NIM model it was escaping from, leaving a healthy-but-throttled
+// NIM with no working failover at all. Stale legacy ids in the DB are handled
+// once at boot (AGENT_MODEL_UPGRADES in migrate.ts).
 
 export interface LlmChatRequest {
   url: string;
   headers: Record<string, string>;
   /** The model id to put in the request body (may be remapped for fallback). */
   model: string;
-  provider: "nvidia-nim" | "openrouter";
+  provider: "nvidia-nim";
   /**
    * Provider-specific body defaults (sampling, template kwargs). Spread these
    * FIRST in the request body so call-site values win on key collisions.
@@ -287,8 +284,8 @@ export interface LlmChatRequest {
 /**
  * Resolve the chat-completions endpoint, auth headers, and effective model id
  * for a given model. Every model routes to NVIDIA NIM (integrate.api.nvidia.com),
- * optionally through the Helicone gateway. OpenRouter has been removed — there is
- * no non-NIM provider here. Throws only when NVIDIA_API_KEY is missing entirely.
+ * optionally through the Helicone gateway — NIM is the only LLM provider. Throws
+ * only when NVIDIA_API_KEY is missing entirely.
  */
 export function chatRequestFor(model: string): LlmChatRequest {
   return nimRequestFor(model);
@@ -298,12 +295,7 @@ export function chatRequestFor(model: string): LlmChatRequest {
  * Build a NVIDIA NIM request for a model. NIM model ids go through as-is; any
  * non-NIM id (a legacy fallback alias, or a stale DB value) is remapped to its
  * NIM equivalent so a request is ALWAYS a valid NIM call. This is the single
- * request builder for the swarm now that OpenRouter is gone.
- *
- * Note: still exported as `openRouterRequestFor` for call-site compatibility —
- * llmFetch uses it as the "guaranteed escape" builder, which now means a NIM
- * request that bypasses the health gate (so a degraded-but-keyed NIM still gets
- * one direct attempt before the failure is surfaced).
+ * request builder for the swarm.
  */
 function nimRequestFor(model: string, opts?: { bypassHealthGate?: boolean }): LlmChatRequest {
   if (!nimConfigured()) throw new Error("NVIDIA_API_KEY is not set");
@@ -342,12 +334,12 @@ function nimRequestFor(model: string, opts?: { bypassHealthGate?: boolean }): Ll
 }
 
 /**
- * Guaranteed-request builder used by llmFetch as the "escape" path. With
- * OpenRouter removed this is simply a NIM request for the model (remapping any
- * non-NIM id to its NIM equivalent). Kept under the old name so the many
- * call-sites in llmFetch / orchestrator / routes need no change.
+ * Guaranteed-request builder used by llmFetch as the "escape" path: a NIM
+ * request for the model that bypasses the health gate (remapping any non-NIM id
+ * to its NIM equivalent), so a degraded-but-keyed NIM still gets one direct
+ * attempt before the failure is surfaced.
  */
-export function openRouterRequestFor(model: string): LlmChatRequest {
+export function nimEscapeRequestFor(model: string): LlmChatRequest {
   return nimRequestFor(model, { bypassHealthGate: true });
 }
 
@@ -421,11 +413,12 @@ export async function llmFetch(
       r = await timedFetch(req, payload);
     } catch (err2) {
       // The FAST model stalled too — NIM is drowning across the board. Mark it
-      // degraded and take the guaranteed OpenRouter escape instead of throwing
-      // (observed live 2026-06-10: ultra stalled AND kimi 429'd → total outage).
-      logger.warn({ err: String(err2) }, "Fast NIM model also stalled — escaping to OpenRouter.");
+      // degraded and take the guaranteed escape (a health-gate-bypassing NIM
+      // request) instead of throwing (observed live 2026-06-10: ultra stalled
+      // AND kimi 429'd → total outage).
+      logger.warn({ err: String(err2) }, "Fast NIM model also stalled — taking the guaranteed NIM escape.");
       reportNimDegraded("stall on primary and fast NIM models");
-      req = openRouterRequestFor(model);
+      req = nimEscapeRequestFor(model);
       r = await timedFetch(req, payload);
     }
   }
@@ -444,10 +437,12 @@ export async function llmFetch(
     r = await timedFetch(req, payload);
   }
 
-  // Every pooled key rejected → trip the breaker and reroute to OpenRouter.
+  // Every pooled key rejected → trip the breaker and surface the auth failure.
+  // There is no other provider, so this is one last direct NIM attempt; the
+  // tripped breaker makes the next calls fail fast until the key is fixed.
   if (!r.ok && req.provider === "nvidia-nim" && (r.status === 401 || r.status === 403)) {
     reportNimHttpFailure(r.status);
-    req = chatRequestFor(model); // breaker tripped → resolves to OpenRouter now
+    req = chatRequestFor(model);
     r = await timedFetch(req, payload);
   }
 
@@ -470,15 +465,12 @@ export async function llmFetch(
   }
 
   // FINAL ESCAPE — the whole NIM gauntlet (key rotation, backoff, fast-model
-  // retry) failed and the key is VALID (429/5xx, not auth). Without this the
-  // call surfaced the failure and — because a healthy-but-throttled NIM still
-  // captured every model id — the swarm had no working provider at all
-  // (observed live 2026-06-10 as ABBY/the whole system unresponsive). Mark NIM
-  // degraded so the next calls skip the gauntlet entirely, and serve THIS call
-  // from OpenRouter.
+  // retry) failed and the key is VALID (429/5xx, not auth). Mark NIM degraded so
+  // the next calls skip the gauntlet entirely, and give THIS call one last
+  // direct, health-gate-bypassing NIM attempt before the failure is surfaced.
   if (!r.ok && req.provider === "nvidia-nim") {
     reportNimDegraded(`HTTP ${r.status} after key rotation, backoff, and fast-model retry`);
-    req = openRouterRequestFor(model);
+    req = nimEscapeRequestFor(model);
     r = await timedFetch(req, payload);
   }
 
@@ -486,8 +478,8 @@ export async function llmFetch(
 }
 
 /** Human label for an LlmChatRequest's provider — for error messages the operator sees. */
-export function providerLabel(req: LlmChatRequest): string {
-  return req.provider === "nvidia-nim" ? "NVIDIA NIM" : "OpenRouter";
+export function providerLabel(_req: LlmChatRequest): string {
+  return "NVIDIA NIM";
 }
 
 // ─── Tavily web search ───────────────────────────────────────────────────────

@@ -5,7 +5,7 @@ description: Security posture for the autonomous CLAW agent tools (http_request,
 
 # Autonomous agent tool security
 
-The CLAW agents call real server-side tools via OpenRouter function-calling. Two
+The CLAW agents call real server-side tools via NVIDIA NIM function-calling. Two
 tools carry real risk and must keep their guards:
 
 - **http_request** — runs outbound from the server runtime, so it needs an SSRF

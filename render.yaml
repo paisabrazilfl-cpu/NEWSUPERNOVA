@@ -56,8 +56,6 @@ services:
       # Secret: MUST equal T800-AURA's OPENCLAW_API_KEY. Set in the dashboard.
       - key: RELAY_API_KEY
         sync: false
-      - key: OPENROUTER_API_KEY
-        sync: false
       - key: STEEL_API_KEY
         sync: false
       - key: FIRECRAWL_API_KEY
