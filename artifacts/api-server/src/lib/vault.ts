@@ -92,7 +92,11 @@ export async function substituteSecrets(input: string, used?: Set<string>): Prom
 
   const resolved = new Map<string, string>();
   for (const name of names) {
-    const value = await getSecretValue(name);
+    // Primary: encrypted vault DB. Fallback: process.env so Render env vars
+    // (SANDBOX_GITHUB_TOKEN, COMPOSIO_API_KEY, etc.) are reachable via
+    // {{secret:NAME}} without a separate vault entry. The value is still
+    // redacted from any response and never enters model context.
+    const value = (await getSecretValue(name)) ?? process.env[name] ?? null;
     if (value !== null) {
       resolved.set(name, value);
       used?.add(value);
