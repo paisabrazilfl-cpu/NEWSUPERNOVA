@@ -26,12 +26,22 @@ export function SwarmCanvas({ onAgentClick }: SwarmCanvasProps) {
     return () => ro.disconnect();
   }, []);
 
-  // Ring radius scaled to the container, leaving room for the node + its label.
+  // Ring radius scaled to the container WIDTH (not min(w,h)). Driving it off
+  // width keeps the spacing stable on mobile: when the idle-hint panel shrinks
+  // the canvas height, a min-dimension radius used to collapse to its floor and
+  // the labels overlapped the neighbouring orbs (the cramped layout). Width is
+  // stable, so the ring now keeps its roomy, even spacing in every state.
   // Deterministic (no Math.random) so orbs don't jump around on every render.
   const radius = useMemo(() => {
-    const minDim = Math.min(size.w || 600, size.h || 500);
-    return Math.max(74, Math.round(minDim / 2 - 72));
+    const w = size.w || 600;
+    return Math.min(240, Math.max(120, Math.round(w / 2 - 80)));
   }, [size]);
+
+  // The natural height the ring needs: top+bottom orbs (radius each from centre)
+  // plus the orb itself and its two-line label below. The canvas reserves this
+  // via min-height and scrolls if the viewport is shorter — so the spacing never
+  // compresses (which is what caused the label/orb overlap).
+  const graphHeight = 2 * radius + 150;
 
   const positions = useMemo(() => {
     const n = Math.max(1, agents.length);
@@ -46,12 +56,15 @@ export function SwarmCanvas({ onAgentClick }: SwarmCanvasProps) {
   }, [agents, radius]);
 
   // Pixel-space viewBox centered at 0,0 so SVG line endpoints (pos.x,pos.y) line
-  // up exactly with the absolutely-positioned nodes.
+  // up exactly with the absolutely-positioned nodes. Height tracks the inner
+  // graph box (which is at least graphHeight) so lines stay aligned when the
+  // canvas scrolls.
   const vbW = size.w || 1000;
-  const vbH = size.h || 800;
+  const vbH = Math.max(size.h || 0, graphHeight);
 
   return (
-    <div ref={containerRef} className="w-full h-full relative overflow-hidden bg-background/50 flex items-center justify-center">
+    <div ref={containerRef} className="w-full h-full relative overflow-y-auto bg-background/50">
+      <div className="relative w-full h-full flex items-center justify-center" style={{ minHeight: graphHeight }}>
       {/* Connections (SVG) — only drawn between agents that are actively working,
           so a calm swarm shows no lines. Animation is gated on reduced-motion. */}
       <svg className="absolute inset-0 w-full h-full pointer-events-none" viewBox={`${-vbW / 2} ${-vbH / 2} ${vbW} ${vbH}`} preserveAspectRatio="none">
@@ -129,6 +142,7 @@ export function SwarmCanvas({ onAgentClick }: SwarmCanvasProps) {
       {agents.length === 0 && (
         <div className="text-muted-foreground text-sm">No agents detected in the swarm.</div>
       )}
+      </div>
     </div>
   );
 }
