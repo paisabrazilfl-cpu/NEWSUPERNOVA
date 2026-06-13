@@ -98,9 +98,9 @@ describe("chatRequestFor", () => {
 
   it("banned models are unreachable from ANY path — nemotron-3-ultra is evicted (operator order 2026-06-12)", () => {
     process.env["NVIDIA_API_KEY"] = "nvapi-test";
-    expect(NIM_MODEL_BANS["nvidia/nemotron-3-ultra-550b-a55b"]).toBe("moonshotai/kimi-k2.6");
+    expect(NIM_MODEL_BANS["nvidia/nemotron-3-ultra-550b-a55b"]).toBe("openai/gpt-oss-120b");
     const r = chatRequestFor("nvidia/nemotron-3-ultra-550b-a55b");
-    expect(r.model).toBe("moonshotai/kimi-k2.6");
+    expect(r.model).toBe("openai/gpt-oss-120b");
     // every ban target must itself be a live, un-banned NIM id
     for (const [banned, target] of Object.entries(NIM_MODEL_BANS)) {
       expect(isNimModel(target), `${banned} must remap to a real NIM id`).toBe(true);
@@ -246,7 +246,7 @@ describe("llmFetch — rotation, breaker, and stall failover", () => {
     const { r, req } = await llmFetch("nvidia/nemotron-3-super-120b-a12b", { messages: [] });
     expect(r.status).toBe(200);
     expect(req.provider).toBe("nvidia-nim");
-    expect(models).toEqual(["nvidia/nemotron-3-super-120b-a12b", "moonshotai/kimi-k2.6"]);
+    expect(models).toEqual(["nvidia/nemotron-3-super-120b-a12b", "meta/llama-3.1-8b-instruct"]);
   });
 
   it("fails over to the fast NIM model when the upstream never starts responding", async () => {
@@ -266,8 +266,8 @@ describe("llmFetch — rotation, breaker, and stall failover", () => {
     }));
     const { r, req } = await llmFetch("nvidia/nemotron-3-super-120b-a12b", { messages: [] });
     expect(r.status).toBe(200);
-    expect(req.model).toBe("moonshotai/kimi-k2.6");
-    expect(models).toEqual(["nvidia/nemotron-3-super-120b-a12b", "moonshotai/kimi-k2.6"]);
+    expect(req.model).toBe("meta/llama-3.1-8b-instruct");
+    expect(models).toEqual(["nvidia/nemotron-3-super-120b-a12b", "meta/llama-3.1-8b-instruct"]);
   });
 
   it("stall breaker: after one stall, later calls skip the sick model and go straight to the fast model", async () => {
@@ -290,10 +290,10 @@ describe("llmFetch — rotation, breaker, and stall failover", () => {
     // Second call must NOT touch the sick model at all.
     const { r, req } = await llmFetch("nvidia/nemotron-3-super-120b-a12b", { messages: [] });
     expect(r.status).toBe(200);
-    expect(req.model).toBe("moonshotai/kimi-k2.6");
+    expect(req.model).toBe("meta/llama-3.1-8b-instruct");
     expect(models).toEqual([
-      "nvidia/nemotron-3-super-120b-a12b", "moonshotai/kimi-k2.6", // first call: stall + failover
-      "moonshotai/kimi-k2.6",                                       // second call: direct
+      "nvidia/nemotron-3-super-120b-a12b", "meta/llama-3.1-8b-instruct", // first call: stall + failover
+      "meta/llama-3.1-8b-instruct",                                       // second call: direct
     ]);
   });
 
@@ -320,13 +320,13 @@ describe("llmFetch — rotation, breaker, and stall failover", () => {
       const m = (JSON.parse(String(init.body)) as { model: string }).model;
       models.push(m);
       // The throttled model 429s on every key; the fast model has separate budget.
-      return m.startsWith("moonshotai/") ? jsonResponse(200, { ok: true }) : jsonResponse(429);
+      return m.startsWith("meta/") ? jsonResponse(200, { ok: true }) : jsonResponse(429);
     }));
     const { r, req } = await llmFetch("nvidia/nemotron-3-super-120b-a12b", { messages: [] });
     expect(r.status).toBe(200);
-    expect(req.model).toBe("moonshotai/kimi-k2.6");
+    expect(req.model).toBe("meta/llama-3.1-8b-instruct");
     expect(models[0]).toBe("nvidia/nemotron-3-super-120b-a12b"); // requested model tried first
-    expect(models).toContain("moonshotai/kimi-k2.6"); // then failed over to the fast model
+    expect(models).toContain("meta/llama-3.1-8b-instruct"); // then failed over to the fast model
     delete process.env["NIM_429_BACKOFF_MS"];
   });
 
@@ -340,8 +340,8 @@ describe("llmFetch — rotation, breaker, and stall failover", () => {
     }));
     const { r, req } = await llmFetch("nvidia/nemotron-3-super-120b-a12b", { messages: [] });
     expect(r.status).toBe(200);
-    expect(req.model).toBe("moonshotai/kimi-k2.6");
-    expect(models).toEqual(["moonshotai/kimi-k2.6"]); // never hit the throttled slow model
+    expect(req.model).toBe("meta/llama-3.1-8b-instruct");
+    expect(models).toEqual(["meta/llama-3.1-8b-instruct"]); // never hit the throttled slow model
   });
 
   it("a 5xx also marks the model stalled, and resetNimHealth clears the mark", async () => {

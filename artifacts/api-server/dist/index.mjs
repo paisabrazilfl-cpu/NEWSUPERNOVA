@@ -55005,7 +55005,12 @@ var init_integrations = __esm({
     };
     NIM_GENERIC_FALLBACK = "qwen/qwen3.5-122b-a10b";
     NIM_MODEL_BANS = {
-      "nvidia/nemotron-3-ultra-550b-a55b": "moonshotai/kimi-k2.6"
+      // nemotron-3-ultra-550b was evicted for being slow/504-prone under load. The
+      // redirect target MUST be a fast, reliably-available model: kimi-k2.6 (the old
+      // target) is per-model 429-throttled on the free tier, so this ban silently
+      // forced ABBY (its seed model) onto a dead engine. gpt-oss-120b is reasoning-
+      // capable and returns 200 under load.
+      "nvidia/nemotron-3-ultra-550b-a55b": "openai/gpt-oss-120b"
     };
     NIM_FAST_MODEL = process.env["NIM_FAST_MODEL"] || "meta/llama-3.1-8b-instruct";
     E2B_PKG = "@e2b/code-interpreter";
