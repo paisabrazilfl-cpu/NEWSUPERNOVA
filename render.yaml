@@ -29,10 +29,15 @@ services:
         generateValue: true
       - key: OPERATOR_PASSWORD
         sync: false
+      # DATABASE_URL is set DIRECTLY on the service (dashboard/API), NOT via
+      # fromDatabase. History: the original free `bos-aura-db` was auto-deleted
+      # (Render free-Postgres ~30-day expiry) and the DB now lives on as the
+      # standalone paid `openclaw-db` (databaseName openclaw_db_te42). A
+      # fromDatabase ref to the missing free DB booted every new deploy with no
+      # DATABASE_URL → "DATABASE_URL must be set" crash loop (2026-06-13). Keep
+      # this `sync: false` so a blueprint re-sync never re-links the dead DB.
       - key: DATABASE_URL
-        fromDatabase:
-          name: bos-aura-db
-          property: connectionString
+        sync: false
       # ── External API key — gates /api/external/v1/* (Bearer or x-api-key).
       #    The relay SECONDARY (T800) authenticates to BOS's inbound /relay with
       #    THIS exact value as its RELAY_API_KEY. Set the value in the dashboard.
@@ -118,14 +123,14 @@ services:
       - key: SANDBOX_GITHUB_TOKEN
         sync: false
 
-# ⚠️ Keep `plan` IN SYNC with the Render dashboard. A blueprint re-sync applies
-#    the value below, so if it says `free` while the dashboard is on a paid plan,
-#    a sync could try to downgrade — and Render DELETES free Postgres after ~30
-#    days. Set this to your actual paid plan slug. Back up regardless:
+# ⚠️ NO blueprint-managed database here ON PURPOSE.
+#    The Postgres is the standalone paid instance `openclaw-db`
+#    (databaseName openclaw_db_te42, plan basic_256mb) managed in the Render
+#    dashboard — NOT by this blueprint. The previous free `bos-aura-db` block was
+#    removed after it was auto-deleted (Render deletes free Postgres after ~30
+#    days), which left `fromDatabase` unresolved and crash-looped every deploy on
+#    2026-06-13. DATABASE_URL is set directly on the service (sync:false) and
+#    points at openclaw-db. Re-introducing a `databases:` block risks a sync
+#    trying to recreate/downgrade the DB — do not add one without verifying the
+#    exact name + paid plan in the dashboard first. Back up regularly:
 #    `pnpm --filter @workspace/scripts vault:backup` (encrypted, off-database).
-databases:
-  - name: bos-aura-db
-    plan: free   # TODO: set to the paid plan slug shown in the Render dashboard
-    region: oregon
-    databaseName: openclaw_db_te42
-    user: openclaw_db_te42_user
