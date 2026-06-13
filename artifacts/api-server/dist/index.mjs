@@ -55020,16 +55020,22 @@ var init_integrations = __esm({
 
 // src/lib/vault.ts
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
+function vaultKeyMaterial() {
+  return process.env["VAULT_KEY"] || process.env["SESSION_SECRET"] || void 0;
+}
 function getKey() {
   if (cachedKey) return cachedKey;
-  const secret = process.env["SESSION_SECRET"];
+  const secret = vaultKeyMaterial();
   if (!secret) {
     throw new Error(
-      "SESSION_SECRET is required to use the secrets vault \u2014 refusing to operate without it."
+      "VAULT_KEY (or legacy SESSION_SECRET) is required to use the secrets vault \u2014 refusing to operate without it."
     );
   }
   cachedKey = scryptSync(secret, "openclaw-vault-v1", 32);
   return cachedKey;
+}
+function vaultKeyConfigured() {
+  return vaultKeyMaterial() !== void 0;
 }
 function encryptSecret(plaintext) {
   const iv = randomBytes(12);
@@ -98043,13 +98049,29 @@ var external_default = router10;
 // src/routes/integrations.ts
 var import_express11 = __toESM(require_express2(), 1);
 init_integrations();
+
+// src/lib/vaultHealth.ts
+var orphanedCount = 0;
+var lastCheckedAt = null;
+function recordVaultHealth(opts) {
+  orphanedCount = opts.undecryptable;
+  lastCheckedAt = (/* @__PURE__ */ new Date()).toISOString();
+}
+function vaultHealth() {
+  return { orphaned: orphanedCount, checkedAt: lastCheckedAt };
+}
+
+// src/routes/integrations.ts
 var router11 = (0, import_express11.Router)();
 router11.get("/integrations", (_req, res) => {
   const items = integrationStatus();
   res.json({
     integrations: items,
     configuredCount: items.filter((i) => i.configured).length,
-    total: items.length
+    total: items.length,
+    // Orphaned vault rows (count only — never names) so a key change that
+    // silently turned integrations Off is a visible, explained signal.
+    vault: vaultHealth()
   });
 });
 function guardComposio(res) {
@@ -99039,8 +99061,8 @@ init_src();
 init_vault2();
 init_logger2();
 async function loadVaultIntoEnv() {
-  if (!process.env["SESSION_SECRET"]) {
-    logger.warn("Vault\u2192env skipped: SESSION_SECRET is not set");
+  if (!vaultKeyConfigured()) {
+    logger.warn("Vault\u2192env skipped: neither VAULT_KEY nor SESSION_SECRET is set");
     return;
   }
   try {
@@ -99064,8 +99086,12 @@ async function loadVaultIntoEnv() {
         undecryptable.push(row.name);
       }
     }
+    recordVaultHealth({ undecryptable: undecryptable.length });
     if (undecryptable.length) {
-      logger.warn({ undecryptable }, "Vault\u2192env: some secrets could not be decrypted (did SESSION_SECRET change?)");
+      logger.error(
+        { undecryptable, orphaned: undecryptable.length },
+        `Vault\u2192env: ${undecryptable.length} secret(s) FAILED to decrypt \u2014 the vault encryption key changed since they were saved. Re-enter these keys in Settings \u2192 Stored Secrets to restore their integrations. (surfaced at GET /api/integrations \u2192 vault.orphaned)`
+      );
     }
     logger.info({ applied, skippedEnvSet }, "Loaded vault secrets into environment");
   } catch (err) {

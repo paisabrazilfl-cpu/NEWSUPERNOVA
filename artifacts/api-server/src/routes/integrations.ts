@@ -20,6 +20,7 @@ import {
   composioDeleteConnection,
 } from "../lib/integrations";
 import { requireOperator } from "../lib/auth";
+import { vaultHealth } from "../lib/vaultHealth";
 
 const router = Router();
 
@@ -30,6 +31,9 @@ router.get("/integrations", (_req, res) => {
     integrations: items,
     configuredCount: items.filter((i) => i.configured).length,
     total: items.length,
+    // Orphaned vault rows (count only — never names) so a key change that
+    // silently turned integrations Off is a visible, explained signal.
+    vault: vaultHealth(),
   });
 });
 

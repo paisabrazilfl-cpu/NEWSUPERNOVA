@@ -5,25 +5,55 @@ import { eq } from "drizzle-orm";
 /**
  * Secrets vault encryption.
  *
- * Values are encrypted with AES-256-GCM. The key is derived from SESSION_SECRET
- * via scrypt, so the plaintext key never lives on disk. Rotating SESSION_SECRET
- * intentionally invalidates all stored secrets (they can no longer be decrypted).
+ * Values are encrypted with AES-256-GCM. The key is derived via scrypt from a
+ * DEDICATED `VAULT_KEY`, so the plaintext key never lives on disk.
  *
- * We fail closed: if SESSION_SECRET is unset there is NO insecure default — every
+ * Why a dedicated key (and not SESSION_SECRET): the vault key and the
+ * login/session signing secret are different concerns. Rotating or truncating
+ * the LOGIN secret is a routine operation — but when the vault was keyed off
+ * SESSION_SECRET, doing so silently orphaned every stored credential (they could
+ * no longer be decrypted), surfacing only as "every integration is mysteriously
+ * Off". Keying the vault off its own `VAULT_KEY` decouples the two, so rotating
+ * the login secret never destroys the vault.
+ *
+ * Backward compatibility: when `VAULT_KEY` is unset we fall back to
+ * `SESSION_SECRET` with the SAME scrypt salt, so secrets written by older
+ * deployments still decrypt byte-for-byte — zero migration, zero loss.
+ *
+ * We fail closed: if NEITHER key is set there is NO insecure default — every
  * vault operation throws, so secrets are never encrypted under a guessable key.
  */
 let cachedKey: Buffer | null = null;
 
+/** Resolve the raw key material: dedicated VAULT_KEY, else legacy SESSION_SECRET. */
+function vaultKeyMaterial(): string | undefined {
+  return process.env["VAULT_KEY"] || process.env["SESSION_SECRET"] || undefined;
+}
+
 function getKey(): Buffer {
   if (cachedKey) return cachedKey;
-  const secret = process.env["SESSION_SECRET"];
+  const secret = vaultKeyMaterial();
   if (!secret) {
     throw new Error(
-      "SESSION_SECRET is required to use the secrets vault — refusing to operate without it.",
+      "VAULT_KEY (or legacy SESSION_SECRET) is required to use the secrets vault — refusing to operate without it.",
     );
   }
   cachedKey = scryptSync(secret, "openclaw-vault-v1", 32);
   return cachedKey;
+}
+
+/** True when a vault encryption key (VAULT_KEY or legacy SESSION_SECRET) is configured. */
+export function vaultKeyConfigured(): boolean {
+  return vaultKeyMaterial() !== undefined;
+}
+
+/**
+ * Drop the cached scrypt key so the next operation re-derives it from the
+ * current env. Only needed if the key material changes within a running
+ * process (e.g. tests, or a future runtime rotation flow).
+ */
+export function resetVaultKeyCache(): void {
+  cachedKey = null;
 }
 
 export interface EncryptedSecret {

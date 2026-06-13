@@ -1,5 +1,6 @@
 import { db, vaultSecretsTable } from "@workspace/db";
-import { decryptSecret } from "./vault";
+import { decryptSecret, vaultKeyConfigured } from "./vault";
+import { recordVaultHealth } from "./vaultHealth";
 import { logger } from "./logger";
 
 /**
@@ -15,8 +16,8 @@ import { logger } from "./logger";
  * is empty, SESSION_SECRET is missing, or a row fails to decrypt.
  */
 export async function loadVaultIntoEnv(): Promise<void> {
-  if (!process.env["SESSION_SECRET"]) {
-    logger.warn("Vault→env skipped: SESSION_SECRET is not set");
+  if (!vaultKeyConfigured()) {
+    logger.warn("Vault→env skipped: neither VAULT_KEY nor SESSION_SECRET is set");
     return;
   }
   try {
@@ -40,8 +41,18 @@ export async function loadVaultIntoEnv(): Promise<void> {
         undecryptable.push(row.name);
       }
     }
+    recordVaultHealth({ undecryptable: undecryptable.length });
     if (undecryptable.length) {
-      logger.warn({ undecryptable }, "Vault→env: some secrets could not be decrypted (did SESSION_SECRET change?)");
+      // ERROR, not warn: these credentials are effectively lost — the encryption
+      // key (VAULT_KEY/SESSION_SECRET) changed since they were saved, so the
+      // affected integrations will read as Off until the keys are re-entered.
+      // Also surfaced as a count at GET /api/integrations (vault.orphaned) so the
+      // operator sees it without grepping logs.
+      logger.error(
+        { undecryptable, orphaned: undecryptable.length },
+        `Vault→env: ${undecryptable.length} secret(s) FAILED to decrypt — the vault encryption key changed since they were saved. ` +
+          `Re-enter these keys in Settings → Stored Secrets to restore their integrations. (surfaced at GET /api/integrations → vault.orphaned)`,
+      );
     }
     logger.info({ applied, skippedEnvSet }, "Loaded vault secrets into environment");
   } catch (err) {
