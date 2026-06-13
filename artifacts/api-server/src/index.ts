@@ -6,6 +6,7 @@ import { startKeepAlive } from "./lib/keepAlive";
 import { reconcileStaleWork } from "./orchestrator";
 import { integrationStatus } from "./lib/integrations";
 import { startScheduler } from "./lib/scheduler";
+import { copyLegacyData } from "./lib/legacyCopy";
 
 const rawPort = process.env["PORT"];
 
@@ -45,6 +46,10 @@ if (Number.isNaN(port) || port <= 0) {
 }
 
 runMigrations()
+  // One-time copy from a legacy DB (only when LEGACY_DATABASE_URL is set). Runs
+  // BEFORE the vault load so any copied vault secrets are picked up this boot.
+  // Non-fatal: a copy failure never blocks startup.
+  .then(() => copyLegacyData().catch((e) => logger.error({ err: String(e) }, "legacy copy crashed (non-fatal)")))
   // Activate integrations from keys saved in the in-app vault (env vars still win).
   .then(() => loadVaultIntoEnv())
   .then(() => logIntegrations())

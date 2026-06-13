@@ -54282,6 +54282,7 @@ __export(src_exports, {
   insertToolCallSchema: () => insertToolCallSchema,
   messagesTable: () => messagesTable,
   monologueLinesTable: () => monologueLinesTable,
+  pg: () => esm_default,
   pool: () => pool,
   relaySessionsTable: () => relaySessionsTable,
   setVaultSecretSchema: () => setVaultSecretSchema,
@@ -99054,6 +99055,83 @@ function startKeepAlive() {
 
 // src/index.ts
 init_integrations();
+
+// src/lib/legacyCopy.ts
+init_src();
+init_logger2();
+var TABLES = [
+  "agents",
+  "channels",
+  "messages",
+  "tasks",
+  "monologue_lines",
+  "tool_calls",
+  "agent_commands",
+  "cron_jobs",
+  "agent_memory",
+  "vault_secrets",
+  "attachments",
+  "social_posts",
+  "world_state"
+];
+async function copyLegacyData() {
+  const url2 = process.env["LEGACY_DATABASE_URL"];
+  if (!url2) return;
+  logger.info("LEGACY_DATABASE_URL is set \u2014 running one-time data copy into the current database.");
+  const src = new esm_default.Client({ connectionString: url2, ssl: { rejectUnauthorized: false }, connectionTimeoutMillis: 15e3 });
+  try {
+    await src.connect();
+  } catch (e) {
+    logger.error({ err: String(e) }, "legacy copy: cannot connect to LEGACY_DATABASE_URL \u2014 skipping (server still starts).");
+    return;
+  }
+  const summary = {};
+  try {
+    for (const table of TABLES) {
+      try {
+        const { rows } = await src.query(`SELECT * FROM "${table}"`);
+        if (!rows.length) {
+          summary[table] = { copied: 0, skipped: 0 };
+          continue;
+        }
+        const cols = Object.keys(rows[0]);
+        const colList = cols.map((c) => `"${c}"`).join(",");
+        const placeholders = cols.map((_, i) => `$${i + 1}`).join(",");
+        const updates = cols.filter((c) => c !== "id").map((c) => `"${c}"=EXCLUDED."${c}"`).join(",");
+        const conflict = updates ? `ON CONFLICT ("id") DO UPDATE SET ${updates}` : `ON CONFLICT ("id") DO NOTHING`;
+        const sql2 = `INSERT INTO "${table}" (${colList}) VALUES (${placeholders}) ${conflict}`;
+        let copied = 0, skipped = 0;
+        for (const row of rows) {
+          try {
+            await pool.query(sql2, cols.map((c) => row[c]));
+            copied++;
+          } catch (rowErr) {
+            skipped++;
+            if (skipped <= 3) logger.warn({ table, err: String(rowErr) }, "legacy copy: row skipped");
+          }
+        }
+        try {
+          const seqRes = await pool.query(`SELECT pg_get_serial_sequence($1,'id') AS seq`, [table]);
+          const seq = seqRes.rows[0]?.seq;
+          if (seq) await pool.query(`SELECT setval($1, (SELECT COALESCE(MAX("id"),1) FROM "${table}"))`, [seq]);
+        } catch {
+        }
+        summary[table] = { copied, skipped };
+      } catch (tableErr) {
+        logger.error({ table, err: String(tableErr) }, "legacy copy: table failed \u2014 continuing with the rest.");
+        summary[table] = { copied: 0, skipped: -1 };
+      }
+    }
+    logger.info({ summary }, "legacy copy: COMPLETE. Remove LEGACY_DATABASE_URL so this does not run again.");
+  } finally {
+    try {
+      await src.end();
+    } catch {
+    }
+  }
+}
+
+// src/index.ts
 var rawPort = process.env["PORT"];
 if (!rawPort) {
   throw new Error(
@@ -99082,7 +99160,7 @@ var port = Number(rawPort);
 if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
-runMigrations().then(() => loadVaultIntoEnv()).then(() => logIntegrations()).then(() => reconcileStaleWork()).then(() => {
+runMigrations().then(() => copyLegacyData().catch((e) => logger.error({ err: String(e) }, "legacy copy crashed (non-fatal)"))).then(() => loadVaultIntoEnv()).then(() => logIntegrations()).then(() => reconcileStaleWork()).then(() => {
   app_default.listen(port, (err) => {
     if (err) {
       logger.error({ err }, "Error listening on port");

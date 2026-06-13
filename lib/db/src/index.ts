@@ -4,6 +4,11 @@ import * as schema from "./schema";
 
 const { Pool } = pg;
 
+// Re-exported so other workspace packages can open a one-off client (e.g. a
+// one-time data copy from a legacy database) using the SAME pg that's already
+// bundled here — avoids a separate, possibly-unresolvable `pg` import.
+export { pg };
+
 if (!process.env.DATABASE_URL) {
   throw new Error(
     "DATABASE_URL must be set. Did you forget to provision a database?",
