@@ -16,6 +16,7 @@ import vaultRouter from "./vault";
 import socialRouter from "./social";
 import uploadsRouter from "./uploads";
 import worldRouter from "./world";
+import relayRouter from "./relay";
 import { requireOperator } from "../lib/auth";
 
 const router: IRouter = Router();
@@ -49,5 +50,6 @@ router.use(requireOperator, integrationsRouter);
 router.use(requireOperator, selfCheckRouter);
 router.use(requireOperator, vaultRouter);
 router.use(requireOperator, socialRouter);
+router.use(requireOperator, relayRouter);
 
 export default router;

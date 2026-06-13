@@ -20,12 +20,13 @@
 
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { db } from "@workspace/db";
-import { agentsTable, messagesTable, channelsTable, agentMemoryTable, tasksTable } from "@workspace/db";
+import { agentsTable, messagesTable, channelsTable, agentMemoryTable, tasksTable, relaySessionsTable } from "@workspace/db";
 import { eq, desc, like, and } from "drizzle-orm";
 import { llmFetch, llmMaxTokens } from "../lib/integrations";
 import { timingSafeStrEqual } from "../lib/auth";
 import { embed } from "../lib/embeddings";
 import { quarantineTags } from "../lib/twinSync";
+import { relayEnabled, cycleAndForward, closeRelay } from "../lib/relay";
 import { orchestrateGoal } from "../orchestrator";
 import { ANTI_HALLUCINATION_DIRECTIVE, ABBY_DEFAULT_MODEL, SECONDARY_CHAT_MODEL, rescueRawToolCalls, requestsConnectedAccountAction } from "./ai";
 
@@ -682,6 +683,54 @@ router.post("/external/v1/twin-lessons", async (req, res) => {
     req.log.error({ err }, "External API: twin-lessons ingest failed");
     res.status(500).json({ error: "Failed to ingest twin lessons", ingested, skipped });
   }
+});
+
+// ─── POST /api/external/v1/relay ─────────────────────────────────────────────
+// Inbound turn of the primary/secondary collaboration loop (lib/relay.ts).
+// The peer swarm posts its cycle output here as THIS swarm's next input. We ACK
+// immediately and run our own orchestrator cycle in the background, then forward
+// the result back to the peer — so a multi-minute cycle never holds the request
+// open. Idempotent on (relayId, round); a "done" turn just closes our side.
+// Body: { relayId, round, from?, goal, kind, payload }
+router.post("/external/v1/relay", async (req, res) => {
+  if (!relayEnabled()) {
+    res.status(503).json({ error: "Relay disabled — set RELAY_ENABLED + RELAY_PEER_URL + RELAY_API_KEY." });
+    return;
+  }
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const relayId = String(body["relayId"] ?? "").slice(0, 120);
+  const round = Number(body["round"]);
+  const goal = String(body["goal"] ?? "").trim();
+  const kind = String(body["kind"] ?? "turn");
+  const payload = String(body["payload"] ?? "");
+  if (!relayId || !Number.isFinite(round) || (!goal && kind !== "done")) {
+    res.status(400).json({ error: "relayId, round and goal are required" });
+    return;
+  }
+
+  if (kind === "done" || kind === "closed") {
+    await closeRelay(relayId, payload).catch((err) => req.log.error({ err }, "relay: close failed"));
+    res.status(200).json({ status: "closed" });
+    return;
+  }
+
+  // Idempotent dedupe: skip a re-delivered turn whose round we already processed.
+  const [existing] = await db
+    .select()
+    .from(relaySessionsTable)
+    .where(eq(relaySessionsTable.relayId, relayId))
+    .limit(1);
+  if (existing && round <= existing.round) {
+    res.status(200).json({ status: "duplicate", round: existing.round });
+    return;
+  }
+
+  const channelId = existing?.channelId ?? DEFAULT_CHANNEL_ID;
+  // ACK now; the cycle runs in the background and forwards back to the peer.
+  res.status(202).json({ status: "accepted", relayId, round });
+  void cycleAndForward({ relayId, round, goal, inputText: payload, channelId }).catch((err: unknown) =>
+    req.log.error({ err, relayId }, "relay: inbound cycle crashed"),
+  );
 });
 
 // ─── POST /api/external/v1/vapi/webhook ──────────────────────────────────────
