@@ -371,16 +371,21 @@ export function rescueRawToolCalls(text: string): { clean: string; calls: Rescue
 }
 
 // ABBY must run on an orchestrator-grade model: Kimi K2.6 (fast NIM engine,
-// live-verified tool calling), NVIDIA Nemotron, or a Grok (x-ai/) model.
-// Anything else (from the DB or a request override) is forced back to the
-// default. When NVIDIA_API_KEY is absent, chatRequestFor() transparently
-// remaps the NIM id to its OpenRouter fallback at request time — never a
-// dead model.
+// live-verified tool calling), NVIDIA Nemotron, Grok (x-ai/), or GLM-5.1
+// (z-ai/). Anything else is forced back to the default.
+// When NVIDIA_API_KEY is absent, chatRequestFor() transparently remaps the NIM
+// id to its OpenRouter fallback at request time — never a dead model.
 export function resolveModel(agentId: number, agentModel: string | null | undefined, override: unknown): string {
   const candidate = (typeof override === "string" && override.trim())
     ? override
     : (agentModel ?? ABBY_DEFAULT_MODEL);
-  if (agentId === ABBY_ID && !candidate.startsWith("x-ai/") && !candidate.startsWith("nvidia/nemotron") && !candidate.startsWith("moonshotai/")) {
+  if (
+    agentId === ABBY_ID &&
+    !candidate.startsWith("x-ai/") &&
+    !candidate.startsWith("z-ai/") &&
+    !candidate.startsWith("nvidia/nemotron") &&
+    !candidate.startsWith("moonshotai/")
+  ) {
     return ABBY_DEFAULT_MODEL;
   }
   return candidate;
@@ -416,6 +421,7 @@ const NIM_FEATURED_MODELS = [
   { id: "qwen/qwen3.5-397b-a17b", name: "Qwen 3.5 397B MoE (NIM)", context_length: 262144 },
   { id: "qwen/qwen3.5-122b-a10b", name: "Qwen 3.5 122B MoE (NIM)", context_length: 262144 },
   { id: "mistralai/mistral-medium-3.5-128b", name: "Mistral Medium 3.5 128B (NIM)", context_length: 131072 },
+  { id: "z-ai/glm-5.1", name: "Zhipu GLM-5.1 (NIM)", context_length: 131072 },
 ];
 
 // List available models — the curated NVIDIA NIM catalog (no external catalog

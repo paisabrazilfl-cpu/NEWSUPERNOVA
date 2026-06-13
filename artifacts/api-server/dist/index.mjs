@@ -94611,7 +94611,7 @@ function rescueRawToolCalls(text2) {
 }
 function resolveModel(agentId, agentModel, override) {
   const candidate = typeof override === "string" && override.trim() ? override : agentModel ?? ABBY_DEFAULT_MODEL;
-  if (agentId === ABBY_ID2 && !candidate.startsWith("x-ai/") && !candidate.startsWith("nvidia/nemotron") && !candidate.startsWith("moonshotai/")) {
+  if (agentId === ABBY_ID2 && !candidate.startsWith("x-ai/") && !candidate.startsWith("z-ai/") && !candidate.startsWith("nvidia/nemotron") && !candidate.startsWith("moonshotai/")) {
     return ABBY_DEFAULT_MODEL;
   }
   return candidate;
@@ -94627,7 +94627,8 @@ var NIM_FEATURED_MODELS = [
   { id: "deepseek-ai/deepseek-v4-flash", name: "DeepSeek V4 Flash (NIM)", context_length: 1e6 },
   { id: "qwen/qwen3.5-397b-a17b", name: "Qwen 3.5 397B MoE (NIM)", context_length: 262144 },
   { id: "qwen/qwen3.5-122b-a10b", name: "Qwen 3.5 122B MoE (NIM)", context_length: 262144 },
-  { id: "mistralai/mistral-medium-3.5-128b", name: "Mistral Medium 3.5 128B (NIM)", context_length: 131072 }
+  { id: "mistralai/mistral-medium-3.5-128b", name: "Mistral Medium 3.5 128B (NIM)", context_length: 131072 },
+  { id: "z-ai/glm-5.1", name: "Zhipu GLM-5.1 (NIM)", context_length: 131072 }
 ];
 router7.get("/ai/models", async (_req, res) => {
   res.json({ models: NIM_FEATURED_MODELS });
