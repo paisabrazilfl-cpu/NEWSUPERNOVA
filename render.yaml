@@ -33,6 +33,29 @@ services:
         fromDatabase:
           name: bos-aura-db
           property: connectionString
+      # ── External API key — gates /api/external/v1/* (Bearer or x-api-key).
+      #    The relay SECONDARY (T800) authenticates to BOS's inbound /relay with
+      #    THIS exact value as its RELAY_API_KEY. Set the value in the dashboard.
+      - key: OPENCLAW_API_KEY
+        sync: false
+      # ── Primary/secondary collaboration relay (BOS-AURA = PRIMARY) ──────────
+      #    Non-secret config is set here; the shared secret is set in the
+      #    dashboard. The loop stays OFF until RELAY_API_KEY is filled in.
+      - key: RELAY_ENABLED
+        value: "true"
+      - key: RELAY_ROLE
+        value: primary
+      - key: RELAY_PEER_URL
+        value: https://t800-aura.onrender.com
+      - key: RELAY_SELF_NAME
+        value: BOS-AURA
+      - key: RELAY_PEER_NAME
+        value: T800-AURA
+      - key: RELAY_MAX_ROUNDS
+        value: "8"
+      # Secret: MUST equal T800-AURA's OPENCLAW_API_KEY. Set in the dashboard.
+      - key: RELAY_API_KEY
+        sync: false
       - key: OPENROUTER_API_KEY
         sync: false
       - key: STEEL_API_KEY

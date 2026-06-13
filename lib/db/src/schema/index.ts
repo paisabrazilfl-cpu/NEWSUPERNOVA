@@ -7,3 +7,4 @@ export * from "./commands";
 export * from "./memory";
 export * from "./vault";
 export * from "./attachments";
+export * from "./relay";
