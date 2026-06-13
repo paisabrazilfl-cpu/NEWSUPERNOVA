@@ -81,16 +81,31 @@ export async function copyLegacyData(): Promise<void> {
         const placeholders = cols.map((_, i) => `$${i + 1}`).join(",");
         const updates = cols.filter((c) => c !== "id").map((c) => `"${c}"=EXCLUDED."${c}"`).join(",");
         const conflict = updates ? `ON CONFLICT ("id") DO UPDATE SET ${updates}` : `ON CONFLICT ("id") DO NOTHING`;
-        const sql = `INSERT INTO "${table}" (${colList}) VALUES (${placeholders}) ${conflict}`;
+        const singleSql = `INSERT INTO "${table}" (${colList}) VALUES (${placeholders}) ${conflict}`;
 
+        // Bulk upsert in chunks (one statement per ~100 rows) so large history
+        // tables copy in seconds, not row-by-row. On a chunk error, fall back to
+        // per-row for that chunk so one bad row never loses the rest.
         let copied = 0, skipped = 0;
-        for (const row of rows as Array<Record<string, unknown>>) {
+        const CHUNK = 100;
+        const all = rows as Array<Record<string, unknown>>;
+        for (let i = 0; i < all.length; i += CHUNK) {
+          const chunk = all.slice(i, i + CHUNK);
+          const params: unknown[] = [];
+          const tuples = chunk.map((row) => {
+            const ph = cols.map((c) => { params.push(row[c]); return `$${params.length}`; });
+            return `(${ph.join(",")})`;
+          });
+          const bulkSql = `INSERT INTO "${table}" (${colList}) VALUES ${tuples.join(",")} ${conflict}`;
           try {
-            await pool.query(sql, cols.map((c) => row[c]));
-            copied++;
-          } catch (rowErr) {
-            skipped++;
-            if (skipped <= 3) logger.warn({ table, err: String(rowErr) }, "legacy copy: row skipped");
+            await pool.query(bulkSql, params);
+            copied += chunk.length;
+          } catch (chunkErr) {
+            logger.warn({ table, chunkStart: i, err: String(chunkErr) }, "legacy copy: chunk failed — retrying row-by-row");
+            for (const row of chunk) {
+              try { await pool.query(singleSql, cols.map((c) => row[c])); copied++; }
+              catch (rowErr) { skipped++; if (skipped <= 3) logger.warn({ table, err: String(rowErr) }, "legacy copy: row skipped"); }
+            }
           }
         }
 

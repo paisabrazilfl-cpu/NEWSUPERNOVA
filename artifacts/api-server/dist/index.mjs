@@ -99117,15 +99117,35 @@ async function copyLegacyData() {
         const placeholders = cols.map((_, i) => `$${i + 1}`).join(",");
         const updates = cols.filter((c) => c !== "id").map((c) => `"${c}"=EXCLUDED."${c}"`).join(",");
         const conflict = updates ? `ON CONFLICT ("id") DO UPDATE SET ${updates}` : `ON CONFLICT ("id") DO NOTHING`;
-        const sql2 = `INSERT INTO "${table}" (${colList}) VALUES (${placeholders}) ${conflict}`;
+        const singleSql = `INSERT INTO "${table}" (${colList}) VALUES (${placeholders}) ${conflict}`;
         let copied = 0, skipped = 0;
-        for (const row of rows) {
+        const CHUNK = 100;
+        const all = rows;
+        for (let i = 0; i < all.length; i += CHUNK) {
+          const chunk = all.slice(i, i + CHUNK);
+          const params = [];
+          const tuples = chunk.map((row) => {
+            const ph = cols.map((c) => {
+              params.push(row[c]);
+              return `$${params.length}`;
+            });
+            return `(${ph.join(",")})`;
+          });
+          const bulkSql = `INSERT INTO "${table}" (${colList}) VALUES ${tuples.join(",")} ${conflict}`;
           try {
-            await pool.query(sql2, cols.map((c) => row[c]));
-            copied++;
-          } catch (rowErr) {
-            skipped++;
-            if (skipped <= 3) logger.warn({ table, err: String(rowErr) }, "legacy copy: row skipped");
+            await pool.query(bulkSql, params);
+            copied += chunk.length;
+          } catch (chunkErr) {
+            logger.warn({ table, chunkStart: i, err: String(chunkErr) }, "legacy copy: chunk failed \u2014 retrying row-by-row");
+            for (const row of chunk) {
+              try {
+                await pool.query(singleSql, cols.map((c) => row[c]));
+                copied++;
+              } catch (rowErr) {
+                skipped++;
+                if (skipped <= 3) logger.warn({ table, err: String(rowErr) }, "legacy copy: row skipped");
+              }
+            }
           }
         }
         try {
