@@ -98562,6 +98562,41 @@ router18.get("/relay", async (_req, res) => {
     sessions: rows
   });
 });
+router18.get("/relay/peer-agents", async (_req, res) => {
+  const peerName = relayPeerName();
+  if (!relayEnabled()) {
+    res.json({ enabled: false, peerName, agents: [] });
+    return;
+  }
+  const base = process.env["RELAY_PEER_URL"].replace(/\/$/, "");
+  const key = process.env["RELAY_API_KEY"];
+  const ac = new AbortController();
+  const timer2 = setTimeout(() => ac.abort(), 8e3);
+  try {
+    const r = await fetch(`${base}/api/external/v1/agents`, {
+      headers: { Authorization: `Bearer ${key}` },
+      signal: ac.signal
+    });
+    if (!r.ok) {
+      res.json({ enabled: true, peerName, agents: [], error: `peer HTTP ${r.status}` });
+      return;
+    }
+    const data = await r.json();
+    const agents = (data.agents ?? []).map((a) => ({
+      id: Number(a["id"]),
+      name: String(a["name"] ?? ""),
+      role: a["role"] ?? null,
+      status: String(a["status"] ?? "idle"),
+      color: String(a["color"] ?? "#8a8f98"),
+      avatarInitials: a["avatarInitials"] ?? null
+    }));
+    res.json({ enabled: true, peerName, agents });
+  } catch (err) {
+    res.json({ enabled: true, peerName, agents: [], error: String(err).slice(0, 200) });
+  } finally {
+    clearTimeout(timer2);
+  }
+});
 router18.get("/relay/:id", async (req, res) => {
   const [row] = await db.select().from(relaySessionsTable).where(eq(relaySessionsTable.relayId, String(req.params.id))).limit(1);
   if (!row) {
