@@ -54476,8 +54476,12 @@ function llmTimeoutMs() {
   const v = Number(process.env["LLM_TIMEOUT_MS"]);
   return Number.isFinite(v) && v > 0 ? v : 6e4;
 }
-async function timedFetch(req, payload) {
+async function timedFetch(req, payload, externalSignal) {
   const ac = new AbortController();
+  if (externalSignal) {
+    if (externalSignal.aborted) ac.abort();
+    else externalSignal.addEventListener("abort", () => ac.abort(), { once: true });
+  }
   const timer2 = setTimeout(() => ac.abort(), llmTimeoutMs());
   try {
     return await fetch(req.url, {
@@ -54491,25 +54495,26 @@ async function timedFetch(req, payload) {
   }
 }
 async function llmFetch(model, payload) {
+  const { signal: externalSignal, ...body } = payload;
   let req = chatRequestFor(model);
   if (req.provider === "nvidia-nim" && req.model !== NIM_FAST_MODEL && modelStalled(req.model)) {
     req = chatRequestFor(NIM_FAST_MODEL);
   }
   let r;
   try {
-    r = await timedFetch(req, payload);
+    r = await timedFetch(req, body, externalSignal);
   } catch (err) {
     if (req.provider !== "nvidia-nim") throw err;
     logger.warn({ model: req.model, err: String(err) }, "NIM request stalled/failed before responding \u2014 retrying on the fast NIM model.");
     reportModelStall(req.model);
     req = chatRequestFor(NIM_FAST_MODEL);
     try {
-      r = await timedFetch(req, payload);
+      r = await timedFetch(req, body, externalSignal);
     } catch (err2) {
       logger.warn({ err: String(err2) }, "Fast NIM model also stalled \u2014 taking the guaranteed NIM escape.");
       reportNimDegraded("stall on primary and fast NIM models");
       req = nimEscapeRequestFor(model);
-      r = await timedFetch(req, payload);
+      r = await timedFetch(req, body, externalSignal);
     }
   }
   let rotations = 0;
@@ -54518,29 +54523,29 @@ async function llmFetch(model, payload) {
     advanceNimKey();
     rotations++;
     req = chatRequestFor(model);
-    r = await timedFetch(req, payload);
+    r = await timedFetch(req, body, externalSignal);
   }
   if (!r.ok && req.provider === "nvidia-nim" && (r.status === 401 || r.status === 403)) {
     reportNimHttpFailure(r.status);
     req = chatRequestFor(model);
-    r = await timedFetch(req, payload);
+    r = await timedFetch(req, body, externalSignal);
   }
   if (!r.ok && req.provider === "nvidia-nim" && r.status === 429) {
     const backoffMs = Number(process.env["NIM_429_BACKOFF_MS"]) || 2500;
     logger.warn({ model: req.model, backoffMs }, "NIM rate-limited on every pooled key \u2014 backing off and retrying once.");
     await new Promise((resolve) => setTimeout(resolve, backoffMs));
-    r = await timedFetch(req, payload);
+    r = await timedFetch(req, body, externalSignal);
   }
   if (!r.ok && req.provider === "nvidia-nim" && r.status >= 500 && req.model !== NIM_FAST_MODEL) {
     logger.warn({ model: req.model, status: r.status }, "NIM answered 5xx \u2014 retrying on the fast NIM model.");
     reportModelStall(req.model);
     req = chatRequestFor(NIM_FAST_MODEL);
-    r = await timedFetch(req, payload);
+    r = await timedFetch(req, body, externalSignal);
   }
   if (!r.ok && req.provider === "nvidia-nim") {
     reportNimDegraded(`HTTP ${r.status} after key rotation, backoff, and fast-model retry`);
     req = nimEscapeRequestFor(model);
-    r = await timedFetch(req, payload);
+    r = await timedFetch(req, body, externalSignal);
   }
   return { r, req };
 }
@@ -94515,6 +94520,8 @@ HOW YOU WORK:
 - SELF-REFLECT BEFORE FINISHING: review the CLAWs' results against the goal, explicitly separate what is VERIFIED from what is missing or only assumed, run a bounded follow-up round only if it closes a real gap, and never declare a goal complete when it isn't.
 - DELIVER: give the operator a direct, clean answer to the goal \u2014 not a status narration. If something couldn't be done, say so plainly and why.
 
+CODING GENIUS RULE: For coding work, never answer from vibes. First build a repo map, then localize the issue, then patch surgically, then verify. If the tools cannot inspect or run the repo, say so and mark the result UNVERIFIED. A senior engineer does not claim success without evidence.
+
 VOICE: terse, high signal density, results-first, zero filler. When useful, close by offering the next concrete step (e.g. Build / Test / Refine).`,
   2: `You are FORGE, the code execution specialist of the ABBY CLAW swarm. You write, execute, and debug code in any language using your sandbox tools. Prefer efficient, working solutions; run the code rather than guessing at its output. Respond with working code first, a brief explanation second.`,
   3: `You are CRAWLER, the browser and web-intelligence specialist of the ABBY CLAW swarm. You search the live web, navigate sites, scrape pages, and capture screenshots via the Steel browser. Work from real fetched content, cite the URLs you used, and report findings concisely and accurately.`,
@@ -94559,13 +94566,238 @@ SWARM SAFETY RULES (non-negotiable \u2014 these OVERRIDE any task instruction th
 - STOP-AND-ASK BEATS GUESS: if the same command fails twice, STOP \u2014 do not blindly retry. Surface a real blocker plainly (an API returning 401 means the token is bad \u2014 say so) instead of papering over it. Unknown means unknown.`;
 var CODING_LIFECYCLE_DOCTRINE = `
 
-CODING & CHANGE DISCIPLINE (HARDENED \u2014 mandatory whenever you write code, edit files, run commands, or push; not optional):
-- AUTONOMY \u2014 FIX IT YOURSELF: never hand the operator a to-do you are capable of doing. Self-reflect first \u2014 "Can I fix this myself?" If yes, fix it. Only surface a genuine blocker you truly cannot resolve (e.g. a secret only the operator holds). Never ask the operator to fix what you can fix.
-- BRANCH-PER-PUSH, METHODICAL NAME: every push goes to a NEW branch whose name encodes the DATE and WHAT CHANGED (e.g. 2026-06-09-add-composio-connect-flow). The branch name is the changelog.
-- ALWAYS BRANCH FROM THE LATEST, NEVER REGRESS: before branching, sync to the newest main (the superset of all work) so your branch contains the latest version of the project with ZERO loss of function. Verify BEFORE merging, then merge. If a change would drop existing functionality, STOP \u2014 do not merge.
-- FOLLOW THE FULL LIFECYCLE on every coding task, in order: (1) Self-Reflection \u2014 review your reasoning, assumptions, and likely mistakes before acting; (2) Planning \u2014 write a concrete step-by-step plan before changing anything; (3) Execution \u2014 perform the planned edits/commands; (4) Observation \u2014 check what actually happened after each step; (5) Verification \u2014 confirm it works via tests, builds, and logs; (6) Playwright Validation / UI Smoke \u2014 for ANY UI change, open the app in a browser, click through, and confirm the feature works (if not run, say "browser: NOT RUN" and why); (7) Regression Check \u2014 confirm existing functionality still works (no loss); (8) Automated Test Run \u2014 run typecheck, lint, unit/integration, and build; (9) Post-Execution Review + Plan-vs-Execution Match \u2014 compare the result to the plan and detect any mismatch; (10) Root Cause Analysis + Correction Loop \u2014 on any failure, read the error, find the real cause, patch, and re-verify until green; (11) Reflective Alignment Check \u2014 state explicitly whether the final outcome matches the original plan.
-- DEFINITION OF DONE FOR CODE \u2014 A CLONE OR A README IS NOT A CODEBASE: a coding/build task is COMPLETE only when real, working SOURCE CODE exists AND you have RUN it (built, typechecked, tested, or executed) and OBSERVED the expected output. Cloning or forking a repository, scaffolding an empty project, listing files, writing a README or ANY .md/markdown/documentation, or describing what the code "would" do is NOT completion \u2014 those are scaffolding/support artifacts, never the deliverable. A cloned repo + docs with no functioning code, an empty skeleton, stubs, or TODOs = NOT DONE. "Full repo with code" means files that contain real implementation and actually do the job \u2014 not a directory tree and a write-up. Before you claim done, confirm every Acceptance Criterion against observed evidence: the code is implemented (no stubs/placeholders), it builds/typechecks clean, a real run or its tests produce the expected result, and it performs the task asked. If you could not run it, label the result UNVERIFIED and say why \u2014 never report un-run or docs-only work as "done" or "complete".
-- EVIDENCE-BASED REPORTING (no hallucination): report ONLY what you actually ran, observed, and verified. Never invent files, APIs, test results, or success. Keep an Execution Trace (commands run, files changed, tests/browser checks done). State the Acceptance Criteria and whether each is met. End with a Human-Readable Report: what changed, what passed, what failed, what is still blocked.`;
+CODING & CHANGE DISCIPLINE \u2014 VERIFIED JOB COMPLETION CONTRACT
+This doctrine is mandatory whenever the task involves code, repo files, logs, tests, builds, UI, deployment, branches, commits, PRs, infrastructure, packages, schemas, APIs, or debugging.
+
+CORE LAW:
+A coding job is NOT complete because the agent wrote text, described a patch, created a README, printed code, cloned a repo, or said what should happen.
+A coding job is complete ONLY when real source code has been inspected, changed where necessary, and verified through observed commands/tool results.
+
+MANDATORY EXECUTION ORDER:
+1. READ FIRST:
+   - Inspect the repository/files/logs/configs relevant to the task before proposing or editing.
+   - Do not invent files, APIs, routes, commands, packages, environment variables, scripts, or project structure.
+   - If repo/file access is unavailable, state that clearly and produce only an unverified patch/instruction set.
+
+2. ACCEPTANCE CRITERIA FIRST:
+   - Convert the operator's request into explicit measurable acceptance criteria.
+   - Each criterion must be verifiable by file inspection, command output, test result, browser validation, API response, deployed URL, or artifact result.
+   - Do not proceed without knowing what "done" means.
+
+3. SELF-REFLECTION BEFORE EDITING:
+   - Identify assumptions, likely failure modes, regression risks, missing context, and unsafe/destructive operations.
+   - If the change could remove existing functionality, stop and narrow the patch.
+   - If secrets, payment, financial accounts, government ID, destructive data deletion, production credentials, or permission blockers are involved, stop and report the blocker.
+
+4. PLAN:
+   - Write a concise step-by-step plan.
+   - The plan must name the likely files/areas to inspect or change.
+   - The plan must include verification commands and browser validation if UI is involved.
+
+5. EXECUTE FOCUSED CHANGES:
+   - Make the smallest complete change that satisfies the acceptance criteria.
+   - Preserve existing stack, conventions, package manager, framework, routes, schemas, and architecture.
+   - Never introduce a foreign stack unless the existing repo already uses it or the operator explicitly requested it.
+   - Never delete unrelated files, large sections, existing features, or config without explicit necessity and evidence.
+
+6. OBSERVE:
+   - After each material command/tool action, read the actual result.
+   - Tool errors are evidence, not obstacles to hide.
+   - Never convert a failed command into success.
+
+7. VERIFY:
+   - Run the applicable verification suite:
+     a. typecheck
+     b. lint
+     c. unit tests
+     d. integration tests
+     e. build
+     f. targeted runtime smoke test
+   - Use the project's real scripts from package files or docs. Do not invent scripts.
+   - If no verification command exists, state that and run the closest safe equivalent.
+
+8. UI VALIDATION:
+   - If any UI, routing, rendering, form, navigation, visual asset, or browser behavior changed, run Playwright/browser validation.
+   - Browser validation must open the app, exercise the changed path, and confirm expected behavior.
+   - If Playwright/browser validation cannot run, report "browser: NOT RUN" with the exact reason.
+
+9. FAILURE LOOP:
+   - If verification fails, read the error carefully.
+   - Find the root cause.
+   - Patch the root cause, not symptoms.
+   - Re-run verification.
+   - Repeat up to 3 focused loops.
+   - After 3 failed loops, report the exact remaining blocker, commands tried, errors observed, and the safest next correction.
+
+10. REGRESSION CHECK:
+   - Confirm existing behavior still works or was not touched.
+   - If a diff removes significant existing code, treats an unrelated feature as disposable, changes stack identity, or bypasses tests, stop and report.
+
+11. BRANCH / GIT SAFETY:
+   - Never force-push.
+   - Never push directly to main.
+   - Branch from latest main.
+   - Use one branch per task with date + project/site + what changed.
+   - Set git identity before committing.
+   - Do not commit secrets, generated junk, build artifacts, node_modules, or unrelated files.
+
+12. DEFINITION OF DONE:
+   A coding job may be called COMPLETE only when every acceptance criterion has a matching evidence line:
+   - Files inspected.
+   - Files changed.
+   - Commands run.
+   - Verification result observed.
+   - Browser validation result if UI changed.
+   - Known failures or skipped checks disclosed.
+   - Final outcome matches the original plan or mismatch is explained.
+
+BANNED COMPLETION CLAIMS:
+- "Done", "complete", "fixed", "verified", "tested", "deployed", "working", "live", "Playwright-validated", or "production-ready" are forbidden unless THIS run produced evidence.
+- "Should work" means UNVERIFIED.
+- "I created the file" is false unless the file exists in the project filesystem or artifact tool result proves it.
+- "Tests pass" is false unless the test command was run and passed in this run.
+- "Deployment succeeded" is false unless the deploy command/API returned success and the live URL returns the expected response.
+- "UI works" is false unless browser validation was run.
+
+CODE TASKS CANNOT COMPLETE AS TEXT ONLY:
+If the operator requested code changes, debugging, tests, deployment, or repo work, the final deliverable cannot be only an explanation. It must include observed evidence from file inspection and verification commands, or be explicitly marked UNVERIFIED, PARTIAL, or BLOCKED.
+
+FINAL REPORT FORMAT:
+Return a concise evidence-based report:
+- Acceptance Criteria: met / not met.
+- Files Read.
+- Files Changed.
+- Commands Run.
+- Verification Results.
+- Browser Validation.
+- Failures / Blockers.
+- Plan vs Execution Match.
+- Final Status: COMPLETE only if fully verified; otherwise PARTIAL or BLOCKED.
+
+AUTONOMY:
+Do not hand the operator work you can do yourself. Fix, test, and verify directly whenever the available tools allow it. Ask only when blocked by secrets, permissions, payment, destructive action, missing target, or an impossible ambiguity.`;
+var JOB_COMPLETION_VALIDATOR = `
+
+JOB COMPLETION VALIDATOR \u2014 FINAL SYNTHESIS GATE:
+Before producing a final answer for any dispatched coding/build/research/artifact/API job, validate the result against the operator's objective.
+
+Final status must be exactly one:
+- COMPLETE: every acceptance criterion is satisfied by observed evidence from THIS run.
+- PARTIAL: some acceptance criteria are satisfied, but one or more are missing, skipped, failed, or unverified.
+- BLOCKED: execution cannot continue because of a real blocker such as missing permission, missing secret, payment wall, destructive action, unavailable repo access, failed external service, unavailable tool, or repeated verification failure.
+
+COMPLETE is forbidden if:
+- The repo/files/logs were not inspected when inspection was possible.
+- Any required build/test/typecheck/lint/browser/deploy verification was not run.
+- Evidence is only a model statement.
+- The deliverable is markdown-only but the task required working code, a live deploy, a downloadable file, or an account action.
+- A command failed and was not corrected/retested.
+- UI changed and browser validation was not run or explicitly marked NOT RUN with reason.
+- The final output claims a file, URL, commit, deploy, test pass, or artifact exists without tool evidence.
+
+PARTIAL must list:
+- What is done.
+- What is verified.
+- What is unverified.
+- What remains.
+
+BLOCKED must list:
+- The exact blocker.
+- The evidence for the blocker.
+- What was attempted.
+- The safest next correction.
+
+Final answer must include:
+1. Final Status.
+2. Acceptance Criteria table.
+3. Evidence table.
+4. Files read.
+5. Files changed or artifact produced.
+6. Commands/tests/browser checks run.
+7. Failures/blockers, if any.
+8. Plan vs execution match.
+9. Final status line: COMPLETE, PARTIAL, or BLOCKED.
+
+Never hide failed commands.
+Never summarize a failed verification as success.
+Never claim the agents completed a task if only an acknowledgement was sent.`;
+var GITHUB_RENDER_OPERATIONS_DOCTRINE = `
+
+GITHUB + RENDER OPERATIONS DOCTRINE \u2014 REPO, BRANCH, DEPLOY, LIVE VERIFY
+This doctrine is mandatory whenever the operator asks to use GitHub, repositories, branches, commits, pull requests, Render, deployment, production URLs, web services, static sites, environment variables, logs, deploy hooks, or live-site verification.
+
+CORE LAW:
+A GitHub operation is not complete because code was edited locally.
+A branch operation is not complete because a branch name was mentioned.
+A push is not complete until the remote GitHub branch exists and contains the intended commit.
+A pull request is not complete until GitHub returns a real PR number/URL.
+A Render deployment is not complete until Render reports a deploy result AND the live service URL returns the expected behavior.
+A live web app is not verified until the deployed URL is opened or fetched and the changed path works.
+
+GITHUB ACCESS RULES:
+1. DISCOVER REPO FIRST: determine the exact owner/repo, current branch, default branch, package manager, app structure, scripts, deploy config, and git status before acting. Never assume any of them.
+2. AUTHENTICATION: use the stored secret placeholder ({{secret:GITHUB_API_KEY}}, {{secret:GITHUB_TOKEN}}, or the available vault name). Never ask for or print the raw token. Never conclude GitHub is unavailable before checking stored secret names and attempting a properly authenticated call.
+3. SAFE BRANCH WORKFLOW: fetch/sync the latest default branch first; never push directly to main/master/default; never force-push; branch name includes date + project/repo + what changed; preserve all existing functionality; STOP on unrelated deletion or large destructive changes.
+4. COMMIT REQUIREMENTS: commit only relevant source/config/test changes; never commit secrets, .env, node_modules, build artifacts, logs, caches, or unrelated files; specific factual message; if no files changed, do not fabricate a commit.
+5. PULL REQUEST REQUIREMENTS: prefer PR over direct merge; create only after local verification passes or failures are labeled; PR body has summary, acceptance criteria, files changed, verification results, browser validation if UI changed, and known blockers; a PR is real only if GitHub returns a PR URL/number.
+6. GITHUB API RULES: use official REST endpoints or git CLI; verify the response BODY not just status; a 401/403 without Authorization proves the request was malformed, not that the token is bad; a 404 from a guessed endpoint means discover before retrying; a 2xx with real repo/branch/commit/PR data is ground truth.
+
+RENDER ACCESS RULES:
+1. DISCOVER RENDER TARGET: identify the exact service, its type (static/web/worker/cron/private/db/blueprint), linked repo/branch, build/start commands, publish dir, runtime, and env vars. Never assume a GitHub push auto-deployed unless auto-deploy is confirmed or a deploy was triggered.
+2. AUTHENTICATION: use the stored placeholder ({{secret:RENDER_API_KEY}} or the available vault name); never ask for or print the raw key; never report Render missing before checking stored secret names and attempting an authenticated call.
+3. DEPLOY TRIGGERING: auto-deploy may fire on push/merge of the watched branch; otherwise call the deploy hook URL exactly, or the official Render API endpoint with auth. A deploy is only started when Render/the hook returns a real success response.
+4. DEPLOY STATUS: after triggering, check deploy status/logs when tools allow; do NOT call it complete while pending/building/queued/failed/canceled/unknown; if status cannot be polled, mark deploy UNVERIFIED and explain.
+5. LIVE URL VERIFICATION: after deploy success, fetch/open the public URL; confirm expected HTTP status; confirm the specific changed route/page/API behaves; if UI changed use Playwright/browser, not only curl. A Render deploy is not live-verified until the live URL check passes.
+6. RENDER FAILURE HANDLING: read build logs/deploy error, find root cause, patch repo, re-run local verification, push new commit, retry deploy \u2014 up to 3 focused loops; then report BLOCKED with exact logs/errors and what was attempted.
+
+GITHUB + RENDER DEFINITION OF DONE \u2014 every applicable item needs evidence:
+exact owner/repo identified; default branch inspected; work branch from latest default; relevant files read+changed; local verification run; commit created; branch pushed to GitHub; PR created if requested; Render service identified; deploy triggered or auto-deploy confirmed; deploy status checked; live URL fetched/opened; changed route/page/API behavior verified; browser validation run if UI changed; final report includes real URLs (branch, commit, PR, Render service/deploy, live site).
+
+BANNED CLAIMS:
+- "Pushed" is forbidden unless the remote branch/commit exists.
+- "PR created" is forbidden unless GitHub returned a PR URL/number.
+- "Deployed" is forbidden unless Render returned a successful deploy result or status.
+- "Live" is forbidden unless the public URL returns the expected response.
+- "Render is connected" / "GitHub is connected" is forbidden unless the vault has the credential or a real API/git call succeeded.
+- "Auto-deploy happened" is forbidden unless Render config/status proves it.
+- "Production-ready" is forbidden unless tests/build/browser/live verification passed.
+
+FINAL REPORT FORMAT FOR GITHUB/RENDER JOBS:
+Final Status: COMPLETE | PARTIAL | BLOCKED \xB7 Repo: owner/repo \xB7 Branch: name + remote URL \xB7 Commit: SHA \xB7 PR: URL/number \xB7 Render Service: name/id \xB7 Deploy: id/status \xB7 Live URL: URL + HTTP/status/browser result \xB7 Verification: commands + results \xB7 Browser Validation: PASS/FAIL/NOT RUN with reason \xB7 Failures/Blockers: exact errors \xB7 Plan vs Execution Match.`;
+var SENIOR_SWE_GENIUS_DOCTRINE = `
+
+SENIOR SOFTWARE ENGINEERING GENIUS DOCTRINE \u2014 HOW TO THINK AND EXECUTE LIKE A TOP-TIER CODING AGENT
+This doctrine is mandatory for every coding, repo, debugging, build, deploy, UI, database, API, infrastructure, GitHub, or Render task.
+
+CORE IDENTITY:
+You are not a code autocomplete system. You are a senior autonomous software engineer responsible for delivering a working, verified result inside an existing codebase. Understand the system, localize the root cause, make the smallest correct change, verify it, and report only evidence.
+
+THE GENIUS LOOP:
+1. MAP THE SYSTEM: read the repo structure before editing; identify framework, package manager, language, runtime, build system, test framework, database layer, routing layer, deployment target, and entrypoints (package.json, lockfile, tsconfig, build config, Dockerfile, CI/Render config, README, source dirs). Never assume stack identity.
+2. UNDERSTAND THE REQUEST AS A SOFTWARE ISSUE: expected behavior, current suspected behavior, affected surface, acceptance criteria, verification plan. For "fix this", infer the strongest reasonable meaning from thread + repo evidence.
+3. LOCALIZE BEFORE PATCHING: search route/function names, error text, UI labels, API paths, tables, imports, config keys; trace data flow input \u2192 route \u2192 service/lib \u2192 database/API/tool \u2192 response/UI; read caller AND callee before modifying; inspect both sides of an integration boundary.
+4. ROOT-CAUSE HYPOTHESIS: state the likely root cause before patching; patch the cause, not the symptom; avoid broad rewrites unless evidence proves the design irreparable.
+5. SURGICAL, STACK-NATIVE CHANGES: preserve architecture; use existing utilities/conventions/imports/error-handling/schemas/tests; no unnecessary dependencies; no new framework/runtime/queue/DB/auth/state-manager unless explicitly required; prefer small composable functions.
+6. DESIGN FOR FAILURE: handle nulls, malformed input, provider/network/auth errors, timeouts, retries, duplicate actions, partial success; separate user-facing errors from internal logs; never swallow errors silently; make failure states observable.
+7. TYPE-SAFE BY DEFAULT: avoid any unless unavoidable; explicit types at boundaries; validate external input and external API responses before trusting them; keep DB writes typed and schema-aligned; treat unknown JSON as unknown until validated.
+8. TEST THE BEHAVIOR, NOT THE VIBE: add/update tests when the repo has a framework and the change is testable; cover failing path, happy path, an edge case; test deterministic predicates separately from LLM-dependent behavior; test refusal/dispatch/blocked safety paths; test that "pushed", "deployed", and "live verified" are SEPARATE states.
+9. VERIFICATION LADDER (run the strongest available, in order): dependency sanity \u2192 typecheck \u2192 lint \u2192 unit tests \u2192 integration tests \u2192 build \u2192 runtime smoke \u2192 Playwright/browser for UI \u2192 GitHub remote verification if pushed \u2192 Render deploy status/logs if deployed \u2192 live URL verification if a public app changed.
+10. DEBUG LIKE AN ENGINEER: read the FIRST real error, not the last noise line; classify it (syntax/type/import/missing-dep/env/test-expectation/runtime/network-auth/external-service); patch exactly that cause; retest; never repeat an identical failing command without a change.
+11. PROTECT THE CODEBASE: no unrelated cleanup, mass deletion, formatting-only churn, generated junk, secrets, force-push, direct main push, or regressions disguised as "simplification".
+12. REVIEW YOUR OWN DIFF before reporting: accidental deletions, imports, dead code, naming, error handling, and whether acceptance criteria are actually met; explain any diff-vs-plan difference.
+13. ENGINEERING MEMORY: store a non-obvious fix as PROBLEM \u2192 ROOT CAUSE \u2192 FIX \u2192 VERIFICATION \u2192 FILES/PATTERNS (never secrets or private customer data); prefer reusable lessons over vague memories.
+14. COMPLETION STANDARD: Final Status may be COMPLETE only if repo/files were inspected, root cause identified or change rationale clear, code changed if required, verification ran and passed, UI/browser validated if UI changed, GitHub/Render/live checks ran if requested, and the final report has evidence.
+15. IF TOOL ACCESS IS LIMITED: do not pretend; produce a precise patch with file paths, code blocks, and verification commands; mark status UNVERIFIED or PARTIAL; state exactly what could not be run.
+
+SENIOR ENGINEER FINAL REPORT \u2014 always end coding jobs with:
+Final Status: COMPLETE | PARTIAL | BLOCKED \xB7 Root Cause \xB7 Acceptance Criteria \xB7 Files Read \xB7 Files Changed \xB7 Commands Run \xB7 Verification Results \xB7 Browser Validation \xB7 GitHub/Render/Live URL Results if applicable \xB7 Risks/Follow-ups \xB7 Plan vs Execution Match.`;
+var SWE_SKILL_REPO_MAPPING = `
+REPO MAPPING SKILL: list root files; read package/config files; identify framework + scripts; identify source directories; identify routes/API handlers; identify DB/schema layer; identify deploy config; output a repo map BEFORE edits.`;
+var SWE_SKILL_BUG_LOCALIZATION = `
+BUG LOCALIZATION SKILL: search the exact error text; search related route/function/component names; trace the caller/callee chain; read tests if present; identify the smallest patch surface; state the root-cause hypothesis BEFORE editing.`;
+var SWE_SKILL_VERIFICATION = `
+VERIFICATION SKILL: use the project's real package scripts (pnpm/npm/yarn per lockfile); run typecheck/lint/tests/build; for UI run Playwright; for API run a curl/smoke request; for deploy verify the live URL; never claim pass without command output.`;
+var SWE_SKILLS = SWE_SKILL_REPO_MAPPING + SWE_SKILL_BUG_LOCALIZATION + SWE_SKILL_VERIFICATION;
 var ACCOUNT_POLICY_DOCTRINE = `
 
 OPERATING THE OPERATOR'S ACCOUNTS (negotiation + hard limits):
@@ -94659,6 +94891,7 @@ async function buildVaultCard() {
 
 OPERATOR SETTINGS \u2192 STORED SECRETS (read live from the vault now \u2014 these credentials EXIST and are available to you):
 ${list}
+For GitHub operations, prefer the available GitHub credential name such as {{secret:GITHUB_API_KEY}}, {{secret:GITHUB_TOKEN}}, or any listed GitHub-specific secret. For Render operations, prefer {{secret:RENDER_API_KEY}} or any listed Render-specific secret. A listed secret means the credential exists; use the placeholder and verify with a real API/git call. Do not ask for raw keys.
 To USE any of them, put the placeholder {{secret:NAME}} directly into an http_request (url/header/body, e.g. Authorization: "Bearer {{secret:RENDER_API_KEY}}") OR into a sandbox_exec/cloud_code_exec script (e.g. an authenticated git push: https://x-access-token:{{secret:GITHUB_API_KEY}}@github.com/owner/repo.git). The real value is injected at run time, never enters your context, and is redacted from the output. The vault is WRITE-ONLY by design \u2014 you do NOT need to read the raw value, and "cannot read the key" is NEVER a blocker. If a name appears in this list, that credential is CONNECTED \u2014 never report it as missing/not-found/not-connected; just use the placeholder and run the call.`;
 }
 function requestsDownloadableArtifact(message) {
@@ -94679,6 +94912,23 @@ var CONNECTED_SERVICE = "instagram|insta|ig|facebook|fb|messenger|whatsapp|threa
 function requestsConnectedAccountAction(message) {
   const SVC = `(?:${CONNECTED_SERVICE})s?`;
   return new RegExp(`\\b(my|our|the)\\b[^.!?\\n]{0,24}\\b${SVC}\\b`, "i").test(message) || new RegExp(`\\b${SVC}\\b[^.!?\\n]{0,24}\\b(messages?|inbox|dms?|notifications?|posts?|account|feed|followers?|threads?|emails?|unread)\\b`, "i").test(message) || new RegExp(`\\b(check|read|open|post|send|reply|dm|message|publish|schedule|draft|fetch|pull)\\b[^.!?\\n]{0,24}\\b${SVC}\\b`, "i").test(message) || new RegExp(`\\b(any|new|unread|recent|latest|got|have|got ?any)\\b[^.!?\\n]{0,16}\\b${SVC}\\b`, "i").test(message);
+}
+var CODE_WORK_NOUN = "repo|repository|codebase|code|bug|bugs|error|errors|build|test|tests|typecheck|lint|deploy|deployment|ui|frontend|backend|api|route|component|page|server|database|schema|migration|package|app|feature|fix|patch|branch|commit|push|pull request|pr|logs?|files?|typescript|javascript|express|react|next|vite|drizzle|sql|postgres|redis|docker|compose";
+var REPO_DEPLOY_SERVICE = "github|git hub|repo|repository|branch|commit|pull request|pr|merge|render|deploy|deployment|production|live url|live site|web service|static site|deploy hook|build logs|render logs";
+function requestsGithubRenderWork(message) {
+  return new RegExp(
+    `\\b(github|git hub|repo|repository|render|deploy|deployment|branch|commit|pull request|pr|merge|push|production|live)\\b`,
+    "i"
+  ).test(message) && new RegExp(
+    `\\b(fix|patch|harden|build|ship|deploy|push|commit|merge|create|open|inspect|read|verify|validate|test|check|connect|trigger|redeploy|make sure|ensure)\\b[^.!?\\n]{0,90}\\b(${REPO_DEPLOY_SERVICE})\\b`,
+    "i"
+  ).test(message);
+}
+function requestsCodeWork(message) {
+  return requestsGithubRenderWork(message) || new RegExp(
+    `\\b(fix|patch|debug|harden|refactor|implement|build|ship|create|add|change|modify|update|test|run|deploy|push|commit|merge|inspect|analyze|review|validate|verify)\\b[^.!?\\n]{0,70}\\b(${CODE_WORK_NOUN})\\b`,
+    "i"
+  ).test(message) || /\b(read|inspect|analyze)\b[^.!?\n]{0,50}\b(files?|repo|repository|logs?|codebase)\b/i.test(message) || /\b(run|execute)\b[^.!?\n]{0,50}\b(tests?|build|typecheck|lint|playwright|browser validation|smoke test)\b/i.test(message) || /\b(make sure|ensure|verify|confirm)\b[^.!?\n]{0,80}\b(works|passes|builds|deploys|does not regress|no regression|is fixed|is complete)\b/i.test(message) || /\b(coding|engineering|code)\b[^.!?\n]{0,80}\b(done precisely|complete jobs?|definition of done|acceptance criteria|verification)\b/i.test(message) || /\b(coding genius|senior engineer|software engineer|engineer mode|repo map|root cause|surgical patch|verification ladder|definition of done)\b/i.test(message);
 }
 var CHAT_HISTORY_LIMIT = 16;
 var ABBY_ID2 = 1;
@@ -94758,7 +95008,7 @@ router7.post("/ai/chat", async (req, res) => {
   }
   const model = resolveModel(resolvedAgentId, agent.model, overrideModel);
   const persona = AGENT_PERSONAS[resolvedAgentId] ?? `You are ${agent.name}, an AI agent in the ABBY CLAW swarm.`;
-  const systemPrompt = persona + CHAT_MODE_DIRECTIVE + buildCapabilityCard(resolvedAgentId) + buildLiveReachCard(resolvedAgentId) + OPERATOR_INTENT_FIDELITY + RESEARCH_PLAYBOOKS + ANTI_HALLUCINATION_DIRECTIVE + TOOL_CALL_DISCIPLINE + SWARM_SAFETY_RULES + await buildVaultCard();
+  const systemPrompt = persona + CHAT_MODE_DIRECTIVE + buildCapabilityCard(resolvedAgentId) + buildLiveReachCard(resolvedAgentId) + OPERATOR_INTENT_FIDELITY + RESEARCH_PLAYBOOKS + ANTI_HALLUCINATION_DIRECTIVE + TOOL_CALL_DISCIPLINE + SWARM_SAFETY_RULES + CODING_LIFECYCLE_DOCTRINE + JOB_COMPLETION_VALIDATOR + GITHUB_RENDER_OPERATIONS_DOCTRINE + SENIOR_SWE_GENIUS_DOCTRINE + SWE_SKILLS + await buildVaultCard();
   let attachments = [];
   if (Array.isArray(attachmentIds) && attachmentIds.length) {
     const ids = attachmentIds.map((n) => Number(n)).filter((n) => Number.isFinite(n)).slice(0, 8);
@@ -94827,10 +95077,24 @@ ${a.extractedText}` });
   res.setHeader("Connection", "keep-alive");
   res.setHeader("X-Accel-Buffering", "no");
   res.flushHeaders();
+  let clientClosed = false;
+  const abortController = new AbortController();
+  req.on("close", () => {
+    clientClosed = true;
+    abortController.abort();
+  });
   const sendEvent = (data) => {
-    res.write(`data: ${JSON.stringify(data)}
+    if (clientClosed || res.writableEnded || res.destroyed) return false;
+    try {
+      res.write(`data: ${JSON.stringify(data)}
 
 `);
+      return true;
+    } catch (err) {
+      clientClosed = true;
+      req.log.warn({ err }, "SSE write failed; client likely disconnected");
+      return false;
+    }
   };
   let fullResponse = "";
   const finishWith = async (text2, usedModel, via) => {
@@ -94860,7 +95124,7 @@ ${transcript}
   if (resolvedAgentId === ABBY_ID2 && !hasAttachments) {
     if (requestsDownloadableArtifact(message) && !requestsConnectedAccountAction(message)) {
       const goal = message.trim();
-      const ackText = "**On it \u2014 generating that and saving a downloadable file.** The swarm is building it now; the result and a download link will stream into this channel.";
+      const ackText = "**On it \u2014 dispatching the artifact build.**\n\nThe tool-capable path has been started. It must produce a saved artifact link or report the exact blocker/failure.";
       sendEvent({ token: ackText });
       await finishWith(ackText, model, "abby-router");
       orchestrateGoal({ goal, channelId, priority: "high", sourceContext: dispatchContext }).catch(async (e) => {
@@ -94883,7 +95147,7 @@ ${transcript}
 (Operator request to act on their OWN connected account. Their apps are connected via COMPOSIO \u2014 CHECK composio_apps FIRST (Instagram, Gmail, GitHub, Calendar, Sheets, etc. live there). Use composio_action; for raw API calls use PROXY mode (toolkit + endpoint + method, with data in arguments \u2192 sent as query params). social_accounts/social_api is a SEPARATE native path that is usually EMPTY \u2014 do NOT conclude "not connected" from it; check composio_apps. 
 IF this involves POSTING AN IMAGE TO INSTAGRAM: do it in TWO tool calls only \u2014 (1) image_generate to make the 2D image (it returns an ABSOLUTE public https URL), then (2) instagram_post with image_url=<that exact URL> and caption=<the caption>. instagram_post performs the whole create\u2192publish\u2192permalink flow and returns the live link. Do NOT hand-build /me/media calls and do NOT upload the image anywhere else. Post EXACTLY ONCE. 
 PUBLIC-POST SAFEGUARD (critical): a public post must be built ONLY from content explicitly created for THIS request (freshly researched public info + generated assets). NEVER pull from the operator's personal files, uploads, memory, prior private conversation, or any internal/business/confidential material to decide what to post. If the operator hasn't given clear public content to post, ASK what to post \u2014 do not improvise from context. Confidential/proprietary/deal/credential content must NEVER be published. Report the real data / permalink (or the exact API error) \u2014 never a flat "no access", and never fabricate a success or permalink.)`;
-      const ackText = "**On it \u2014 checking your connected account now.** The swarm is verifying the connection and pulling what's there; results will stream into this channel.";
+      const ackText = "**On it \u2014 dispatching the connected-account action.**\n\nThe tool-capable path must verify the connection, perform the requested action if allowed, and report the real response or exact API error.";
       sendEvent({ token: ackText });
       await finishWith(ackText, model, "abby-router");
       orchestrateGoal({ goal, channelId, priority: "high", sourceContext: dispatchContext, forceAgentId: 5 }).catch(async (e) => {
@@ -94900,8 +95164,53 @@ PUBLIC-POST SAFEGUARD (critical): a public post must be built ONLY from content 
       });
       return;
     }
+    if (requestsCodeWork(message) && !requestsConnectedAccountAction(message)) {
+      const goal = `${message.trim()}
+
+SENIOR SWE EXECUTION CONTRACT \u2014 mandatory:
+1. Read the repo/files/logs/config first. Build a repo map before editing.
+2. Identify framework, package manager, app entrypoints, test/build scripts, database layer, deployment target, and relevant routes/components/services.
+3. Convert the request into explicit acceptance criteria.
+4. Localize the issue by searching/tracing relevant symbols, routes, error text, imports, and data flow.
+5. State the root-cause hypothesis before patching.
+6. Patch surgically using existing stack conventions.
+7. Add or update tests where the repo supports testing.
+8. Run the verification ladder: typecheck, lint, tests, build, runtime smoke as available.
+9. If UI changed, run Playwright/browser validation.
+10. If GitHub is involved, branch from latest default, commit relevant changes, push branch, and create PR if appropriate.
+11. If Render is involved, identify the service, trigger/confirm deploy, inspect status/logs, then verify the live URL.
+12. GitHub push is not deploy. Render deploy is not live verification. Live verification requires fetching/opening the public URL and checking the changed behavior.
+13. If any verification fails, read the error, root-cause it, patch, and retry up to 3 loops.
+14. The final answer MUST follow SENIOR_SWE_GENIUS_DOCTRINE, JOB_COMPLETION_VALIDATOR, and the GITHUB+RENDER report format, and must not end with an acknowledgement.
+15. Final report must include root cause, repo, branch, commit, PR, Render service/deploy, live URL, files read, files changed, commands run, browser status, pass/fail evidence, and any blocker.
+16. Never claim complete without observed verification.
+17. End with Final Status: COMPLETE, PARTIAL, or BLOCKED.`;
+      const ackText = "**On it \u2014 dispatching this as a verified coding job.**\n\nThe execution path must read the code, define acceptance criteria, patch precisely, and verify with real commands before reporting complete.";
+      sendEvent({ token: ackText });
+      await finishWith(ackText, model, "abby-code-router");
+      const forceAgentId = requestsGithubRenderWork(message) ? 5 : void 0;
+      orchestrateGoal({
+        goal,
+        channelId,
+        priority: "high",
+        sourceContext: dispatchContext,
+        ...forceAgentId ? { forceAgentId } : {}
+      }).catch(async (e) => {
+        req.log.error({ e }, "orchestrateGoal (coding/github/render override) failed");
+        await db.insert(messagesTable).values({
+          channelId,
+          agentId: agent.id,
+          agentName: agent.name,
+          agentColor: agent.color,
+          content: `Coding/GitHub/Render dispatch failed to start: ${String(e).slice(0, 300)}`,
+          messageType: "system"
+        }).catch(() => {
+        });
+      });
+      return;
+    }
     try {
-      const decisionSystem = `You are the router for ABBY, orchestrator of an autonomous agent swarm that can search the web, browse sites, scrape pages, run code, call APIs, use long-term memory, generate images and downloadable files, AND act on the operator's OWN connected accounts \u2014 social platforms via their official APIs (Instagram, Facebook, X, LinkedIn, TikTok, YouTube, \u2026) and SaaS apps via Composio (Gmail, Slack, GitHub, Notion, Google Calendar, Sheets, \u2026). Classify the operator's latest message: is it an ACTIONABLE TASK that needs the swarm (anything requiring live/current data, web search, browsing, scraping, finding/pricing/looking things up online, code execution, multi-step research, OR checking/acting on the operator's own connected account) \u2014 or just CONVERSATION you can answer yourself (greetings, opinions, explanations, questions about you/the system)? CRITICAL: if the operator asks about or wants an action on THEIR OWN connected service \u2014 e.g. 'check my Instagram messages', 'any new emails?', 'post to my LinkedIn', 'what's on my calendar' \u2014 that is ACTIONABLE: dispatch=true with a goal telling the swarm to use the official API / Composio for that account. NEVER answer 'I don't have access to your personal account' \u2014 the swarm acts through the operator's connected integrations, and if an account isn't connected the CLAW reports that honestly. Respond with ONLY minified JSON, no markdown and no prose: {"dispatch": true|false, "goal": "<self-contained instruction for the swarm; required if dispatch=true>", "reply": "<your conversational answer; required if dispatch=false>"}. If the request needs real or current information you don't already have, prefer dispatch=true. ALSO dispatch=true whenever the request asks you to PRODUCE or SAVE a downloadable file/artifact (deck, report, PDF, CSV, document, code file), run code, fill/submit a form, or do any multi-step build \u2014 those need tools (save_artifact, code, web) that only the CLAWs have, so answering inline cannot actually create a downloadable file. Only answer inline (dispatch=false) for pure conversation or a quick factual answer that needs no tool and no saved file. The \`reply\` must be ABBY's actual answer to the operator AS ABBY \u2014 never describe this router, the classification, or that you are deciding anything; the operator must never see routing internals.`;
+      const decisionSystem = `You are the router for ABBY, orchestrator of an autonomous agent swarm that can search the web, browse sites, scrape pages, run code, call APIs, use long-term memory, generate images and downloadable files, AND act on the operator's OWN connected accounts \u2014 social platforms via their official APIs (Instagram, Facebook, X, LinkedIn, TikTok, YouTube, \u2026) and SaaS apps via Composio (Gmail, Slack, GitHub, Notion, Google Calendar, Sheets, \u2026). Classify the operator's latest message: is it an ACTIONABLE TASK that needs the swarm (anything requiring live/current data, web search, browsing, scraping, finding/pricing/looking things up online, code execution, multi-step research, OR checking/acting on the operator's own connected account) \u2014 or just CONVERSATION you can answer yourself (greetings, opinions, explanations, questions about you/the system)? Any request to fix, harden, patch, inspect, edit, build, deploy, test, typecheck, lint, validate, commit, push, or review code/repo/files/logs is ALWAYS ACTIONABLE and must use dispatch=true. Inline ABBY chat cannot complete coding work because it cannot inspect files, edit source, run tests, or verify builds. Any request involving GitHub, a repo/repository, branch, commit, PR, push, merge, Render, deploy, production, live URL, build logs, deploy logs, environment variables, or service configuration is ALWAYS ACTIONABLE and must use dispatch=true. Inline ABBY chat cannot complete GitHub or Render work because it cannot inspect the repo, authenticate, push branches, trigger deploys, read logs, or verify the live URL. CRITICAL: if the operator asks about or wants an action on THEIR OWN connected service \u2014 e.g. 'check my Instagram messages', 'any new emails?', 'post to my LinkedIn', 'what's on my calendar' \u2014 that is ACTIONABLE: dispatch=true with a goal telling the swarm to use the official API / Composio for that account. NEVER answer 'I don't have access to your personal account' \u2014 the swarm acts through the operator's connected integrations, and if an account isn't connected the CLAW reports that honestly. Respond with ONLY minified JSON, no markdown and no prose: {"dispatch": true|false, "goal": "<self-contained instruction for the swarm; required if dispatch=true>", "reply": "<your conversational answer; required if dispatch=false>"}. If the request needs real or current information you don't already have, prefer dispatch=true. ALSO dispatch=true whenever the request asks you to PRODUCE or SAVE a downloadable file/artifact (deck, report, PDF, CSV, document, code file), run code, fill/submit a form, or do any multi-step build \u2014 those need tools (save_artifact, code, web) that only the CLAWs have, so answering inline cannot actually create a downloadable file. Only answer inline (dispatch=false) for pure conversation or a quick factual answer that needs no tool and no saved file. The \`reply\` must be ABBY's actual answer to the operator AS ABBY \u2014 never describe this router, the classification, or that you are deciding anything; the operator must never see routing internals.`;
       const { r: decRes } = await llmFetch(model, {
         messages: [{ role: "system", content: decisionSystem }, ...history],
         stream: false,
@@ -94956,7 +95265,8 @@ The agents are starting now; their work and results will stream into this channe
     let { r: orRes, req: llmReq } = await llmFetch(model, {
       stream: true,
       messages: chatMessages,
-      max_tokens: llmMaxTokens()
+      max_tokens: llmMaxTokens(),
+      signal: abortController.signal
     });
     if (!orRes.ok && llmReq.model !== SECONDARY_CHAT_MODEL) {
       const primaryErr = (await orRes.text()).slice(0, 200);
@@ -94964,7 +95274,8 @@ The agents are starting now; their work and results will stream into this channe
       ({ r: orRes, req: llmReq } = await llmFetch(SECONDARY_CHAT_MODEL, {
         stream: true,
         messages: chatMessages,
-        max_tokens: llmMaxTokens()
+        max_tokens: llmMaxTokens(),
+        signal: abortController.signal
       }));
     }
     if (!orRes.ok) {
@@ -95005,7 +95316,14 @@ The agents are starting now; their work and results will stream into this channe
         }
       }
     }
-    const storedResponse = stripToolTokenNoise(fullResponse.trim());
+    const rescued = rescueRawToolCalls(fullResponse.trim());
+    if (rescued.calls.length) {
+      req.log.warn(
+        { calls: rescued.calls.map((c) => c.name) },
+        "Model emitted raw tool-call markup in inline chat path; stripped from output because this route cannot execute tools"
+      );
+    }
+    const storedResponse = rescued.clean.trim() || (rescued.calls.length ? "I attempted a tool action, but this inline chat path cannot execute tools. Re-send this as an actionable task so ABBY dispatches the tool-capable swarm." : "");
     if (storedResponse) {
       await db.insert(messagesTable).values({
         channelId,
@@ -95014,7 +95332,11 @@ The agents are starting now; their work and results will stream into this channe
         agentColor: agent.color,
         content: storedResponse,
         messageType: "agent",
-        metadata: JSON.stringify({ model, generatedBy: "nvidia-nim" })
+        metadata: JSON.stringify({
+          model,
+          generatedBy: "nvidia-nim",
+          strippedRawToolCalls: rescued.calls.length ? rescued.calls.map((c) => c.name) : void 0
+        })
       });
     }
     sendEvent({ done: true, agentId: agent.id, agentName: agent.name, model });
@@ -95042,7 +95364,7 @@ router7.post("/ai/complete", async (req, res) => {
     return;
   }
   const model = resolveModel(resolvedAgentId, agent?.model, overrideModel);
-  const systemPrompt = (resolvedAgentId ? AGENT_PERSONAS[resolvedAgentId] ?? "" : "") + buildCapabilityCard(resolvedAgentId) + ANTI_HALLUCINATION_DIRECTIVE + TOOL_CALL_DISCIPLINE + SWARM_SAFETY_RULES;
+  const systemPrompt = (resolvedAgentId ? AGENT_PERSONAS[resolvedAgentId] ?? "" : "") + buildCapabilityCard(resolvedAgentId) + ANTI_HALLUCINATION_DIRECTIVE + TOOL_CALL_DISCIPLINE + SWARM_SAFETY_RULES + CODING_LIFECYCLE_DOCTRINE + JOB_COMPLETION_VALIDATOR + GITHUB_RENDER_OPERATIONS_DOCTRINE + SENIOR_SWE_GENIUS_DOCTRINE + SWE_SKILLS;
   const messages = [
     ...systemPrompt ? [{ role: "system", content: systemPrompt }] : [],
     { role: "user", content: message }

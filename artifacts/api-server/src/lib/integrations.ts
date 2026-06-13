@@ -358,8 +358,18 @@ function llmTimeoutMs(): number {
   return Number.isFinite(v) && v > 0 ? v : 60_000;
 }
 
-async function timedFetch(req: LlmChatRequest, payload: Record<string, unknown>): Promise<Response> {
+async function timedFetch(
+  req: LlmChatRequest,
+  payload: Record<string, unknown>,
+  externalSignal?: AbortSignal,
+): Promise<Response> {
   const ac = new AbortController();
+  // Abort on EITHER the time budget OR the caller's signal (e.g. the SSE client
+  // disconnected) — so a closed tab stops the in-flight upstream request.
+  if (externalSignal) {
+    if (externalSignal.aborted) ac.abort();
+    else externalSignal.addEventListener("abort", () => ac.abort(), { once: true });
+  }
   const timer = setTimeout(() => ac.abort(), llmTimeoutMs());
   try {
     return await fetch(req.url, {
@@ -387,12 +397,16 @@ async function timedFetch(req: LlmChatRequest, payload: Record<string, unknown>)
  *    provider, same persona/tools, much faster engine).
  *
  * `payload` is the call-specific body (messages, tools, stream, max_tokens, …);
- * bodyExtras are spread first so payload wins.
+ * bodyExtras are spread first so payload wins. An optional `signal` may be passed
+ * in `payload`; it is lifted OUT of the request body (never serialized) and used
+ * to abort the upstream fetch when the caller cancels (e.g. SSE client disconnect).
  */
 export async function llmFetch(
   model: string,
   payload: Record<string, unknown>,
 ): Promise<{ r: Response; req: LlmChatRequest }> {
+  // Lift the AbortSignal out of the body — it must steer fetch(), not be JSON.stringified.
+  const { signal: externalSignal, ...body } = payload as { signal?: AbortSignal } & Record<string, unknown>;
   let req = chatRequestFor(model);
   // Stall breaker: a model that recently produced no response within the time
   // budget routes straight to the fast NIM model — don't re-pay the timeout.
@@ -401,7 +415,7 @@ export async function llmFetch(
   }
   let r: Response;
   try {
-    r = await timedFetch(req, payload);
+    r = await timedFetch(req, body, externalSignal);
   } catch (err) {
     if (req.provider !== "nvidia-nim") throw err;
     // NIM stalled (no headers within the budget) or the connection died —
@@ -410,7 +424,7 @@ export async function llmFetch(
     reportModelStall(req.model);
     req = chatRequestFor(NIM_FAST_MODEL);
     try {
-      r = await timedFetch(req, payload);
+      r = await timedFetch(req, body, externalSignal);
     } catch (err2) {
       // The FAST model stalled too — NIM is drowning across the board. Mark it
       // degraded and take the guaranteed escape (a health-gate-bypassing NIM
@@ -419,7 +433,7 @@ export async function llmFetch(
       logger.warn({ err: String(err2) }, "Fast NIM model also stalled — taking the guaranteed NIM escape.");
       reportNimDegraded("stall on primary and fast NIM models");
       req = nimEscapeRequestFor(model);
-      r = await timedFetch(req, payload);
+      r = await timedFetch(req, body, externalSignal);
     }
   }
 
@@ -434,7 +448,7 @@ export async function llmFetch(
     advanceNimKey();
     rotations++;
     req = chatRequestFor(model);
-    r = await timedFetch(req, payload);
+    r = await timedFetch(req, body, externalSignal);
   }
 
   // Every pooled key rejected → trip the breaker and surface the auth failure.
@@ -443,7 +457,7 @@ export async function llmFetch(
   if (!r.ok && req.provider === "nvidia-nim" && (r.status === 401 || r.status === 403)) {
     reportNimHttpFailure(r.status);
     req = chatRequestFor(model);
-    r = await timedFetch(req, payload);
+    r = await timedFetch(req, body, externalSignal);
   }
 
   // Still rate-limited after exhausting the pool (single key, free-tier RPM —
@@ -453,7 +467,7 @@ export async function llmFetch(
     const backoffMs = Number(process.env["NIM_429_BACKOFF_MS"]) || 2_500;
     logger.warn({ model: req.model, backoffMs }, "NIM rate-limited on every pooled key — backing off and retrying once.");
     await new Promise((resolve) => setTimeout(resolve, backoffMs));
-    r = await timedFetch(req, payload);
+    r = await timedFetch(req, body, externalSignal);
   }
 
   // NIM-side 5xx (Nemotron 504s under load — observed live) → fast NIM model.
@@ -461,7 +475,7 @@ export async function llmFetch(
     logger.warn({ model: req.model, status: r.status }, "NIM answered 5xx — retrying on the fast NIM model.");
     reportModelStall(req.model);
     req = chatRequestFor(NIM_FAST_MODEL);
-    r = await timedFetch(req, payload);
+    r = await timedFetch(req, body, externalSignal);
   }
 
   // FINAL ESCAPE — the whole NIM gauntlet (key rotation, backoff, fast-model
@@ -471,7 +485,7 @@ export async function llmFetch(
   if (!r.ok && req.provider === "nvidia-nim") {
     reportNimDegraded(`HTTP ${r.status} after key rotation, backoff, and fast-model retry`);
     req = nimEscapeRequestFor(model);
-    r = await timedFetch(req, payload);
+    r = await timedFetch(req, body, externalSignal);
   }
 
   return { r, req };

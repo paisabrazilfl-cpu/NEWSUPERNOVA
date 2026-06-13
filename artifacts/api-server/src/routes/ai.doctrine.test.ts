@@ -19,9 +19,15 @@ import {
   SWARM_SAFETY_RULES,
   TOOL_CALL_DISCIPLINE,
   CODING_LIFECYCLE_DOCTRINE,
+  JOB_COMPLETION_VALIDATOR,
+  GITHUB_RENDER_OPERATIONS_DOCTRINE,
+  SENIOR_SWE_GENIUS_DOCTRINE,
+  SWE_SKILLS,
   requestsDownloadableArtifact,
   requestsImage,
   requestsConnectedAccountAction,
+  requestsCodeWork,
+  requestsGithubRenderWork,
   buildLiveReachCard,
 } from "./ai";
 
@@ -443,50 +449,138 @@ describe("SWARM_SAFETY_RULES — hardened guardrails from the STOCKVAULT inciden
   });
 });
 
-describe("CODING_LIFECYCLE_DOCTRINE — hardened, non-optional engineering workflow", () => {
-  it("mandates autonomy: fix it yourself, do not hand back fixable to-dos", () => {
-    expect(CODING_LIFECYCLE_DOCTRINE).toContain("FIX IT YOURSELF");
-    expect(CODING_LIFECYCLE_DOCTRINE.toLowerCase()).toContain("can i fix this");
+describe("CODING_LIFECYCLE_DOCTRINE — verified job completion contract", () => {
+  it("states the core law: text/README/clone is not completion; only inspected+changed+verified code is", () => {
+    expect(CODING_LIFECYCLE_DOCTRINE).toContain("VERIFIED JOB COMPLETION CONTRACT");
+    expect(CODING_LIFECYCLE_DOCTRINE).toContain("CORE LAW");
+    const lower = CODING_LIFECYCLE_DOCTRINE.toLowerCase();
+    expect(lower).toContain("created a readme");
+    expect(lower).toContain("cloned a repo");
+    expect(lower).toContain("inspected, changed where necessary, and verified");
   });
 
-  it("requires methodical dated branch names off the latest project with zero loss", () => {
-    expect(CODING_LIFECYCLE_DOCTRINE).toContain("BRANCH-PER-PUSH");
-    expect(CODING_LIFECYCLE_DOCTRINE.toUpperCase()).toContain("ZERO LOSS OF FUNCTION");
-    expect(CODING_LIFECYCLE_DOCTRINE).toContain("NEVER REGRESS");
-  });
-
-  it("encodes the full self-reflect → plan → execute → verify → review lifecycle", () => {
+  it("encodes the full mandatory execution order", () => {
     for (const phase of [
-      "Self-Reflection",
-      "Planning",
-      "Execution",
-      "Observation",
-      "Verification",
-      "Playwright",
-      "Regression Check",
-      "Root Cause Analysis",
-      "Correction Loop",
-      "Reflective Alignment Check",
+      "READ FIRST",
+      "ACCEPTANCE CRITERIA FIRST",
+      "SELF-REFLECTION BEFORE EDITING",
+      "PLAN",
+      "EXECUTE FOCUSED CHANGES",
+      "OBSERVE",
+      "VERIFY",
+      "UI VALIDATION",
+      "FAILURE LOOP",
+      "REGRESSION CHECK",
+      "BRANCH / GIT SAFETY",
+      "DEFINITION OF DONE",
     ]) {
-      expect(CODING_LIFECYCLE_DOCTRINE, `lifecycle should include "${phase}"`).toContain(phase);
+      expect(CODING_LIFECYCLE_DOCTRINE, `execution order should include "${phase}"`).toContain(phase);
     }
   });
 
-  it("requires evidence-based reporting with an execution trace + acceptance criteria", () => {
-    expect(CODING_LIFECYCLE_DOCTRINE).toContain("EVIDENCE-BASED REPORTING");
-    expect(CODING_LIFECYCLE_DOCTRINE).toContain("Execution Trace");
-    expect(CODING_LIFECYCLE_DOCTRINE).toContain("Acceptance Criteria");
+  it("bans unearned completion claims", () => {
+    expect(CODING_LIFECYCLE_DOCTRINE).toContain("BANNED COMPLETION CLAIMS");
+    expect(CODING_LIFECYCLE_DOCTRINE).toContain('"Should work" means UNVERIFIED');
+    expect(CODING_LIFECYCLE_DOCTRINE.toLowerCase()).toContain("unless the test command was run and passed");
   });
 
-  it("teaches that a clone or a README is not a codebase — docs/scaffolds are not 'done'", () => {
-    expect(CODING_LIFECYCLE_DOCTRINE).toContain("DEFINITION OF DONE FOR CODE");
-    expect(CODING_LIFECYCLE_DOCTRINE).toContain("A CLONE OR A README IS NOT A CODEBASE");
+  it("forbids markdown/text-only completion for code tasks", () => {
+    expect(CODING_LIFECYCLE_DOCTRINE).toContain("CODE TASKS CANNOT COMPLETE AS TEXT ONLY");
+    expect(CODING_LIFECYCLE_DOCTRINE).toContain("UNVERIFIED, PARTIAL, or BLOCKED");
+  });
+
+  it("keeps git safety + autonomy invariants", () => {
     const lower = CODING_LIFECYCLE_DOCTRINE.toLowerCase();
-    expect(lower).toContain("markdown");
-    expect(lower).toContain("scaffold");
-    expect(lower).toContain("not done");
-    // working code must be run/verified, not merely written or described
-    expect(lower).toContain("real implementation");
-    expect(lower).toContain("unverified");
+    expect(lower).toContain("never force-push");
+    expect(lower).toContain("never push directly to main");
+    expect(lower).toContain("branch from latest main");
+    expect(CODING_LIFECYCLE_DOCTRINE).toContain("AUTONOMY");
+    expect(lower).toContain("do not hand the operator work you can do yourself");
+  });
+});
+
+describe("JOB_COMPLETION_VALIDATOR — final synthesis gate", () => {
+  it("forces exactly one of COMPLETE/PARTIAL/BLOCKED on observed evidence", () => {
+    expect(JOB_COMPLETION_VALIDATOR).toContain("FINAL SYNTHESIS GATE");
+    for (const status of ["COMPLETE", "PARTIAL", "BLOCKED"]) {
+      expect(JOB_COMPLETION_VALIDATOR).toContain(status);
+    }
+    expect(JOB_COMPLETION_VALIDATOR).toContain("observed evidence from THIS run");
+  });
+
+  it("forbids COMPLETE for markdown-only / acknowledgement-only / unverified output", () => {
+    const lower = JOB_COMPLETION_VALIDATOR.toLowerCase();
+    expect(lower).toContain("markdown-only");
+    expect(lower).toContain("only an acknowledgement was sent");
+    expect(lower).toContain("never summarize a failed verification as success");
+  });
+});
+
+describe("GITHUB_RENDER_OPERATIONS_DOCTRINE — push ≠ deploy ≠ live", () => {
+  it("separates push, deploy, and live verification as distinct states", () => {
+    expect(GITHUB_RENDER_OPERATIONS_DOCTRINE).toContain("GITHUB + RENDER OPERATIONS DOCTRINE");
+    const lower = GITHUB_RENDER_OPERATIONS_DOCTRINE.toLowerCase();
+    expect(lower).toContain("a push is not complete until the remote github branch exists");
+    expect(lower).toContain("render deployment is not complete");
+    expect(lower).toContain("live web app is not verified until the deployed url");
+  });
+
+  it("bans 'pushed'/'deployed'/'live' claims without real evidence", () => {
+    expect(GITHUB_RENDER_OPERATIONS_DOCTRINE).toContain("BANNED CLAIMS");
+    const lower = GITHUB_RENDER_OPERATIONS_DOCTRINE.toLowerCase();
+    expect(lower).toContain('"pushed" is forbidden unless the remote branch/commit exists');
+    expect(lower).toContain('"deployed" is forbidden');
+    expect(lower).toContain('"live" is forbidden unless the public url returns the expected response');
+  });
+});
+
+describe("SENIOR_SWE_GENIUS_DOCTRINE + SWE skills", () => {
+  it("carries the genius loop: map → localize → root-cause → surgical patch → verify", () => {
+    expect(SENIOR_SWE_GENIUS_DOCTRINE).toContain("SENIOR SOFTWARE ENGINEERING GENIUS DOCTRINE");
+    expect(SENIOR_SWE_GENIUS_DOCTRINE).toContain("THE GENIUS LOOP");
+    for (const beat of ["MAP THE SYSTEM", "LOCALIZE BEFORE PATCHING", "ROOT-CAUSE HYPOTHESIS", "VERIFICATION LADDER", "REVIEW YOUR OWN DIFF"]) {
+      expect(SENIOR_SWE_GENIUS_DOCTRINE, `genius loop should include "${beat}"`).toContain(beat);
+    }
+  });
+
+  it("bundles the composable SWE skills", () => {
+    expect(SWE_SKILLS).toContain("REPO MAPPING SKILL");
+    expect(SWE_SKILLS).toContain("BUG LOCALIZATION SKILL");
+    expect(SWE_SKILLS).toContain("VERIFICATION SKILL");
+  });
+});
+
+describe("requestsCodeWork — deterministic coding/repo/deploy dispatch detector", () => {
+  it("fires on coding, repo, build, test, and deploy work", () => {
+    for (const m of [
+      "fix the bug in the api route",
+      "harden the deploy pipeline",
+      "run the tests and build",
+      "read the repo files and inspect the logs",
+      "refactor the orchestrator code",
+      "make ABBY a coding genius",
+    ]) {
+      expect(requestsCodeWork(m), `should dispatch as code work: "${m}"`).toBe(true);
+    }
+  });
+
+  it("does NOT fire on pure conversation", () => {
+    for (const m of ["who are you?", "what is the capital of France?", "summarize this in one line", "what's a good marketing strategy?"]) {
+      expect(requestsCodeWork(m), `should NOT fire on: "${m}"`).toBe(false);
+    }
+  });
+});
+
+describe("requestsGithubRenderWork — GitHub/Render operations detector", () => {
+  it("fires on repo/deploy operations", () => {
+    for (const m of ["push this to github", "trigger a render deploy", "create a PR for this", "verify the live url", "deploy to render and check the logs"]) {
+      expect(requestsGithubRenderWork(m), `should fire: "${m}"`).toBe(true);
+    }
+  });
+
+  it("does NOT fire on non-repo/deploy messages", () => {
+    for (const m of ["who are you?", "fix the typo in this sentence", "what's the weather"]) {
+      expect(requestsGithubRenderWork(m), `should NOT fire: "${m}"`).toBe(false);
+    }
   });
 });
