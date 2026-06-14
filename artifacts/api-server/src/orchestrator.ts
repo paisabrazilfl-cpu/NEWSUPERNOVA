@@ -39,6 +39,10 @@ import {
   SWARM_SAFETY_RULES,
   CODING_LIFECYCLE_DOCTRINE,
   ACCOUNT_POLICY_DOCTRINE,
+  JOB_COMPLETION_VALIDATOR,
+  GITHUB_RENDER_OPERATIONS_DOCTRINE,
+  SENIOR_SWE_GENIUS_DOCTRINE,
+  SWE_SKILLS,
   buildVaultCard,
   buildLiveReachCard,
 } from "./routes/ai";
@@ -757,7 +761,11 @@ export async function executeAgentCommand(opts: {
     // tool list plus which integrations are ONLINE/OFFLINE right now — so a
     // dispatched CLAW never "forgets" Tavily/Firecrawl/Composio/E2B exist, and
     // never pretends an offline one works.
-    const system = persona + toolGuide + buildLiveReachCard(agent.id) + EXECUTION_DOCTRINE + OPERATOR_INTENT_FIDELITY + RESEARCH_PLAYBOOKS + ANTI_HALLUCINATION_DIRECTIVE + TOOL_CALL_DISCIPLINE + SWARM_SAFETY_RULES + CODING_LIFECYCLE_DOCTRINE + ACCOUNT_POLICY_DOCTRINE + (await buildVaultCard());
+    // ABBY runs solo now, so the executing agent carries the COMPLETE ruleset
+    // the swarm defined — the core execution doctrines PLUS the job-completion
+    // gate, GitHub/Render ops, and senior-SWE discipline that previously lived
+    // only on the chat/synthesis path. Same rules the swarm ran by, in one agent.
+    const system = persona + toolGuide + buildLiveReachCard(agent.id) + EXECUTION_DOCTRINE + OPERATOR_INTENT_FIDELITY + RESEARCH_PLAYBOOKS + ANTI_HALLUCINATION_DIRECTIVE + TOOL_CALL_DISCIPLINE + SWARM_SAFETY_RULES + CODING_LIFECYCLE_DOCTRINE + JOB_COMPLETION_VALIDATOR + GITHUB_RENDER_OPERATIONS_DOCTRINE + SENIOR_SWE_GENIUS_DOCTRINE + SWE_SKILLS + ACCOUNT_POLICY_DOCTRINE + (await buildVaultCard());
 
     const messages: ChatMessage[] = [
       { role: "system", content: system },

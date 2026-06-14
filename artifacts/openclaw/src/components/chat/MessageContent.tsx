@@ -20,8 +20,8 @@ function CodeBlock({ lang, text }: { lang: string; text: string }) {
     });
   };
   return (
-    <div className="my-2 rounded-lg border border-card-border bg-background/70 overflow-hidden">
-      <div className="flex items-center justify-between px-3 py-1.5 border-b border-card-border bg-card/40">
+    <div className="my-2 rounded-lg border border-card-border bg-muted/60 overflow-hidden">
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-card-border bg-muted">
         <span className="text-[11px] font-mono text-muted-foreground">{lang || "code"}</span>
         <button
           onClick={copy}
@@ -32,7 +32,7 @@ function CodeBlock({ lang, text }: { lang: string; text: string }) {
           {copied ? "Copied" : "Copy"}
         </button>
       </div>
-      <pre className="p-3 overflow-x-auto text-[13px] leading-relaxed font-mono">
+      <pre className="p-3 overflow-x-auto text-[13px] leading-relaxed font-mono text-foreground">
         <code>{text}</code>
       </pre>
     </div>

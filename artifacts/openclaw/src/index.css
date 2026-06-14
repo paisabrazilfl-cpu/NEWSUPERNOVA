@@ -53,34 +53,34 @@
 :root,
 .dark {
   --background: 43 33% 96%;
-  --foreground: 222 22% 14%;
+  --foreground: 222 24% 13%;
 
-  --card: 222 16% 12%;
-  --card-foreground: 213 24% 95%;
-  --card-border: 220 13% 22%;
+  --card: 40 33% 99%;
+  --card-foreground: 222 24% 13%;
+  --card-border: 40 16% 85%;
 
-  --popover: 222 17% 11%;
-  --popover-foreground: 213 24% 95%;
-  --popover-border: 220 13% 22%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 222 24% 13%;
+  --popover-border: 40 16% 85%;
 
-  --primary: 190 68% 50%;
-  --primary-foreground: 200 45% 8%;
+  --primary: 190 72% 38%;
+  --primary-foreground: 0 0% 100%;
 
-  --secondary: 220 14% 18%;
-  --secondary-foreground: 213 20% 92%;
+  --secondary: 43 24% 90%;
+  --secondary-foreground: 222 22% 18%;
 
-  --muted: 220 14% 16%;
-  --muted-foreground: 217 13% 69%;
+  --muted: 43 22% 89%;
+  --muted-foreground: 220 12% 36%;
 
-  --accent: 255 58% 67%;
+  --accent: 255 55% 56%;
   --accent-foreground: 0 0% 100%;
 
-  --destructive: 0 70% 57%;
+  --destructive: 0 72% 48%;
   --destructive-foreground: 0 0% 100%;
 
-  --border: 220 13% 22%;
-  --input: 220 13% 24%;
-  --ring: 190 68% 50%;
+  --border: 40 16% 84%;
+  --input: 40 18% 87%;
+  --ring: 190 72% 38%;
 
   --app-font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   --app-font-serif: 'Inter', Georgia, serif;
