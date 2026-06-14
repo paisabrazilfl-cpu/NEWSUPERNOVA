@@ -57,6 +57,22 @@ export default defineConfig({
   build: {
     outDir: path.resolve(import.meta.dirname, "dist/public"),
     emptyOutDir: true,
+    // Split the one fat ~826KB bundle into cacheable vendor chunks so the
+    // browser loads them in parallel and reuses them across deploys (only the
+    // app chunk changes on most pushes). Faster first paint, faster repeat loads.
+    chunkSizeWarningLimit: 900,
+    rollupOptions: {
+      output: {
+        manualChunks(id: string) {
+          if (!id.includes("node_modules")) return undefined;
+          if (/[/\\]node_modules[/\\](react|react-dom|react-router|scheduler)[/\\]/.test(id)) return "react-vendor";
+          if (id.includes("@radix-ui") || id.includes("lucide-react") || id.includes("cmdk") || id.includes("vaul")) return "ui-vendor";
+          if (id.includes("recharts") || id.includes("d3-") || id.includes("victory")) return "charts-vendor";
+          if (id.includes("@tanstack")) return "query-vendor";
+          return "vendor";
+        },
+      },
+    },
   },
   server: {
     port,
