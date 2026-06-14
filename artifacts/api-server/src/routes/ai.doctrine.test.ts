@@ -28,6 +28,8 @@ import {
   requestsConnectedAccountAction,
   requestsCodeWork,
   requestsGithubRenderWork,
+  requestsSwarmExecution,
+  CHAT_NO_TOOLS_DIRECTIVE,
   buildLiveReachCard,
 } from "./ai";
 
@@ -568,6 +570,74 @@ describe("requestsCodeWork — deterministic coding/repo/deploy dispatch detecto
     for (const m of ["who are you?", "what is the capital of France?", "summarize this in one line", "what's a good marketing strategy?"]) {
       expect(requestsCodeWork(m), `should NOT fire on: "${m}"`).toBe(false);
     }
+  });
+});
+
+describe("requestsSwarmExecution — dispatch explicit swarm/search/research requests", () => {
+  it("fires when the operator explicitly invokes the swarm or its tools", () => {
+    for (const m of [
+      "100x this information and no rush use the swarm",
+      "use your online search and deepsearch this",
+      "deep search the latest solana token guides",
+      "run the swarm on this",
+      "use the web search for me",
+      "search the web for phantom wallet docs",
+      "dispatch CRAWLER to scrape this site",
+      "look up the current SOL price",
+      "find me the official spl-token CLI docs",
+      "research the best DEXes for a new token",
+      "google this and report back",
+    ]) {
+      expect(requestsSwarmExecution(m), `should dispatch as swarm work: "${m}"`).toBe(true);
+    }
+  });
+
+  it("fires on requests pinned to live/current data the inline reply cannot have", () => {
+    for (const m of [
+      "what's today's news on crypto",
+      "give me the latest prices for SOL and ETH",
+      "current weather in Miami right now",
+    ]) {
+      expect(requestsSwarmExecution(m), `should dispatch (live data): "${m}"`).toBe(true);
+    }
+  });
+
+  it("does NOT fire on pure conversation answerable inline", () => {
+    for (const m of [
+      "who are you?",
+      "what is VPD?",
+      "explain how the swarm works",
+      "summarize this in one line",
+      "thanks, that's helpful",
+      "what's a good marketing strategy in general?",
+    ]) {
+      expect(requestsSwarmExecution(m), `should NOT fire on: "${m}"`).toBe(false);
+    }
+  });
+});
+
+describe("CHAT_NO_TOOLS_DIRECTIVE — inline reply must not fake tool work", () => {
+  it("states the inline reply runs with no tools", () => {
+    expect(CHAT_NO_TOOLS_DIRECTIVE).toContain("NO TOOLS");
+    expect(CHAT_NO_TOOLS_DIRECTIVE.toLowerCase()).toContain("cannot search the web");
+  });
+
+  it("forbids emitting tool-call markup or narrating tool use", () => {
+    expect(CHAT_NO_TOOLS_DIRECTIVE.toLowerCase()).toContain("never emit tool-call json");
+    expect(CHAT_NO_TOOLS_DIRECTIVE.toLowerCase()).toContain("never narrate using a tool");
+  });
+
+  it("forbids fabricated search/sandbox/save results and invented links", () => {
+    const lower = CHAT_NO_TOOLS_DIRECTIVE.toLowerCase();
+    expect(lower).toContain("never claim you searched");
+    expect(lower).toContain("never invent urls");
+    expect(lower).toContain("download link");
+  });
+
+  it("points real tool work at dispatch to the CLAWs, not self-simulation", () => {
+    const lower = CHAT_NO_TOOLS_DIRECTIVE.toLowerCase();
+    expect(lower).toContain("dispatched to the claws");
+    expect(lower).toContain("do not simulate the swarm");
   });
 });
 
