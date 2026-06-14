@@ -278,7 +278,7 @@ export interface LlmChatRequest {
   headers: Record<string, string>;
   /** The model id to put in the request body (may be remapped for fallback). */
   model: string;
-  provider: "nvidia-nim" | "openrouter";
+  provider: "nvidia-nim" | "openrouter" | "bitdeer";
   /**
    * Provider-specific body defaults (sampling, template kwargs). Spread these
    * FIRST in the request body so call-site values win on key collisions.
@@ -297,7 +297,33 @@ export function chatRequestFor(model: string): LlmChatRequest {
   if (model.startsWith("or:")) {
     return openrouterRequestFor(model.slice(3));
   }
+  // Explicit Bitdeer selection: "bd:mistralai/Devstral-2-123B-Instruct-2512" → Bitdeer inference.
+  if (model.startsWith("bd:")) {
+    return bitdeerRequestFor(model.slice(3));
+  }
   return nimRequestFor(model);
+}
+
+// ─── Bitdeer (api-inference.bitdeer.ai) ──────────────────────────────────────
+// OpenAI-compatible inference provider. Activated by BITDEER_API_KEY. Selected
+// explicitly via the "bd:" model prefix (e.g. "bd:nvidia/NVIDIA-Nemotron-3-Super-
+// 120B-A12B"); the model id after the prefix is Bitdeer's own model id.
+const BITDEER_BASE = "https://api-inference.bitdeer.ai/v1";
+
+export function bitdeerConfigured(): boolean {
+  return !!process.env["BITDEER_API_KEY"];
+}
+
+export function bitdeerRequestFor(model: string): LlmChatRequest {
+  const key = process.env["BITDEER_API_KEY"];
+  if (!key) throw new Error("BITDEER_API_KEY is not set");
+  return {
+    url: `${BITDEER_BASE}/chat/completions`,
+    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+    model,
+    provider: "bitdeer",
+    bodyExtras: { temperature: 1, top_p: 1 },
+  };
 }
 
 // ─── OpenRouter ───────────────────────────────────────────────────────────────
@@ -612,7 +638,9 @@ export async function llmFetch(
 
 /** Human label for an LlmChatRequest's provider — for error messages the operator sees. */
 export function providerLabel(req: LlmChatRequest): string {
-  return req.provider === "openrouter" ? "OpenRouter" : "NVIDIA NIM";
+  if (req.provider === "openrouter") return "OpenRouter";
+  if (req.provider === "bitdeer") return "Bitdeer";
+  return "NVIDIA NIM";
 }
 
 // ─── Tavily web search ───────────────────────────────────────────────────────

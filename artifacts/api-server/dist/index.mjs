@@ -54344,6 +54344,8 @@ __export(integrations_exports, {
   NIM_MODEL_BANS: () => NIM_MODEL_BANS,
   NIM_MODEL_FALLBACKS: () => NIM_MODEL_FALLBACKS,
   advanceNimKey: () => advanceNimKey,
+  bitdeerConfigured: () => bitdeerConfigured,
+  bitdeerRequestFor: () => bitdeerRequestFor,
   chatRequestFor: () => chatRequestFor,
   composioConfigured: () => composioConfigured,
   composioConnect: () => composioConnect,
@@ -54480,7 +54482,24 @@ function chatRequestFor(model) {
   if (model.startsWith("or:")) {
     return openrouterRequestFor(model.slice(3));
   }
+  if (model.startsWith("bd:")) {
+    return bitdeerRequestFor(model.slice(3));
+  }
   return nimRequestFor(model);
+}
+function bitdeerConfigured() {
+  return !!process.env["BITDEER_API_KEY"];
+}
+function bitdeerRequestFor(model) {
+  const key = process.env["BITDEER_API_KEY"];
+  if (!key) throw new Error("BITDEER_API_KEY is not set");
+  return {
+    url: `${BITDEER_BASE}/chat/completions`,
+    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+    model,
+    provider: "bitdeer",
+    bodyExtras: { temperature: 1, top_p: 1 }
+  };
 }
 function openrouterConfigured() {
   return !!process.env["OPENROUTER_API_KEY"];
@@ -54648,7 +54667,9 @@ async function llmFetch(model, payload) {
   return { r, req };
 }
 function providerLabel(req) {
-  return req.provider === "openrouter" ? "OpenRouter" : "NVIDIA NIM";
+  if (req.provider === "openrouter") return "OpenRouter";
+  if (req.provider === "bitdeer") return "Bitdeer";
+  return "NVIDIA NIM";
 }
 function formatHits(provider, query, hits) {
   if (!hits.length) return `no web results for "${query}" (via ${provider}).`;
@@ -55043,7 +55064,7 @@ function integrationStatus() {
     { key: "image-generation", name: "Image generation (image_generate)", category: "tools", envVar: "IMAGE_API_KEY", configured: has("IMAGE_API_KEY") || has("DEEPINFRA_API_KEY") || has("OPENAI_API_KEY") }
   ];
 }
-var NVIDIA_NIM_BASE, HELICONE_GATEWAY, nimKeyIndex, NIM_AUTH_COOLDOWN_MS, nimDisabledUntil, nimDegradedUntil, MODEL_STALL_COOLDOWN_MS, modelStallUntil, NIM_PREFIXES, NIM_MODEL_FALLBACKS, NIM_GENERIC_FALLBACK, NIM_MODEL_BANS, OPENROUTER_BASE, OPENROUTER_FALLBACK_MODEL, OR_MODEL_MAP, NIM_FAST_MODEL, E2B_PKG, E2B_TIMEOUT_MS;
+var NVIDIA_NIM_BASE, HELICONE_GATEWAY, nimKeyIndex, NIM_AUTH_COOLDOWN_MS, nimDisabledUntil, nimDegradedUntil, MODEL_STALL_COOLDOWN_MS, modelStallUntil, NIM_PREFIXES, NIM_MODEL_FALLBACKS, NIM_GENERIC_FALLBACK, NIM_MODEL_BANS, BITDEER_BASE, OPENROUTER_BASE, OPENROUTER_FALLBACK_MODEL, OR_MODEL_MAP, NIM_FAST_MODEL, E2B_PKG, E2B_TIMEOUT_MS;
 var init_integrations = __esm({
   "src/lib/integrations.ts"() {
     "use strict";
@@ -55100,6 +55121,7 @@ var init_integrations = __esm({
       // capable and returns 200 under load.
       "nvidia/nemotron-3-ultra-550b-a55b": "openai/gpt-oss-120b"
     };
+    BITDEER_BASE = "https://api-inference.bitdeer.ai/v1";
     OPENROUTER_BASE = "https://openrouter.ai/api/v1";
     OPENROUTER_FALLBACK_MODEL = process.env["OPENROUTER_FALLBACK_MODEL"] ?? "openai/gpt-4o-mini";
     OR_MODEL_MAP = {
@@ -117461,7 +117483,8 @@ function rescueRawToolCalls(text2) {
 }
 function resolveModel(agentId, agentModel, override) {
   const candidate = typeof override === "string" && override.trim() ? override : agentModel ?? ABBY_DEFAULT_MODEL;
-  if (agentId === ABBY_ID && !candidate.startsWith("x-ai/") && !candidate.startsWith("z-ai/") && !candidate.startsWith("openai/") && !candidate.startsWith("nvidia/nemotron") && !candidate.startsWith("moonshotai/") && !candidate.startsWith("deepseek-ai/") && !candidate.startsWith("or:")) {
+  if (agentId === ABBY_ID && !candidate.startsWith("x-ai/") && !candidate.startsWith("z-ai/") && !candidate.startsWith("openai/") && !candidate.startsWith("nvidia/nemotron") && !candidate.startsWith("moonshotai/") && !candidate.startsWith("deepseek-ai/") && !candidate.startsWith("qwen/") && !candidate.startsWith("mistralai/") && !candidate.startsWith("meta/") && !candidate.startsWith("or:") && // explicit OpenRouter selection
+  !candidate.startsWith("bd:")) {
     return ABBY_DEFAULT_MODEL;
   }
   return candidate;
@@ -117496,11 +117519,18 @@ var OPENROUTER_FEATURED_MODELS = [
   { id: "or:meta-llama/llama-3.3-70b-instruct", name: "Llama 3.3 70B (OpenRouter)", context_length: 131072 },
   { id: "or:mistralai/mistral-medium-3", name: "Mistral Medium 3 (OpenRouter)", context_length: 131072 }
 ];
+var BITDEER_FEATURED_MODELS = [
+  { id: "bd:mistralai/Devstral-2-123B-Instruct-2512", name: "Bitdeer \xB7 Devstral 2 123B (code)", context_length: 131072 },
+  { id: "bd:nvidia/NVIDIA-Nemotron-3-Super-120B-A12B", name: "Bitdeer \xB7 Nemotron 3 Super 120B (reasoning)", context_length: 131072 },
+  { id: "bd:nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning", name: "Bitdeer \xB7 Nemotron Nano 30B (reasoning)", context_length: 131072 },
+  { id: "bd:google/gemma-4-E4B-it", name: "Bitdeer \xB7 Gemma 4 E4B (fast)", context_length: 131072 }
+];
 router7.get("/ai/models", async (_req, res) => {
-  const { openrouterConfigured: openrouterConfigured2 } = await Promise.resolve().then(() => (init_integrations(), integrations_exports));
+  const { openrouterConfigured: openrouterConfigured2, bitdeerConfigured: bitdeerConfigured2 } = await Promise.resolve().then(() => (init_integrations(), integrations_exports));
   const models = [
     ...NIM_FEATURED_MODELS,
-    ...openrouterConfigured2() ? OPENROUTER_FEATURED_MODELS : []
+    ...openrouterConfigured2() ? OPENROUTER_FEATURED_MODELS : [],
+    ...bitdeerConfigured2() ? BITDEER_FEATURED_MODELS : []
   ];
   res.json({ models });
 });
