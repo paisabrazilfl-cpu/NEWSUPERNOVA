@@ -183,25 +183,38 @@ export function resultWasBlocked(result: string): boolean {
 
 /**
  * Total solve budget per operator goal, expressed as a multiple of a single
- * run: at most MAX_SOLVE_CYCLES dispatch rounds INCLUDING the initial one, so
- * the default of 8 caps total spend at 8× one single run. The budget is SHARED
- * between the coordinator review loop and the solution gate — corrective
- * rounds from either draw from the same pool. The contract: the final output
- * the operator reads must BE a solution to their input — if a review or the
- * gate judges it isn't, the swarm keeps solving until it is or the budget runs
- * out (in which case the gap is reported honestly, never papered over).
+ * run. There is NO fixed round count: the swarm keeps cycling — try → if the
+ * solution gate says it isn't solved, research a fix (web_search/scrape) and try
+ * that → re-judge — for AS MANY rounds as it keeps making real, source-backed
+ * progress. Two conditions END the loop, never an arbitrary number:
+ *   1. SOLVED — the gate confirms the briefing solves the operator's input, with
+ *      its key claims backed by tool results / sources (so it cannot be a
+ *      hallucinated "done").
+ *   2. STALLED — MAX_SOLVE_STALL consecutive corrective rounds produced no new
+ *      progress (no new non-blocked result AND the gate's objection didn't
+ *      change), i.e. even researching the fix isn't moving it. Then the remaining
+ *      gap is reported HONESTLY (never papered over as solved).
  *
- * Default raised 4 → 8 (operator wants "don't stop until it's done"): more
- * corrective rounds before the swarm concedes, so a goal that needs research +
- * a couple of self-correct passes actually finishes instead of stopping at
- * "round 4/4 — NOT FULLY SOLVED". This does NOT risk an infinite/runaway loop:
- * the per-CLAW anti-spin guards (MAX_IDENTICAL_CALL_ATTEMPTS, MAX_NO_PROGRESS_
- * STREAK) still cut off flailing within each round, and a round that makes no
- * real progress ends — the extra budget buys persistence on PROGRESS, not spin.
- * Operator-tunable via MAX_SOLVE_CYCLES without a redeploy (raise it further for
- * very long missions, lower it to cap cost).
+ * MAX_SOLVE_CYCLES is now only a high SAFETY CEILING (default 50) — a backstop
+ * against a pathological run that somehow "progresses" forever; a real task
+ * terminates on SOLVED or STALLED long before it. Per-CLAW anti-spin guards
+ * (MAX_IDENTICAL_CALL_ATTEMPTS, MAX_NO_PROGRESS_STREAK) still stop within-round
+ * flailing. Both the ceiling and the stall threshold are env-tunable
+ * (MAX_SOLVE_CYCLES / MAX_SOLVE_STALL) without a redeploy.
  */
-export const MAX_SOLVE_CYCLES = Number(process.env["MAX_SOLVE_CYCLES"]) > 0 ? Number(process.env["MAX_SOLVE_CYCLES"]) : 8;
+export const MAX_SOLVE_CYCLES = Number(process.env["MAX_SOLVE_CYCLES"]) > 0 ? Number(process.env["MAX_SOLVE_CYCLES"]) : 50;
+
+/**
+ * STALL THRESHOLD — the REAL terminator (not a round count). After this many
+ * CONSECUTIVE corrective rounds that make no progress — no new non-blocked CLAW
+ * result AND the solution gate's objection is unchanged — the swarm concedes and
+ * reports the gap honestly, because more identical-outcome rounds would just burn
+ * budget on the same wall (the agents were already told to web_search a fix; if
+ * even that yields nothing new for MAX_SOLVE_STALL rounds, it is genuinely stuck).
+ * A round that DOES make progress resets the counter, so a solvable task runs as
+ * long as it keeps advancing. Env-tunable via MAX_SOLVE_STALL.
+ */
+export const MAX_SOLVE_STALL = Number(process.env["MAX_SOLVE_STALL"]) > 0 ? Number(process.env["MAX_SOLVE_STALL"]) : 3;
 
 /**
  * SOLUTION GATE — the verifier contract appended when ABBY judges whether the
@@ -216,6 +229,13 @@ deliverable exists and is complete. A status report, a plan, a partial answer,
 or "we couldn't" without exhausting the swarm's tools is NOT a solution.
 Judge ONLY on evidence present in the briefing/results. Be strict: when in
 doubt, the goal is NOT solved.
+EVERY KEY CLAIM NEEDS A SOURCE (no hallucination may pass): mark solved=true only
+if the briefing's important factual claims are each backed by REAL evidence
+gathered THIS run — a tool result, a fetched/cited URL, or code-execution output,
+ideally cited inline. A confident-sounding answer with no source or tool result
+behind its claims is NOT solved (it risks being fabricated): set solved=false and
+issue a corrective directive to GO FETCH the evidence (web_search then scrape the
+authoritative source, or run the code) before the answer can pass.
 CODE GOALS NEED WORKING CODE, NOT DOCS: when the operator asked for software, an
 app, a feature, a script, or a fix, the goal is solved ONLY if the briefing
 contains the actual working code AND evidence it runs — real code-execution
@@ -1206,10 +1226,15 @@ Respond with ONLY a JSON array (no prose, no code fences) of objects shaped: {"a
       sourceContext,
     );
 
-    // Shared solve budget: total dispatch rounds for this goal, counting the
-    // initial round above. Capped at MAX_SOLVE_CYCLES (default 4 = 4× one
-    // single run); the coordinator loop and the solution gate both draw from it.
+    // Shared solve state for this goal. solveRoundsUsed counts dispatch rounds
+    // (incl. the initial one above). solveStall counts CONSECUTIVE corrective
+    // rounds that made no progress — it, not a round count, is what ends the
+    // loop: the swarm keeps cycling (try → research a fix → retry) while it is
+    // advancing, and only concedes after MAX_SOLVE_STALL no-progress rounds (or
+    // the MAX_SOLVE_CYCLES safety ceiling). Both the coordinator loop and the
+    // solution gate share this state.
     let solveRoundsUsed = 1;
+    let solveStall = 0;
 
     // ── ABBY coordinator solve loop ──
     // ABBY reviews the CLAWs' real results against the goal and keeps issuing
@@ -1223,7 +1248,7 @@ Respond with ONLY a JSON array (no prose, no code fences) of objects shaped: {"a
     // blocked agent reports back and gets re-routed/fixed instead of stalling.
     const initiallyBlocked = results.some((r) => resultWasBlocked(r.result));
     if (results.length && !isSwarmPaused() && (!forceAgentId || initiallyBlocked)) {
-      while (solveRoundsUsed < MAX_SOLVE_CYCLES && !isSwarmPaused()) {
+      while (solveRoundsUsed < MAX_SOLVE_CYCLES && solveStall < MAX_SOLVE_STALL && !isSwarmPaused()) {
         await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, ABBY_ID));
         // Which CLAWs reported back BLOCKED this round — ABBY must triage them.
         const blocked = results.filter((r) => resultWasBlocked(r.result));
@@ -1260,8 +1285,8 @@ Otherwise respond with ONLY a JSON array (no prose, no code fences) of up to 2 f
           agentColor: abby?.color ?? ABBY_COLOR,
           content:
             (recovering
-              ? `Recovery round ${solveRoundsUsed + 1}/${MAX_SOLVE_CYCLES}: ${[...new Set(blocked.map((b) => b.name))].join(", ")} reported blocked — re-routing / changing approach:\n\n`
-              : `Solve round ${solveRoundsUsed + 1}/${MAX_SOLVE_CYCLES}: goal not yet solved. Corrective round:\n\n`) +
+              ? `Recovery round ${solveRoundsUsed + 1}: ${[...new Set(blocked.map((b) => b.name))].join(", ")} reported blocked — re-routing / changing approach:\n\n`
+              : `Solve round ${solveRoundsUsed + 1}: goal not yet solved. Corrective round:\n\n`) +
             followups
               .map((d) => {
                 const c = claws.find((x) => x.id === d.agentId);
@@ -1274,6 +1299,11 @@ Otherwise respond with ONLY a JSON array (no prose, no code fences) of up to 2 f
         solveRoundsUsed++;
         if (!more.length) break; // dispatch produced nothing (paused/unknown agents) — stop cycling
         results.push(...more);
+        // Progress accounting: a round that produced at least one new non-blocked
+        // result is advancing; otherwise it stalled. MAX_SOLVE_STALL consecutive
+        // stalls end the loop (above), so persistence is gated on progress, not a
+        // fixed count.
+        solveStall = more.some((r) => !resultWasBlocked(r.result)) ? 0 : solveStall + 1;
       }
     }
 
@@ -1308,15 +1338,17 @@ Otherwise respond with ONLY a JSON array (no prose, no code fences) of up to 2 f
 
       // ── SOLUTION GATE ──
       // The final output the operator reads must BE a solution to their input.
-      // ABBY verifies the briefing against the goal; if it doesn't solve it,
-      // the verdict's corrective directives are dispatched and the briefing is
-      // re-synthesized — cycling until it passes or the SHARED solve budget
-      // (the same pool the coordinator loop drew from, total ≤ MAX_SOLVE_CYCLES
-      // dispatch rounds including the first) runs out, in which case the
-      // remaining gap is stated honestly in the briefing itself.
+      // ABBY verifies the briefing against the goal; if it doesn't solve it, the
+      // verdict's corrective directives are dispatched (the agents research a fix
+      // online and retry) and the briefing is re-synthesized — cycling with NO
+      // fixed round count until either the gate PASSES (solved, with sourced
+      // claims) or the run STALLS (MAX_SOLVE_STALL consecutive no-progress rounds,
+      // or the MAX_SOLVE_CYCLES safety ceiling), in which case the remaining gap
+      // is stated honestly in the briefing itself — never papered over as solved.
       // Skipped for forceAgentId runs (single-shot actions must not repeat).
       if (finalAnswer && !forceAgentId) {
         let gateChecks = 0;
+        let lastGateReason = "";
         while (!isSwarmPaused()) {
           gateChecks++;
           const gateUser = `Operator input: "${goal}"
@@ -1367,25 +1399,40 @@ Respond with ONLY a JSON object (no prose, no code fences) shaped:
             finalAnswer += `\n\n---\n_Solution-gate note: the verifier objected that the swarm should have done something outside its real toolset (it has no access to the repository or any local filesystem), so that objection was overridden. The briefing above is the swarm's verified answer; any remaining blocker is stated in it and is the operator's to resolve._`;
             break;
           }
-          const budgetLeft = solveRoundsUsed < MAX_SOLVE_CYCLES;
+          // No fixed round count: keep cycling while the swarm is still making
+          // progress. Stop only when it has STALLED (MAX_SOLVE_STALL consecutive
+          // no-progress rounds) or hit the high safety ceiling.
+          const reasonNorm = (verdict.reason || "").trim().toLowerCase().slice(0, 160);
+          const keepGoing = solveRoundsUsed < MAX_SOLVE_CYCLES && solveStall < MAX_SOLVE_STALL;
           await postMessage({
             channelId,
             agentId: ABBY_ID,
             agentName: "ABBY",
             agentColor: abby?.color ?? ABBY_COLOR,
-            content: `Solution gate (round ${solveRoundsUsed}/${MAX_SOLVE_CYCLES} used): briefing does not yet solve the goal — ${verdict.reason || "gap unspecified"}.${budgetLeft && fixes.length ? " Dispatching corrective round." : ""}`,
+            content: `Solution gate (round ${solveRoundsUsed}): briefing does not yet solve the goal — ${verdict.reason || "gap unspecified"}.${keepGoing && fixes.length ? " Researching a fix and retrying." : ""}`,
             messageType: "system",
           });
 
-          if (!budgetLeft || !fixes.length || isSwarmPaused()) {
-            // Budget spent (or no actionable fix): report the gap honestly in
-            // the deliverable itself — never present an unsolved goal as solved.
-            finalAnswer += `\n\n---\n⚠️ SOLUTION GATE — NOT FULLY SOLVED after ${solveRoundsUsed} dispatch round${solveRoundsUsed === 1 ? "" : "s"} (UNVERIFIED): ${verdict.reason || "the briefing does not fully solve the operator's input"}. The above is the swarm's best verified progress, not a complete solution.`;
+          if (!keepGoing || !fixes.length || isSwarmPaused()) {
+            // Stalled, no actionable fix, or ceiling reached: report the gap
+            // honestly in the deliverable itself — never present an unsolved goal
+            // as solved.
+            const why = !fixes.length
+              ? "no further action the swarm's tools can take"
+              : `repeated attempts (including researching the fix) stopped making progress`;
+            finalAnswer += `\n\n---\n⚠️ SOLUTION GATE — NOT FULLY SOLVED after ${solveRoundsUsed} dispatch round${solveRoundsUsed === 1 ? "" : "s"} (UNVERIFIED): ${verdict.reason || "the briefing does not fully solve the operator's input"} — ${why}. The above is the swarm's best verified progress, not a complete solution.`;
             break;
           }
           const more = await dispatchDirectives(fixes, claws, channelId, priority, abby, sourceContext);
           solveRoundsUsed++;
           if (more.length) results.push(...more);
+          // Progress accounting: advancing if this round added a new non-blocked
+          // result AND the gate's objection changed; otherwise it stalled. A run
+          // that keeps advancing keeps going; MAX_SOLVE_STALL stalls in a row end
+          // it (above) so it can't loop forever on the same wall.
+          const progressed = more.some((r) => !resultWasBlocked(r.result)) && reasonNorm !== lastGateReason;
+          solveStall = progressed ? 0 : solveStall + 1;
+          lastGateReason = reasonNorm;
           const redone = await synthesize();
           if (redone) finalAnswer = redone;
         }
