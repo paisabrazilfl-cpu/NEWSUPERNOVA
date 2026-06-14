@@ -52,8 +52,8 @@
 /* Calm, legible dark theme. One source of truth — both :root and .dark share it. */
 :root,
 .dark {
-  --background: 222 18% 9%;
-  --foreground: 213 24% 95%;
+  --background: 43 33% 96%;
+  --foreground: 222 22% 14%;
 
   --card: 222 16% 12%;
   --card-foreground: 213 24% 95%;
