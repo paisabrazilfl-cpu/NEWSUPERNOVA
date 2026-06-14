@@ -692,6 +692,7 @@ const NIM_FEATURED_MODELS = [
   { id: "mistralai/mistral-medium-3.5-128b", name: "Mistral Medium 3.5 128B (NIM)", context_length: 131072 },
   { id: "mistralai/mistral-small-4-119b-2603", name: "Mistral Small 4 119B (NIM)", context_length: 131072 },
   { id: "z-ai/glm-5.1", name: "Zhipu GLM-5.1 (NIM)", context_length: 131072 },
+  { id: "stepfun-ai/step-3.7-flash", name: "StepFun Step 3.7 Flash (NIM, fast)", context_length: 256000 },
 ];
 
 // OpenRouter models — available as direct model selections (not just fallback).

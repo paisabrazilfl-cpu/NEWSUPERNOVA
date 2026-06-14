@@ -330,6 +330,7 @@ const OR_MODEL_MAP: Record<string, string> = {
   "mistralai/mistral-small-4-119b-2603": "mistralai/mistral-small",
   "z-ai/glm-5.1": "qwen/qwen3-72b", // no GLM on OR, fallback to Qwen
   "moonshotai/kimi-k2.6": "qwen/qwen3-72b",
+  "stepfun-ai/step-3.7-flash": "openai/gpt-4o-mini", // no StepFun on OR → fast GPT-4o mini
 };
 
 export function openrouterConfigured(): boolean {
@@ -381,6 +382,17 @@ function nimRequestFor(model: string, opts?: { bypassHealthGate?: boolean }): Ll
   if (effectiveModel.startsWith("nvidia/nemotron")) {
     const thinking = (process.env["NIM_ENABLE_THINKING"] ?? "off").toLowerCase() === "on";
     bodyExtras["chat_template_kwargs"] = { enable_thinking: thinking };
+  }
+  // mistral-medium-3.5-128b supports reasoning_effort (high/medium/low).
+  // Verified in NVIDIA NIM sample code — "high" gives best quality.
+  // Override with NIM_MISTRAL_REASONING env var.
+  if (effectiveModel === "mistralai/mistral-medium-3.5-128b") {
+    bodyExtras["reasoning_effort"] = process.env["NIM_MISTRAL_REASONING"] ?? "high";
+  }
+  // stepfun-ai models: provider-verified sampling params from NIM sample.
+  if (effectiveModel.startsWith("stepfun-ai/")) {
+    bodyExtras["temperature"] = 1.0;
+    bodyExtras["top_p"] = 0.95;
   }
   return {
     url: `${llmBaseUrl()}/chat/completions`,
