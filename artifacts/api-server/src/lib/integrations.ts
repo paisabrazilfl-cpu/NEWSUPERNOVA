@@ -278,7 +278,7 @@ export interface LlmChatRequest {
   headers: Record<string, string>;
   /** The model id to put in the request body (may be remapped for fallback). */
   model: string;
-  provider: "nvidia-nim";
+  provider: "nvidia-nim" | "openrouter";
   /**
    * Provider-specific body defaults (sampling, template kwargs). Spread these
    * FIRST in the request body so call-site values win on key collisions.
@@ -288,12 +288,70 @@ export interface LlmChatRequest {
 
 /**
  * Resolve the chat-completions endpoint, auth headers, and effective model id
- * for a given model. Every model routes to NVIDIA NIM (integrate.api.nvidia.com),
- * optionally through the Helicone gateway — NIM is the only LLM provider. Throws
- * only when NVIDIA_API_KEY is missing entirely.
+ * for a given model. NIM is the primary provider. Models prefixed with "or:"
+ * route directly to OpenRouter (OPENROUTER_API_KEY required). Falls back to
+ * OpenRouter when NIM is exhausted. Throws only when the required key is missing.
  */
 export function chatRequestFor(model: string): LlmChatRequest {
+  // Explicit OpenRouter selection: "or:openai/gpt-4o" → openrouterRequestFor("openai/gpt-4o")
+  if (model.startsWith("or:")) {
+    return openrouterRequestFor(model.slice(3));
+  }
   return nimRequestFor(model);
+}
+
+// ─── OpenRouter ───────────────────────────────────────────────────────────────
+// OpenAI-compatible fallback provider. Activated when OPENROUTER_API_KEY is
+// set. Only used when NIM's full survival kit (key rotation, backoff, fast-model
+// retry, escape) has been exhausted — OpenRouter is the last-resort backstop,
+// not the primary path. Model IDs are mapped to OpenRouter equivalents where
+// needed. Env-tunable fallback model via OPENROUTER_FALLBACK_MODEL.
+
+const OPENROUTER_BASE = "https://openrouter.ai/api/v1";
+
+// Default fallback model on OpenRouter: fast, cheap, reliable.
+// Override with OPENROUTER_FALLBACK_MODEL env var.
+const OPENROUTER_FALLBACK_MODEL =
+  process.env["OPENROUTER_FALLBACK_MODEL"] ?? "openai/gpt-4o-mini";
+
+// Best-effort mapping from NIM model ids to their OpenRouter equivalents.
+// Models not in this map use the NIM id as-is (OpenRouter supports many of the
+// same model ids e.g. meta-llama/*, mistralai/*, deepseek/*).
+const OR_MODEL_MAP: Record<string, string> = {
+  "openai/gpt-oss-120b": "openai/gpt-4o",
+  "nvidia/nemotron-3-super-120b-a12b": "nvidia/llama-3.1-nemotron-70b-instruct",
+  "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning": "nvidia/llama-3.1-nemotron-70b-instruct",
+  "meta/llama-3.1-8b-instruct": "meta-llama/llama-3.1-8b-instruct",
+  "deepseek-ai/deepseek-v4-pro": "deepseek/deepseek-chat",
+  "deepseek-ai/deepseek-v4-flash": "deepseek/deepseek-chat",
+  "qwen/qwen3.5-397b-a17b": "qwen/qwen3-235b-a22b",
+  "qwen/qwen3.5-122b-a10b": "qwen/qwen3-72b",
+  "mistralai/mistral-medium-3.5-128b": "mistralai/mistral-medium-3",
+  "mistralai/mistral-small-4-119b-2603": "mistralai/mistral-small",
+  "z-ai/glm-5.1": "qwen/qwen3-72b", // no GLM on OR, fallback to Qwen
+  "moonshotai/kimi-k2.6": "qwen/qwen3-72b",
+};
+
+export function openrouterConfigured(): boolean {
+  return !!process.env["OPENROUTER_API_KEY"];
+}
+
+export function openrouterRequestFor(nimModel: string): LlmChatRequest {
+  const key = process.env["OPENROUTER_API_KEY"];
+  if (!key) throw new Error("OPENROUTER_API_KEY is not set");
+  const orModel = OR_MODEL_MAP[nimModel] ?? nimModel;
+  return {
+    url: `${OPENROUTER_BASE}/chat/completions`,
+    headers: {
+      Authorization: `Bearer ${key}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": "https://bos-aura.onrender.com",
+      "X-Title": "OPENCLAW OMEGA",
+    },
+    model: orModel,
+    provider: "openrouter",
+    bodyExtras: { temperature: 0.6, top_p: 0.95 },
+  };
 }
 
 /**
@@ -507,19 +565,42 @@ export async function llmFetch(
   // FINAL ESCAPE — the whole NIM gauntlet (key rotation, backoff, fast-model
   // retry) failed and the key is VALID (429/5xx, not auth). Mark NIM degraded so
   // the next calls skip the gauntlet entirely, and give THIS call one last
-  // direct, health-gate-bypassing NIM attempt before the failure is surfaced.
+  // direct, health-gate-bypassing NIM attempt before routing to OpenRouter.
   if (!r.ok && req.provider === "nvidia-nim") {
     reportNimDegraded(`HTTP ${r.status} after key rotation, backoff, and fast-model retry`);
     req = nimEscapeRequestFor(model);
     r = await timedFetch(req, body, externalSignal);
   }
 
+  // ── OpenRouter fallback ───────────────────────────────────────────────────
+  // NIM's entire survival kit (key rotation, stall failover, backoff, escape)
+  // has been exhausted. If OPENROUTER_API_KEY is configured, route this call
+  // to OpenRouter as a last-resort backstop — same OpenAI-compatible API shape,
+  // different infra, so NIM outages don't take the whole swarm down.
+  if (!r.ok && openrouterConfigured()) {
+    const orReq = openrouterRequestFor(model);
+    logger.warn(
+      { nimStatus: r.status, nimModel: req.model, orModel: orReq.model },
+      "NIM exhausted — falling back to OpenRouter.",
+    );
+    try {
+      const orR = await timedFetch(orReq, body, externalSignal);
+      if (orR.ok) {
+        return { r: orR, req: orReq };
+      }
+      // OpenRouter also failed — log but surface the NIM error (it's the primary).
+      logger.warn({ orStatus: orR.status, orModel: orReq.model }, "OpenRouter fallback also failed — surfacing NIM error.");
+    } catch (orErr) {
+      logger.warn({ err: String(orErr) }, "OpenRouter fallback threw — surfacing NIM error.");
+    }
+  }
+
   return { r, req };
 }
 
 /** Human label for an LlmChatRequest's provider — for error messages the operator sees. */
-export function providerLabel(_req: LlmChatRequest): string {
-  return "NVIDIA NIM";
+export function providerLabel(req: LlmChatRequest): string {
+  return req.provider === "openrouter" ? "OpenRouter" : "NVIDIA NIM";
 }
 
 // ─── Tavily web search ───────────────────────────────────────────────────────
