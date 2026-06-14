@@ -1,21 +1,179 @@
+````md id="secrets-vault"
+
+# secrets-vault
+
+## security model
+
+The OPENCLAW vault is a **sealed secret-injection system** designed to ensure that credentials never pass through:
+
+- chat history
+- LLM context window
+- database message logs
+- tool telemetry payloads
+- API request bodies (persisted)
+
 ---
-name: secrets-vault
-description: Security model and non-obvious constraints for the OPENCLAW encrypted secrets vault and how agents consume secrets.
+
+## core invariant
+
+> Secrets must only exist in memory at the moment of outbound execution, never in persistent state.
+
 ---
 
-# Secrets vault security model
+## secret representation model
 
-The vault exists specifically because chat is persisted to the DB **and** sent to the LLM — pasting a credential into chat leaks it. So secrets must never travel through chat, model context, message log, or tool-call telemetry.
+### stored form (persistent)
+```ts id="vault_1"
+{{secret:NAME}}
+````
 
-## Non-obvious constraints (don't regress these)
+* this is the ONLY value stored in:
 
-- **Resolve placeholders only at the moment of use.** Agents reference secrets as `{{secret:NAME}}`. The literal placeholder is what gets stored in `tool_calls.args` / telemetry; the raw value is substituted in-memory right before the outbound fetch. Storing the resolved value anywhere defeats the whole feature.
-- **Redact reflected secrets from tool results.** An endpoint can echo your request back (echo/debug APIs, verbose error bodies, auth introspection). The orchestrator persists `toolResult` to `tool_calls.result`, a `tool_output` message, AND the next model turn. So any value injected into an `http_request` must be stripped back out of the response before returning. Track injected values (the `used` set in `substituteSecrets`) and run `redactSecrets` on the response + error string.
-  **Why:** without this, a single echo endpoint reflects the secret straight into the model context and DB — the exact leak the vault was built to prevent.
-  **How to apply:** any NEW tool that consumes secrets must do the same collect-then-redact, not just `http_request`.
-- **Fail closed on the encryption key.** Key = `scryptSync(SESSION_SECRET, ...)`. There is intentionally NO insecure default — if `SESSION_SECRET` is unset, vault ops throw. Rotating `SESSION_SECRET` permanently invalidates all stored secrets (can't decrypt).
-- **Write-only API.** No route or tool ever returns a decrypted value. `vault_list` returns names + descriptions only.
+  * DB
+  * tool_calls.args
+  * orchestrator logs
+  * message history
 
-## Access control
+---
 
-The vault routes are gated behind operator auth (see [operator-auth](operator-auth.md)). `/api/vault*` rejects callers without a valid operator session; the 401 body is generic so secret names are never disclosed to anonymous callers.
+### resolved form (ephemeral only)
+
+```ts id="vault_2"
+REAL_SECRET_VALUE
+```
+
+* exists ONLY in runtime memory
+* injected immediately before outbound request
+* must NEVER be persisted or logged
+
+---
+
+## secret injection pipeline
+
+### 1. substitution phase
+
+```ts id="vault_3"
+function substituteSecrets(input: any, vault: Record<string, string>) {
+  const used = new Set<string>();
+
+  const resolved = JSON.parse(JSON.stringify(input), (_, value) => {
+    if (typeof value !== "string") return value;
+
+    const match = value.match(/\{\{secret:([A-Z0-9_]+)\}\}/);
+
+    if (!match) return value;
+
+    const key = match[1];
+    used.add(key);
+
+    return vault[key];
+  });
+
+  return { resolved, used };
+}
+```
+
+---
+
+## 2. redaction phase (CRITICAL)
+
+Any response from external systems MUST be sanitized:
+
+```ts id="vault_4"
+function redactSecrets(output: any, used: Set<string>, vault: Record<string, string>) {
+  let text = JSON.stringify(output);
+
+  for (const key of used) {
+    const value = vault[key];
+    if (!value) continue;
+
+    text = text.replaceAll(value, "[REDACTED_SECRET]");
+  }
+
+  return JSON.parse(text);
+}
+```
+
+---
+
+## 3. reflection attack protection
+
+Any of the following MUST be assumed hostile:
+
+* echo APIs
+* debug endpoints
+* verbose auth errors
+* upstream API error dumps
+
+### rule:
+
+> If it can reflect input, it can leak secrets.
+
+---
+
+## enforcement requirement
+
+Every tool consuming secrets MUST implement BOTH:
+
+* `substituteSecrets()` BEFORE execution
+* `redactSecrets()` AFTER execution
+
+---
+
+## fail-closed security rule
+
+```ts id="vault_5"
+if (!process.env.SESSION_SECRET) {
+  throw new Error("VAULT_UNAVAILABLE: missing encryption key");
+}
+```
+
+---
+
+## write isolation rule
+
+The following are STRICTLY forbidden:
+
+* storing resolved secrets in DB
+* persisting outbound request bodies after substitution
+* logging full HTTP request payloads
+* returning raw tool results without redaction
+
+---
+
+## operator access control
+
+Vault APIs are protected by:
+
+* operator-auth middleware
+* session-bound HMAC token validation
+
+Unauthorized access MUST return:
+
+```json id="vault_6"
+{ "authenticated": false }
+```
+
+(no metadata, no schema leakage, no secret names)
+
+---
+
+## system invariant
+
+> A secret that appears in persistent storage is a system failure.
+
+---
+
+## security principle
+
+* chat is untrusted
+* model context is untrusted
+* tools are untrusted
+* only runtime injection layer is trusted
+
+---
+
+END OF SPEC
+
+```
+```
