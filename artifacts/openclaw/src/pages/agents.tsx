@@ -1,9 +1,40 @@
-import { useListAgents } from "@workspace/api-client-react";
+import { useListAgents, resolveApiUrl } from "@workspace/api-client-react";
+import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 import { AgentStatusDot } from "@/components/ui/agent-status-dot";
 import { Terminal, Cpu, Activity, AlertTriangle, RefreshCw } from "lucide-react";
 
+interface ModelOpt { id: string; name: string; context_length?: number }
+
 export default function Agents() {
   const { data: agents = [], isLoading, isError, refetch } = useListAgents();
+  const [savingId, setSavingId] = useState<number | null>(null);
+
+  // Every LLM wired to the system — NIM catalog + OpenRouter (GET /api/ai/models).
+  const { data: modelData } = useQuery<{ models: ModelOpt[] }>({
+    queryKey: ["ai-models"],
+    queryFn: async () => {
+      const r = await fetch(resolveApiUrl("/api/ai/models"), { credentials: "include" });
+      if (!r.ok) throw new Error("failed to load models");
+      return r.json();
+    },
+  });
+  const models = modelData?.models ?? [];
+
+  const setModel = async (agentId: number, model: string) => {
+    setSavingId(agentId);
+    try {
+      await fetch(resolveApiUrl(`/api/agents/${agentId}`), {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ model }),
+      });
+      await refetch();
+    } finally {
+      setSavingId(null);
+    }
+  };
 
   return (
     <div className="flex-1 flex flex-col h-full bg-background overflow-hidden relative">
@@ -15,7 +46,7 @@ export default function Agents() {
         </div>
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-foreground">Agents</h1>
-          <p className="text-sm text-muted-foreground mt-1">Your six AI agents and the tools each one can use.</p>
+          <p className="text-sm text-muted-foreground mt-1">Your agent — pick the LLM it runs on and see the tools it can use.</p>
         </div>
       </div>
 
@@ -79,9 +110,25 @@ export default function Agents() {
                   <div className="grid grid-cols-2 gap-4">
                     <div className="bg-background/50 p-3 rounded-lg border border-card-border">
                       <div className="flex items-center gap-2 text-[10px] text-muted-foreground uppercase tracking-widest font-bold mb-2">
-                        <Cpu className="w-3 h-3" /> Model
+                        <Cpu className="w-3 h-3" /> Model {savingId === agent.id && <span className="text-primary normal-case tracking-normal">· saving…</span>}
                       </div>
-                      <div className="text-xs font-mono">{agent.model || 'Unknown'}</div>
+                      <select
+                        value={agent.model ?? ""}
+                        disabled={savingId === agent.id}
+                        onChange={(e) => setModel(agent.id, e.target.value)}
+                        className="w-full bg-background border border-card-border rounded-md px-2 py-1.5 text-xs font-mono text-foreground focus:border-primary focus:outline-none cursor-pointer disabled:opacity-50"
+                        title="Pick the LLM this agent runs on"
+                      >
+                        {models.length === 0 && <option value={agent.model ?? ""}>{agent.model || "loading models…"}</option>}
+                        {agent.model && !models.some((m) => m.id === agent.model) && (
+                          <option value={agent.model}>{agent.model} (current)</option>
+                        )}
+                        {models.map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {m.name}{m.context_length ? ` · ${Math.round(m.context_length / 1000)}k` : ""}
+                          </option>
+                        ))}
+                      </select>
                     </div>
                     <div className="bg-background/50 p-3 rounded-lg border border-card-border">
                       <div className="flex items-center gap-2 text-[10px] text-muted-foreground uppercase tracking-widest font-bold mb-2">
