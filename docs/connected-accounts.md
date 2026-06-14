@@ -61,17 +61,3 @@ Do this once, in the dashboard:
 
 ## The hard guardrail (enforced in code, not just prompt)
 
-`lib/safetyPolicy.ts` `assessActionRisk()` is checked before any goal is
-dispatched (`orchestrateGoal`) **and** before any `composio_action` runs. Two
-categories are blocked no matter what is asked:
-
-- **Financial account opening** — bank, brokerage, trading, credit/debit card,
-  loan, mortgage, payment processor, or crypto-exchange accounts.
-- **Government ID / KYC identity** — submitting/entering an SSN, passport,
-  driver's license, national/tax ID, birth certificate, or immigration documents.
-
-It targets the *action*, so ordinary work is unaffected — "email my bank
-statement" or "write a post about social security" are allowed; "open a bank
-account" or "enter my SSN" are blocked with a clear refusal in the feed.
-
-Everything else runs end-to-end without a pause-for-approval step.
