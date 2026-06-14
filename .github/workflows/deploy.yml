@@ -12,6 +12,7 @@ on:
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+
     permissions:
       contents: write
 
@@ -25,13 +26,13 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: '10'
+          version: 10
 
-      - name: Setup Node.js 24
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '24'
-          cache: 'pnpm'
+          node-version: 24
+          cache: pnpm
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -43,25 +44,29 @@ jobs:
         run: pnpm --filter @workspace/api-server run build
 
       - name: Build frontend
-        run: PORT=10000 BASE_PATH=/ pnpm --filter @workspace/openclaw run build
+        run: |
+          PORT=10000 BASE_PATH=/ pnpm --filter @workspace/openclaw run build
 
-      - name: Commit built dist
+      - name: Commit built artifacts
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
           git add -f artifacts/api-server/dist/ artifacts/openclaw/dist/
+
           if git diff --cached --quiet; then
-            echo "No dist changes — skipping commit"
-          else
-            git commit -m "build: update dist bundle [skip ci]"
-            git push origin HEAD:main
+            echo "no changes to commit"
+            exit 0
           fi
+
+          git commit -m "build: update dist bundle [skip ci]"
+          git push origin HEAD:main
 
       - name: Trigger Render deploy
         run: |
-          curl -s -o /dev/null -w "Render deploy: HTTP %{http_code}\n" \
+          curl -s -o /dev/null -w "Render deploy HTTP %{http_code}\n" \
             -X POST \
             -H "Authorization: Bearer ${{ secrets.RENDER_TOKEN }}" \
             -H "Content-Type: application/json" \
             "https://api.render.com/v1/services/srv-d8hmeunlk1mc73faoh90/deploys" \
-            -d '{"clearCache": "do_not_clear"}'
+            -d '{"clearCache":"do_not_clear"}'
