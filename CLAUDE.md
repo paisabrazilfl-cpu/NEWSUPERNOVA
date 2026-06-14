@@ -1,56 +1,290 @@
-# CLAUDE.md — working in this repo
+# CLAUDE.md — Working in This Repo
 
-Guidance for any AI agent (Claude Code / contributors) modifying **BOS-AURA /
-OPENCLAW OMEGA**.
+Guidance for AI agents and contributors modifying **BOS-AURA / OPENCLAW OMEGA**.
 
-## Ground truth (verify, don't assume)
+---
 
-- **Package manager:** `pnpm` (`pnpm-lock.yaml`). Never npm/yarn/bun.
-- **Monorepo:** pnpm workspaces. API in `artifacts/api-server`, UI in `artifacts/openclaw`, shared libs in `lib/*`.
-- **Verify commands:**
-  - `pnpm run typecheck` — all packages
-  - `pnpm --filter @workspace/api-server run build` · `… run test` (vitest, 66 tests)
-  - `pnpm --filter @workspace/openclaw run build` (needs `PORT` + `BASE_PATH`)
-- **Deploy:** push to `main` → GitHub Actions builds + commits `dist/` + triggers Render. Live at `bos-aura.onrender.com`.
-- **Secrets:** never hardcode. Env vars only (`.env.example` is the template; `.env*` is git-ignored). The encrypted vault is `artifacts/api-server/src/lib/vault.ts`.
+## Ground Truth
 
-## Workflow rules (internal — always follow)
+Verify from the repository before making assumptions.
 
-These are standing operator rules. Follow them on every task without being asked.
+### Package Manager
 
-1. **Branch-per-push, methodical names.** Never push straight to a shared branch.
-   For every push, create a NEW branch whose name encodes the **date** and **what
-   changed**, e.g. `2026-06-07-abby-presents-claw-work` or
-   `update/2026-06-07-composio-connect-flow`. The branch name is the changelog.
-2. **Always branch from the latest project, never regress.** Before creating the
-   branch, sync to the newest `main` (the superset of all branches) so the new
-   branch contains the latest version of the project with **zero loss of
-   function**. Verify (`typecheck` + build + the 66 vitest tests, plus browser
-   checks for UI) BEFORE merging, then merge the branch into `main`. If a change
-   would drop existing functionality, stop — do not merge.
-3. **Autonomy — do not ask the operator to fix what you can fix.** When something
-   is wrong, self-reflect first: *"Can I fix this myself?"* If yes, fix it —
-   plan → execute → observe → verify (run it, build it, Playwright the UI) →
-   confirm against the goal. Only surface a genuine blocker you truly cannot
-   resolve (e.g. a secret only the operator holds). Never hand back a to-do you
-   were capable of completing.
+Use only:
 
-## Anti-hallucination enforcement (mandatory)
+```bash
+pnpm
 
-This repo is under evidence discipline. Read `docs/anti-hallucination/` —
-especially `04-PREFLIGHT-CARD.md` (paste before build tasks) and
-`03-VERIFICATION-LEDGER.md` (the verdict format). In short:
+Do not use:
 
-- Never claim a file/command/test/build/route/result exists unless directly observed this session.
-- Printing code to stdout is **not** creating a file. Describing a change is **not** making it.
-- Failures are reported verbatim, never converted to success.
-- A green typecheck/build proves it compiles — not that the feature works. Say which.
-- UI changes need browser validation, or an explicit `browser: NOT RUN` with the reason.
-- Unknown means unknown.
+npm
+yarn
+bun
 
-## The runtime swarm's limits (so you don't repeat the incident)
 
-The live CLAW agents run tools in an **isolated sandbox that cannot see this
-repo**. They cannot inspect/build/test/modify the codebase. Don't dispatch
-repo-self-test missions to them; do that work here, in the real repo, as the dev
-agent. See `.agents/memory/anti-hallucination.md`.
+---
+
+Repository Structure
+
+This is a pnpm workspace monorepo.
+
+artifacts/api-server   API server
+artifacts/openclaw     Frontend app
+lib/*                  Shared workspace libraries
+
+
+---
+
+Required Verification Commands
+
+Full workspace typecheck
+
+pnpm run typecheck
+
+API server build
+
+pnpm --filter @workspace/api-server run build
+
+API server tests
+
+pnpm --filter @workspace/api-server run test
+
+Frontend build
+
+PORT=10000 BASE_PATH=/ pnpm --filter @workspace/openclaw run build
+
+
+---
+
+Deployment Model
+
+Production deployment is GitHub Actions → Render.
+
+push to main
+→ GitHub Actions builds
+→ dist artifacts are committed
+→ Render deploy is triggered
+
+Live service:
+
+https://bos-aura.onrender.com
+
+
+---
+
+Secrets Policy
+
+Never hardcode secrets.
+
+Allowed:
+
+const apiKey = process.env.API_KEY;
+
+Forbidden:
+
+const apiKey = "real-secret-value";
+
+Environment rules:
+
+.env.example      template only
+.env*             git-ignored
+
+Encrypted vault:
+
+artifacts/api-server/src/lib/vault.ts
+
+
+---
+
+Workflow Rules
+
+1. Branch Per Push
+
+Never push directly to a shared working branch.
+
+Create a new branch for every meaningful change.
+
+Branch names must include:
+
+date + what changed
+
+Examples:
+
+git checkout main
+git pull origin main
+git checkout -b update/2026-06-13-command-cron-api
+
+git checkout main
+git pull origin main
+git checkout -b 2026-06-13-fix-agent-status-reconciliation
+
+
+---
+
+2. Start From Latest Main
+
+Before changing code:
+
+git checkout main
+git pull origin main
+
+Then create the feature branch.
+
+Do not regress existing functionality.
+
+If a change removes or weakens existing behavior unintentionally:
+
+STOP
+
+Fix the regression before merge.
+
+
+---
+
+3. Fix What You Can Fix
+
+When a problem is found:
+
+read relevant files
+understand current behavior
+make focused change
+run verification
+report exact result
+
+Do not hand back tasks that can be completed with available repo/tool access.
+
+Only surface a blocker when it cannot be resolved from the current environment.
+
+
+---
+
+Anti-Hallucination Discipline
+
+This repo requires evidence-based reporting.
+
+Read:
+
+docs/anti-hallucination/
+docs/anti-hallucination/04-PREFLIGHT-CARD.md
+docs/anti-hallucination/03-VERIFICATION-LEDGER.md
+
+Rules:
+
+Do not claim a file exists unless observed.
+
+Do not claim a command ran unless it actually ran.
+
+Do not claim tests passed unless test output proves it.
+
+Do not claim a build passed unless build output proves it.
+
+Do not claim a route works unless it was checked.
+
+Do not claim deploy success unless deployment was verified.
+
+Printing code to stdout is not creating a file.
+
+Describing a change is not making a change.
+
+A compile pass only proves compilation.
+
+A test pass only proves the tested behavior.
+
+Unknown means unknown.
+
+
+Failure output must be reported truthfully.
+
+Do not convert errors into success.
+
+
+---
+
+UI Validation
+
+For UI changes, run browser validation when possible.
+
+Recommended:
+
+pnpm --filter @workspace/scripts run ui-smoke
+
+For broader visual checks:
+
+pnpm --filter @workspace/scripts run visual-audit
+
+If browser validation is not run, report:
+
+browser: NOT RUN — <reason>
+
+
+---
+
+Runtime Swarm Limits
+
+The live CLAW agents execute inside an isolated sandbox.
+
+They cannot be assumed to access this repository.
+
+They cannot be assumed to:
+
+inspect repo files
+modify repo files
+build the repo
+test the repo
+verify deployment
+
+Do not dispatch repo self-test or repo modification work to the runtime swarm unless repo access is explicitly confirmed.
+
+Repo engineering work must be performed in the real development environment.
+
+Reference:
+
+.agents/memory/anti-hallucination.md
+
+
+---
+
+Development Loop
+
+Use this loop for code tasks:
+
+1. Read relevant files
+2. Define acceptance criteria
+3. Identify risks
+4. Make focused changes
+5. Run relevant verification
+6. Fix failures
+7. Re-run verification
+8. Report exact evidence
+
+
+---
+
+Definition of Done
+
+A task is done only when:
+
+code changed as intended
+relevant checks passed or blockers are documented
+UI validation ran when applicable
+no known regression is hidden
+final report states exactly what was verified
+
+
+---
+
+Final Report Format
+
+Use:
+
+Changed:
+- ...
+
+Verified:
+- ...
+
+Not Run:
+- ...
+
+Blocked:
+- ...
