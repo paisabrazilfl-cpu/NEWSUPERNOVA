@@ -53,10 +53,98 @@ import { marketingPlaybook, MARKETING_SECTIONS } from "./lib/marketing";
 import { computeNextRun } from "./lib/cron";
 import { blockIfSensitiveForPublic } from "./lib/safety";
 import { checkPostAllowed, recordPost } from "./lib/postLimit";
+import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 
 const STEEL_BASE = "https://api.steel.dev/v1";
 const FIRECRAWL_BASE = "https://api.firecrawl.dev/v1";
 const FREECRAWL_BASE = process.env["FREECRAWL_URL"] ?? "https://freecrawl-api.onrender.com";
+
+// ─── Real, server-side PDF rendering (powers the pdf_generate tool) ──────────
+// Renders text/markdown into an actual PDF in-process with pdf-lib (pure JS — no
+// native deps, no headless browser), so a PDF deliverable NEVER depends on the
+// sandbox. The sandbox is a fresh disposable VM where `pip install` and written
+// files do not persist between calls — the live failure that left agents unable
+// to make a PDF and fabricating storage.googleapis.com download links. Standard
+// Helvetica only encodes WinAnsi, so non-Latin text is folded to safe ASCII and
+// any unmapped glyph (emoji, arrows) is dropped — pdf-lib never throws on input.
+const PDF_FOLD: Record<string, string> = {
+  "“": '"', "”": '"', "„": '"', "‘": "'", "’": "'", "‚": "'",
+  "—": "-", "–": "-", "―": "-", "−": "-", "•": "-", "·": "-",
+  "‣": "-", "▪": "-", "…": "...", "→": "->", "←": "<-", "↔": "<->",
+  "⇒": "=>", "™": "(TM)", "®": "(R)", "©": "(C)", "€": "EUR", "£": "GBP",
+  "✅": "[x]", "✔": "[x]", "✓": "[x]", "☑": "[x]", "❌": "[ ]", "✗": "x",
+  "★": "*", "☆": "*", "♠": "*",
+};
+function pdfWinAnsi(s: string): string {
+  let out = s;
+  for (const k in PDF_FOLD) out = out.split(k).join(PDF_FOLD[k]);
+  return out.replace(/[^\x09\x20-\x7E\xA0-\xFF]/g, ""); // keep printable ASCII + Latin-1 only
+}
+
+export async function renderPdf(title: string, content: string): Promise<Uint8Array> {
+  const doc = await PDFDocument.create();
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  const bold = await doc.embedFont(StandardFonts.HelveticaBold);
+  if (title) doc.setTitle(pdfWinAnsi(title).slice(0, 200));
+  doc.setCreator("OPENCLAW OMEGA");
+  doc.setProducer("OPENCLAW OMEGA — pdf_generate");
+
+  const PAGE_W = 612, PAGE_H = 792, MARGIN = 54, maxW = PAGE_W - MARGIN * 2;
+  const ink = rgb(0.12, 0.12, 0.14), head = rgb(0.07, 0.09, 0.2);
+  let page = doc.addPage([PAGE_W, PAGE_H]);
+  let y = PAGE_H - MARGIN;
+
+  const wrap = (text: string, f: typeof font, size: number): string[] => {
+    const lines: string[] = [];
+    let line = "";
+    for (const word of text.split(/\s+/).filter(Boolean)) {
+      const trial = line ? `${line} ${word}` : word;
+      if (line && f.widthOfTextAtSize(trial, size) > maxW) { lines.push(line); line = word; }
+      else line = trial;
+      while (f.widthOfTextAtSize(line, size) > maxW && line.length > 1) { // hard-break an over-wide token
+        let cut = line.length - 1;
+        while (cut > 1 && f.widthOfTextAtSize(line.slice(0, cut), size) > maxW) cut--;
+        lines.push(line.slice(0, cut));
+        line = line.slice(cut);
+      }
+    }
+    if (line) lines.push(line);
+    return lines.length ? lines : [""];
+  };
+
+  const draw = (text: string, f: typeof font, size: number, gap: number, color = ink) => {
+    const lineH = size * 1.35;
+    for (const ln of wrap(pdfWinAnsi(text), f, size)) {
+      if (y - lineH < MARGIN) { page = doc.addPage([PAGE_W, PAGE_H]); y = PAGE_H - MARGIN; }
+      if (ln) page.drawText(ln, { x: MARGIN, y: y - size, size, font: f, color });
+      y -= lineH;
+    }
+    y -= gap;
+  };
+
+  if (title) draw(title, bold, 22, 12, head);
+
+  const strip = (s: string) =>
+    s.replace(/\*\*(.+?)\*\*/g, "$1").replace(/__(.+?)__/g, "$1")
+      .replace(/`(.+?)`/g, "$1").replace(/^\s*>\s?/, "");
+
+  for (const raw of content.replace(/\r\n/g, "\n").split("\n")) {
+    const line = raw.replace(/\t/g, "    ");
+    if (!line.trim()) { y -= 6; continue; } // blank line → vertical gap
+    let m: RegExpMatchArray | null;
+    if ((m = line.match(/^\s{0,3}(#{1,3})\s+(.*)$/))) {
+      const lvl = m[1].length;
+      draw(strip(m[2]), bold, lvl === 1 ? 18 : lvl === 2 ? 15 : 13, 6, head);
+    } else if (/^\s{0,3}[-*•]\s+/.test(line)) {
+      draw(`-  ${strip(line.replace(/^\s{0,3}[-*•]\s+/, ""))}`, font, 11, 2);
+    } else if ((m = line.match(/^\s{0,3}(\d+)[.)]\s+(.*)$/))) {
+      draw(`${m[1]}.  ${strip(m[2])}`, font, 11, 2);
+    } else {
+      draw(strip(line), font, 11, 4);
+    }
+  }
+  return await doc.save();
+}
 
 /**
  * Absolute, publicly-reachable base URL for serving saved files. Saved artifacts
@@ -349,7 +437,11 @@ async function freecrawlSearch(query: string, limit: number): Promise<string> {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ url, formats: ["markdown", "links"], include_links: true }),
-    signal: AbortSignal.timeout(30_000),
+    // 60s, not 30s: the keyless FreeCrawl instance spins down when idle (free
+    // tier) and a cold start takes ~30-50s. The shorter timeout made the very
+    // first request abort — leaving the swarm blind exactly when the paid
+    // providers were out of credit. The longer window lets the cold start wake.
+    signal: AbortSignal.timeout(60_000),
   });
   if (!r.ok) throw new Error(`FreeCrawl ${r.status}: ${(await r.text()).slice(0, 200)}`);
   const data = (await r.json()) as { markdown?: string; links?: string[]; error?: string };
@@ -1536,54 +1628,145 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
   image_generate: {
     name: "image_generate",
     description:
-      "Generate an IMAGE from a text prompt and save it as a downloadable file; returns a markdown image preview plus a download link. Use whenever the operator asks for an image, picture, logo, illustration, diagram, icon, mockup, poster, or banner. Needs OPENAI_API_KEY (or IMAGE_API_KEY).",
+      "Generate an IMAGE from a text prompt and save it as a downloadable file; returns a markdown image preview plus a public URL + download link. Use whenever the operator asks for an image, picture, logo, illustration, diagram, icon, mockup, poster, or banner. This is ONE generator that combines several image models (FLUX.2 pro/dev, Gemini Flash Image, Seedream, …) with automatic fallback: if the chosen model errors, refuses, or is out of credit it transparently retries the next — so generation never hard-fails on a single model. Needs IMAGE_API_KEY (DeepInfra, serves the whole menu) or OPENAI_API_KEY.",
     parameters: {
       type: "object",
       properties: {
         prompt: { type: "string", description: "What to draw — describe the image in detail." },
         size: { type: "string", enum: ["1024x1024", "1536x1024", "1024x1536"], description: "Image size (default 1024x1024)." },
+        model: { type: "string", description: "Optional model / routing hint — leave empty for the smart default (FLUX.2 pro) with automatic fallback. Hints: 'photo' (FLUX.2 pro, best photoreal+text), 'text'/'edit' (Gemini Flash Image 2.5, best instruction-following), 'budget' (FLUX.2 dev, cheapest), 'seedream' (bilingual), 'max'/'hero' (FLUX.2 max, top quality). Or pass any provider slug, e.g. 'black-forest-labs/FLUX-2-pro'. The pick leads; the rest stay as fallback." },
         filename: { type: "string", description: "Optional output filename, e.g. 'logo.png'." },
       },
       required: ["prompt"],
     },
     run: async (args) => {
-      const apiKey = process.env["OPENAI_API_KEY"] || process.env["IMAGE_API_KEY"];
-      if (!apiKey) return "error: image generation is not configured (set OPENAI_API_KEY).";
       const prompt = String(args["prompt"] ?? "").trim();
       if (!prompt) return "error: prompt is required.";
       const allowed = new Set(["1024x1024", "1536x1024", "1024x1536"]);
       const size = allowed.has(String(args["size"])) ? String(args["size"]) : "1024x1024";
-      const base = (process.env["IMAGE_BASE_URL"] ?? "https://api.openai.com/v1").replace(/\/$/, "");
-      const model = process.env["IMAGE_MODEL"] ?? "gpt-image-1";
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 90000);
-      try {
-        const r = await fetch(`${base}/images/generations`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ model, prompt, size, n: 1 }),
-          signal: ctrl.signal,
-        });
-        const data = (await r.json()) as { data?: Array<{ b64_json?: string; url?: string }>; error?: { message?: string } };
-        if (!r.ok) return `error: image API ${r.status}: ${data?.error?.message ?? "request failed"}`;
-        let b64 = data.data?.[0]?.b64_json ?? "";
-        if (!b64 && data.data?.[0]?.url) {
-          const img = await fetch(data.data[0].url);
-          b64 = Buffer.from(await img.arrayBuffer()).toString("base64");
+
+      // ── The combined image generator ─────────────────────────────────────
+      // Several image models behind ONE tool, sharing an OpenAI-compatible
+      // /images/generations endpoint (DeepInfra by default — it serves FLUX.2,
+      // Seedream and Google models under a single key), plus a gpt-image-1
+      // OpenAI backstop. We try them in order and fall through to the next on
+      // ANY failure — exactly like web_search — so one model outage, a content
+      // refusal, or an out-of-credit key never blocks the swarm. `model`
+      // reorders the chain (routes the job) but keeps the rest as fallback.
+      type ImgModel = { id: string; label: string; base: string; key?: string; tags: string[] };
+      const diBase = (process.env["IMAGE_BASE_URL"] ?? "https://api.deepinfra.com/v1/openai").replace(/\/$/, "");
+      const diKey = process.env["IMAGE_API_KEY"] || process.env["DEEPINFRA_API_KEY"];
+      const oaBase = (process.env["OPENAI_BASE_URL"] ?? "https://api.openai.com/v1").replace(/\/$/, "");
+      const oaKey = process.env["OPENAI_API_KEY"] || process.env["IMAGE_API_KEY"];
+      const di = (id: string, label: string, tags: string[]): ImgModel => ({ id, label, base: diBase, key: diKey, tags });
+      const gptImage: ImgModel = { id: "gpt-image-1", label: "gpt-image-1", base: oaBase, key: oaKey, tags: ["openai", "dalle", "gpt"] };
+
+      let chain: ImgModel[];
+      const custom = (process.env["IMAGE_MODELS"] ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+      const single = process.env["IMAGE_MODEL"];
+      if (custom.length) {
+        chain = custom.map((id) => di(id, id, [])); // explicit operator-defined fallback chain
+      } else if (single) {
+        // Legacy single-model config stays honored (base auto-routes by slug shape).
+        const slug = single.includes("/");
+        chain = [slug ? di(single, single, []) : { ...gptImage, id: single, label: single }];
+      } else {
+        // Default combined router: best photoreal+text/cost first, cheapest last,
+        // then the OpenAI backstop (only reachable when a DeepInfra key is absent).
+        chain = [
+          di("black-forest-labs/FLUX-2-pro", "FLUX.2 pro", ["photo", "flux", "default", "photoreal", "logo", "poster", "banner"]),
+          di("google/flash-image-2.5", "Gemini Flash Image 2.5", ["text", "edit", "gemini", "flash", "instruction", "nano"]),
+          di("byteplus/Seedream-5.0-Lite", "Seedream 5.0 Lite", ["seedream", "bilingual", "byteplus"]),
+          di("black-forest-labs/FLUX-2-dev", "FLUX.2 dev", ["budget", "cheap", "dev", "draft"]),
+          di("black-forest-labs/FLUX-2-max", "FLUX.2 max", ["max", "hero", "premium"]),
+          gptImage,
+        ];
+      }
+
+      // Route: move the requested model / hint to the front (rest stay as fallback).
+      const prefer = String(args["model"] ?? "").toLowerCase().trim();
+      if (prefer) {
+        const idx = chain.findIndex(
+          (m) => m.id.toLowerCase() === prefer || m.tags.includes(prefer) || m.id.toLowerCase().includes(prefer) || m.label.toLowerCase().includes(prefer),
+        );
+        if (idx > 0) chain = [chain[idx], ...chain.slice(0, idx), ...chain.slice(idx + 1)];
+        else if (idx < 0 && prefer.includes("/")) chain = [di(prefer, prefer, []), ...chain]; // honor any explicit slug
+      }
+
+      const candidates = chain.filter((m) => !!m.key).slice(0, 5); // try only key-backed models; cap fallbacks
+      if (!candidates.length) return "error: image generation is not configured (set IMAGE_API_KEY for DeepInfra, or OPENAI_API_KEY).";
+
+      const errors: string[] = [];
+      for (const m of candidates) {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 60000);
+        try {
+          const r = await fetch(`${m.base}/images/generations`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${m.key}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ model: m.id, prompt, size, n: 1 }),
+            signal: ctrl.signal,
+          });
+          const data = (await r.json()) as { data?: Array<{ b64_json?: string; url?: string }>; error?: { message?: string } };
+          if (!r.ok) { errors.push(`${m.label}: ${r.status} ${data?.error?.message ?? "request failed"}`); continue; }
+          let b64 = data.data?.[0]?.b64_json ?? "";
+          if (!b64 && data.data?.[0]?.url) {
+            const img = await fetch(data.data[0].url);
+            b64 = Buffer.from(await img.arrayBuffer()).toString("base64");
+          }
+          if (!b64) { errors.push(`${m.label}: returned no image data`); continue; }
+          const buf = Buffer.from(b64, "base64");
+          const filename = (args["filename"] != null ? String(args["filename"]) : prompt.slice(0, 40).replace(/[^a-z0-9]+/gi, "_")).replace(/\.(png|jpg|jpeg)$/i, "") + ".png";
+          const [row] = await db
+            .insert(attachmentsTable)
+            .values({ filename, mimeType: "image/png", kind: "image", sizeBytes: buf.length, data: b64, extractedText: null })
+            .returning();
+          const url = uploadUrl(row.id);
+          const note = errors.length ? ` (after ${errors.length} fallback${errors.length > 1 ? "s" : ""})` : "";
+          return `generated image "${filename}" (${buf.length} bytes) via ${m.label}${note}. Its PUBLIC image URL (use this directly as image_url when posting to Instagram/social, or as the link in your answer):\n${url}\n\nShow it in your answer:\n![${prompt.slice(0, 60)}](${url})\n[Download ${filename}](${url}?download=1)`;
+        } catch (e) {
+          errors.push(`${m.label}: ${String(e instanceof Error ? e.message : e).slice(0, 120)}`);
+        } finally {
+          clearTimeout(timer);
         }
-        if (!b64) return "error: image API returned no image data.";
-        const buf = Buffer.from(b64, "base64");
-        const filename = (args["filename"] != null ? String(args["filename"]) : prompt.slice(0, 40).replace(/[^a-z0-9]+/gi, "_")).replace(/\.(png|jpg|jpeg)$/i, "") + ".png";
+      }
+      return `error: all image models failed — ${errors.join("; ")}`;
+    },
+  },
+
+  pdf_generate: {
+    name: "pdf_generate",
+    description:
+      "Generate a REAL, downloadable PDF document from text or markdown and save it — returns a genuine download link. Use for any deliverable the operator wants as a PDF: report, plan, brief, guide, or content calendar. Renders server-side in-process (NO sandbox needed). Understands simple markdown: '#/##/###' headings, '-' or '*' bullets, '1.' numbered lists, and blank lines as spacing. This is the ONLY correct way to produce a PDF — do NOT use reportlab/fpdf in sandbox_exec/code_exec (each run is a throwaway VM, so pip installs and written files never persist), and NEVER fabricate a download URL (e.g. a storage.googleapis.com link); only the URL this tool returns is real.",
+    parameters: {
+      type: "object",
+      properties: {
+        content: { type: "string", description: "The full document body, as markdown or plain text." },
+        title: { type: "string", description: "Optional document title — rendered as the heading and set as the PDF's metadata title." },
+        filename: { type: "string", description: "Optional output filename, e.g. 'content-calendar.pdf'." },
+      },
+      required: ["content"],
+    },
+    run: async (args) => {
+      const content = String(args["content"] ?? "");
+      if (!content.trim()) return "error: content is required (the document body as markdown or text).";
+      const title = String(args["title"] ?? "").trim().slice(0, 200);
+      try {
+        const bytes = await renderPdf(title, content.slice(0, 200_000));
+        const b64 = Buffer.from(bytes).toString("base64");
+        let stem = (args["filename"] != null ? String(args["filename"]) : title || "document")
+          .replace(/\.pdf$/i, "").replace(/[^a-z0-9._-]+/gi, "_").replace(/^[_.]+|[_.]+$/g, "").slice(0, 80);
+        if (!stem) stem = "document";
+        const filename = `${stem}.pdf`;
         const [row] = await db
           .insert(attachmentsTable)
-          .values({ filename, mimeType: "image/png", kind: "image", sizeBytes: buf.length, data: b64, extractedText: null })
+          .values({ filename, mimeType: "application/pdf", kind: "other", sizeBytes: bytes.length, data: b64, extractedText: null })
           .returning();
-        const url = uploadUrl(row.id);
-        return `generated image "${filename}" (${buf.length} bytes). Its PUBLIC image URL (use this directly as image_url when posting to Instagram/social, or as the link in your answer):\n${url}\n\nShow it in your answer:\n![${prompt.slice(0, 60)}](${url})\n[Download ${filename}](${url}?download=1)`;
+        const dl = uploadUrl(row.id, true);
+        const view = uploadUrl(row.id);
+        return `generated PDF "${filename}" (${bytes.length} bytes from ${content.length} chars). REAL downloadable file — put THIS exact link in your final answer (never invent any other URL):\n[Download ${filename}](${dl})\nInline view URL: ${view}`;
       } catch (e) {
-        return `error: image generation failed: ${String(e instanceof Error ? e.message : e).slice(0, 200)}`;
-      } finally {
-        clearTimeout(timer);
+        return `error: pdf generation failed: ${String(e instanceof Error ? e.message : e).slice(0, 200)}`;
       }
     },
   },
@@ -2036,11 +2219,11 @@ const ALL_TOOLS = Object.keys(TOOL_REGISTRY);
 
 export const AGENT_TOOLS: Record<number, string[]> = {
   1: ALL_TOOLS, // ABBY — full authority
-  2: ["code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "http_request", "web_scrape", "web_search", "tier1_sources", "site_crawl", "site_crawl_status", "memory_search", "memory_write", "vault_list", "save_artifact", "image_generate", "send_message"], // FORGE — code
-  3: ["web_scrape", "web_screenshot", "web_search", "tier1_sources", "site_crawl", "site_crawl_status", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "sandbox_exec", "browser_login", "save_artifact", "image_generate", "send_message"], // CRAWLER — browser
-  4: ["memory_write", "memory_search", "web_search", "tier1_sources", "web_scrape", "site_crawl", "site_crawl_status", "http_request", "calculator", "vault_list", "save_artifact", "image_generate", "send_message"], // VAULT — memory/RAG
-  5: ["http_request", "web_scrape", "web_search", "tier1_sources", "site_crawl", "site_crawl_status", "marketing_playbook", "code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_tools", "composio_action", "instagram_post", "browser_login", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task", "save_artifact", "image_generate", "render_card", "send_message"], // WIRE — APIs + scheduling
-  6: ["web_scrape", "web_search", "tier1_sources", "marketing_playbook", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_tools", "composio_action", "instagram_post", "browser_login", "save_artifact", "image_generate", "render_card", "send_message"], // MR.NICE — social
+  2: ["code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "http_request", "web_scrape", "web_search", "tier1_sources", "site_crawl", "site_crawl_status", "memory_search", "memory_write", "vault_list", "save_artifact", "pdf_generate", "image_generate", "send_message"], // FORGE — code
+  3: ["web_scrape", "web_screenshot", "web_search", "tier1_sources", "site_crawl", "site_crawl_status", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "sandbox_exec", "browser_login", "save_artifact", "pdf_generate", "image_generate", "send_message"], // CRAWLER — browser
+  4: ["memory_write", "memory_search", "web_search", "tier1_sources", "web_scrape", "site_crawl", "site_crawl_status", "http_request", "calculator", "vault_list", "save_artifact", "pdf_generate", "image_generate", "send_message"], // VAULT — memory/RAG
+  5: ["http_request", "web_scrape", "web_search", "tier1_sources", "site_crawl", "site_crawl_status", "marketing_playbook", "code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_tools", "composio_action", "instagram_post", "browser_login", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task", "save_artifact", "pdf_generate", "image_generate", "render_card", "send_message"], // WIRE — APIs + scheduling
+  6: ["web_scrape", "web_search", "tier1_sources", "marketing_playbook", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_tools", "composio_action", "instagram_post", "browser_login", "save_artifact", "pdf_generate", "image_generate", "render_card", "send_message"], // MR.NICE — social
 };
 
 export function getToolNamesForAgent(agentId: number): string[] {
@@ -2079,13 +2262,16 @@ export function buildCapabilityCard(agentId: number): string {
     : `\n\nSCHEDULING: the swarm can run recurring cron jobs (managed by ABBY/WIRE) — ask ABBY to schedule recurring work.`;
   card += `\n\nGITHUB: query the GitHub REST API with http_request (https://api.github.com/...); it is auto-authenticated. Never web_scrape github.com pages — they are JS-rendered and return nothing useful.`;
   if (names.includes("sandbox_exec")) {
-    card += `\n\nINTERACTIVE AUTOMATION: web_scrape is read-only and won't render JS-heavy or multi-step pages. When a task needs to actually fill/submit a web form or read a JS-rendered page, use sandbox_exec to run Playwright in the cloud VM (install chromium, navigate, fill, click, submit). To produce or fill official PDF forms (e.g. AcroForm fields), use sandbox_exec with reportlab/fpdf2/fillpdf/pypdf and return the output file path. Generate/prepare documents and demonstrate the flow — never submit a person's legal/financial filing on their behalf.`;
+    card += `\n\nINTERACTIVE AUTOMATION: web_scrape is read-only and won't render JS-heavy or multi-step pages. When a task needs to actually fill/submit a web form or read a JS-rendered page, use sandbox_exec to run Playwright in the cloud VM (install chromium, navigate, fill, click, submit). To GENERATE a document PDF from text/markdown, call pdf_generate (server-side, always works) instead of the sandbox. To FILL an official PDF form (e.g. AcroForm fields), use sandbox_exec with fillpdf/pypdf and return the output file path. Generate/prepare documents and demonstrate the flow — never submit a person's legal/financial filing on their behalf.`;
   }
   if (names.includes("save_artifact")) {
-    card += `\n\nDELIVERABLE FILES: whenever you produce a file the operator should keep (report, CSV, code, JSON, or a generated PDF), call save_artifact to store it and get a real download URL, then put that [Download …](url) link in your final answer. Do NOT claim a file exists or name a file you didn't save, and NEVER invent a download URL (e.g. a storage.googleapis.com link) — only the exact URL save_artifact returns is real; a made-up link is a fabrication. To make a PDF: generate it in sandbox_exec (reportlab/fpdf2), base64 it (\`base64 -w0 file.pdf\`), then save_artifact with encoding 'base64'. If the base64 is large and a single save_artifact call gets truncated, do NOT retry it whole — save it in CHUNKS: repeated calls with chunk:true and a slice of the base64 each, in order, then one call with done:true to assemble and store it.`;
+    card += `\n\nDELIVERABLE FILES: whenever you produce a file the operator should keep (report, CSV, code, JSON, or a generated PDF), call save_artifact to store it and get a real download URL, then put that [Download …](url) link in your final answer. Do NOT claim a file exists or name a file you didn't save, and NEVER invent a download URL (e.g. a storage.googleapis.com link) — only the exact URL save_artifact returns is real; a made-up link is a fabrication. To make a PDF, call pdf_generate (it renders a real PDF server-side from your text/markdown and returns a download URL) — do NOT generate PDFs with reportlab/fpdf in the sandbox, where written files never persist. If the base64 is large and a single save_artifact call gets truncated, do NOT retry it whole — save it in CHUNKS: repeated calls with chunk:true and a slice of the base64 each, in order, then one call with done:true to assemble and store it.`;
   }
   if (names.includes("image_generate")) {
     card += `\n\nIMAGES: prefer the CHEAP path first. For news/quote/hook/stat cards and any terminal/cyber TEXT visual, call render_card — it draws a real on-brand 1080×1080 PNG by code for ~$0 (no AI image gen) and returns a public image URL. Only call image_generate (paid) when you specifically need a PHOTOREAL picture/logo/illustration/photo. Either way you get a real PNG + a URL to use as image_url; do NOT hand-code SVG or merely describe the image, and only produce SVG if the operator explicitly asks for SVG/vector.`;
+  }
+  if (names.includes("pdf_generate")) {
+    card += `\n\nPDFs: to deliver a PDF (report, plan, content calendar, guide), call pdf_generate with the full text/markdown as \`content\` — it renders a REAL PDF server-side and returns a genuine [Download](url) link. This ALWAYS works; never build PDFs with reportlab/fpdf in sandbox_exec/code_exec (each run is a throwaway VM, so installs and files don't persist), and never fabricate a storage/download URL — only the pdf_generate link is real.`;
   }
   if (names.includes("composio_apps") || names.includes("composio_action")) {
     card += `\n\nCONNECTED APPS (Composio): the operator connects their apps — social like Instagram/YouTube/Reddit AND SaaS like Gmail/GitHub/Notion/Calendar/Sheets — in Settings → Connect Apps, which is COMPOSIO. To act on any of them, FIRST call composio_apps to see which are LIVE, THEN call composio_action on a live app. For a read with no obvious named action slug, use composio_action RAW PROXY mode: pass toolkit + endpoint (the app's REST path) + method, e.g. toolkit:'instagram', endpoint:'/me/media?fields=id,caption', method:'GET'.`;

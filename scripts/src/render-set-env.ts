@@ -48,6 +48,17 @@ const MANAGED_KEYS = [
   "INNGEST_SIGNING_KEY",
   "E2B_API_KEY",
   "SANDBOX_GITHUB_TOKEN",
+  // Web search: SerpAPI runs first in web_search and keeps the swarm from going
+  // blind when the paid providers run out of credit.
+  "SERP_API_KEY",
+  "SERP_AI_API_KEY",
+  "FREECRAWL_URL",
+  // Image generation: the combined multi-model image_generate router (DeepInfra
+  // by default — serves FLUX.2 / Seedream / Google under one key).
+  "IMAGE_API_KEY",
+  "DEEPINFRA_API_KEY",
+  "IMAGE_BASE_URL",
+  "IMAGE_MODELS",
 ] as const;
 
 function requireEnv(key: string): string {
