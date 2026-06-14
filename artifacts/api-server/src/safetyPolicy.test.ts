@@ -15,6 +15,13 @@ describe("assessActionRisk — financial account opening is blocked", () => {
     "create a new brokerage account on Robinhood",
     "set up a Stripe payment processor account",
     "open a new bank account",
+    // brand signup with no software context is still account-opening
+    "sign up for paypal",
+    "open a Coinbase account",
+    // account products that ARE the account
+    "apply for a personal loan",
+    "apply for a mortgage",
+    "open a line of credit",
   ]) {
     it(`blocks: "${goal}"`, () => {
       const v = assessActionRisk(goal);
@@ -49,6 +56,16 @@ describe("assessActionRisk — ordinary actions are NOT over-blocked", () => {
     "sign up for a Notion account and connect it",
     "summarize my latest passport-renewal blog draft",
     "schedule a calendar event for the budget review",
+    // Software engineering with financial themes opens NO account — must pass.
+    "look up Spribe games, open a repo and build an Aviator-style crash game",
+    "clone the Spribe Aviator crash game in essence and build me that thing",
+    "set up a crypto wallet feature inside the game",
+    "create a Stripe payment integration for the app",
+    "build a crypto exchange dashboard UI",
+    "create a loan calculator app",
+    "create a trading strategy backtester bot",
+    "create a paypal payout integration in the api",
+    "create a provably-fair RNG module for the casino game",
   ]) {
     it(`allows: "${goal}"`, () => {
       expect(assessActionRisk(goal).blocked).toBe(false);

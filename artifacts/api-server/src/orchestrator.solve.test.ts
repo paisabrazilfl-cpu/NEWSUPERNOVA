@@ -14,11 +14,27 @@ vi.mock("@workspace/db", async (importOriginal) => {
   return { ...actual, db: mockDb };
 });
 
-import { parseSolutionVerdict, directiveIsExecutable, MAX_SOLVE_CYCLES, SOLUTION_GATE_DOCTRINE } from "./orchestrator";
+import { parseSolutionVerdict, directiveIsExecutable, MAX_SOLVE_CYCLES, MAX_SOLVE_STALL, SOLUTION_GATE_DOCTRINE } from "./orchestrator";
 
 describe("MAX_SOLVE_CYCLES — the system cycles, it doesn't one-shot", () => {
   it("allows multiple solve cycles by default", () => {
     expect(MAX_SOLVE_CYCLES).toBeGreaterThanOrEqual(2);
+  });
+
+  it("is a HIGH safety ceiling, not a small fixed budget — persistence is gated on progress, not a round count", () => {
+    // The real terminator is the stall threshold; the cycle cap is only a
+    // runaway backstop, so it must be far above the stall threshold.
+    expect(MAX_SOLVE_CYCLES).toBeGreaterThanOrEqual(20);
+    expect(MAX_SOLVE_CYCLES).toBeGreaterThan(MAX_SOLVE_STALL);
+  });
+});
+
+describe("MAX_SOLVE_STALL — the real terminator (stop on no-progress, not a count)", () => {
+  it("is a small consecutive-no-progress threshold that resets on progress", () => {
+    expect(MAX_SOLVE_STALL).toBeGreaterThanOrEqual(2);
+    // Must be small relative to the safety ceiling so a stalled run concedes
+    // quickly while a progressing run keeps going up to the ceiling.
+    expect(MAX_SOLVE_STALL).toBeLessThan(MAX_SOLVE_CYCLES);
   });
 });
 
@@ -41,6 +57,12 @@ describe("SOLUTION_GATE_DOCTRINE — solves means solves", () => {
     expect(SOLUTION_GATE_DOCTRINE).toContain("VERIFIED IMPOSSIBILITY IS A SOLUTION");
     expect(SOLUTION_GATE_DOCTRINE.toLowerCase()).toContain("only the operator holds");
     expect(SOLUTION_GATE_DOCTRINE.toLowerCase()).toContain("invites fabrication");
+  });
+
+  it("requires sources/tool evidence behind key claims so no hallucination can pass the gate", () => {
+    expect(SOLUTION_GATE_DOCTRINE).toContain("EVERY KEY CLAIM NEEDS A SOURCE");
+    expect(SOLUTION_GATE_DOCTRINE.toLowerCase()).toContain("no source or tool result");
+    expect(SOLUTION_GATE_DOCTRINE.toLowerCase()).toContain("go fetch the evidence");
   });
 
   it("forbids corrective directives the sandbox cannot execute", () => {

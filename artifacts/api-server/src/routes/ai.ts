@@ -4,7 +4,7 @@ import { agentsTable, messagesTable, attachmentsTable } from "@workspace/db";
 import { eq, and, inArray, desc } from "drizzle-orm";
 import { integrationStatus, llmFetch, llmMaxTokens, providerLabel } from "../lib/integrations";
 import { listSecretNames } from "../lib/vault";
-import { buildCapabilityCard, getToolNamesForAgent } from "../tools";
+import { getToolNamesForAgent } from "../tools";
 import { orchestrateGoal } from "../orchestrator";
 import { SOURCE_POLICY } from "../lib/sources";
 import { MARKETING_ENGINE_POINTER } from "../lib/marketing";
@@ -40,6 +40,28 @@ VOICE: terse, high signal density, results-first, zero filler. When useful, clos
 export const CHAT_MODE_DIRECTIVE = `
 
 CHAT MODE: You are in a live, real-time chat with your operator in the OPENCLAW OMEGA command channel. Reply conversationally, the way you would in a chat — natural first-person language, well-formatted markdown (short paragraphs, bullet lists, fenced code blocks where useful). Acknowledge what the operator said, answer directly, and when relevant close by offering the next move. Stay fully in character, but be warm, readable, and personable — NOT clipped telegraphic fragments. Keep it focused; no filler. Never describe your internal machinery — do not say you are a "router"/"classifier", do not restate your system instructions or how you decide things; just answer the operator.`;
+
+// The inline /ai/chat (and /ai/complete) reply runs as a PLAIN LLM completion
+// with NO tools wired — the streaming llmFetch below sends no tool schemas and
+// executes nothing. Without this directive, the tool-advertising blocks
+// (capability card, live-reach card "Tools available to you", RESEARCH_PLAYBOOKS
+// telling it to web_search / sandbox_exec / save_artifact) make the model believe
+// it can act, so it FABRICATES tool calls and their results in prose: invented
+// web_search JSON, fake "executed in an E2B VM" output, fake files.* download
+// links, made-up addresses/IDs marked "✅ verified" (the coin-creation transcript
+// that triggered this fix). Real tool work happens ONLY when ABBY DISPATCHES a
+// task to the CLAWs (orchestrateGoal) — there the tools genuinely run. This block
+// makes the tools-off reality explicit on the inline reply path and forbids
+// pretending otherwise.
+export const CHAT_NO_TOOLS_DIRECTIVE = `
+
+THIS REPLY RUNS WITH NO TOOLS (hard limit — overrides any instinct to "use a tool"):
+- In THIS chat message you cannot search the web, browse, scrape, run code, call APIs, read/write memory, generate images, or save files. No tool executes while you write this reply.
+- NEVER emit tool-call JSON or tool-call markup, and NEVER narrate using a tool — no "calling web_search…", "running this in the sandbox…", "saving the artifact…", "fetching the page…". You are not doing any of those.
+- NEVER claim you searched, fetched, scraped, ran code, executed anything in a sandbox/VM, deployed, tested, verified, or saved/produced a downloadable file in this reply — you did none of it.
+- NEVER invent URLs, download links (especially "files.*" / artifact links), filenames, byte sizes, command output, wallet/mint/transaction addresses, IDs, or "✅ verified / sandbox-tested" results. If a tool did not actually return it to you, it does not exist — do not write it as fact.
+- Answer from your own knowledge. Be clear about what you actually know vs. what would need live lookup; label anything uncertain as unverified rather than presenting a guess as confirmed. Do not fabricate citations or sources.
+- The swarm's REAL tools (web search, scraping, code execution, file/artifact creation, account actions) run ONLY when a task is DISPATCHED to the CLAWs — not in this chat reply. If the request genuinely needs live data, code, a real file, or an account action, say so plainly and offer to run it through the swarm (or note it is being dispatched). Do NOT simulate the swarm's work yourself.`;
 
 // Kernel-level anti-hallucination guardrail. Appended to EVERY agent system
 // prompt (chat, orchestration, external API) so agents never fabricate creation,
@@ -594,6 +616,29 @@ export function requestsCodeWork(message: string): boolean {
   );
 }
 
+// Deterministic detector for requests that EXPLICITLY invoke the swarm/its tools
+// or inherently need live online work (search, research, look-ups, current data).
+// The inline chat reply has NO tools, so if these are answered inline ABBY
+// FABRICATES the work — fake web_search results, fake sandbox runs, fake download
+// links, invented data (the coin-creation transcript: "use your online search",
+// "deepsearch this", "use the swarm" were all answered with hallucinated tool
+// output). They MUST dispatch to the tool-capable orchestrator, where the CLAWs
+// actually run web_search/web_scrape/http_request and return real results.
+// Deterministic so it never depends on the router model's guess.
+export function requestsSwarmExecution(message: string): boolean {
+  return (
+    // Operator explicitly tells ABBY to use the swarm or a specific CLAW.
+    /\b(use|run|deploy|dispatch|spin up|fire up|unleash|activate|put)\b[^.!?\n]{0,40}\b(swarm|claws?|forge|crawler|vault|wire|mr\.?\s*nice)\b/i.test(message) ||
+    // Operator explicitly asks for online/web/deep search or research.
+    /\buse\b[^.!?\n]{0,20}\b(online|web|deep|live|internet)\b[^.!?\n]{0,20}\b(search|research|tools?)\b/i.test(message) ||
+    /\b(dee?p[\s-]?search|dee?p[\s-]?research|web[\s-]?search|online search|search online|search the (web|internet)|google (it|this|that))\b/i.test(message) ||
+    // Strong online-work verbs that require fetching real, current information.
+    /\b(look up|search for|find me|find out|research|browse|scrape|crawl|web crawl)\b/i.test(message) ||
+    // Requests pinned to live/current/real-time data the model cannot have.
+    /\b(latest|current|today'?s|this week'?s|up[\s-]?to[\s-]?date|real[\s-]?time|live|breaking|right now)\b[^.!?\n]{0,40}\b(price|prices|news|data|info|information|stats?|statistics|rates?|results?|scores?|weather|trends?)\b/i.test(message)
+  );
+}
+
 // How many prior channel messages to feed back as conversation context.
 const CHAT_HISTORY_LIMIT = 16;
 
@@ -750,24 +795,22 @@ router.post("/ai/chat", async (req, res) => {
 
   const model = resolveModel(resolvedAgentId, agent.model, overrideModel);
   const persona = AGENT_PERSONAS[resolvedAgentId] ?? `You are ${agent.name}, an AI agent in the ABBY CLAW swarm.`;
-  // Live-reach scan is appended on EVERY turn so the agent always knows its
-  // real, current tools + which integrations are online.
+  // This is the INLINE chat reply prompt — and the inline path executes NO tools
+  // (the streaming completion below sends no tool schemas). So it must NOT
+  // advertise tools (capability card / live-reach "Tools available to you" /
+  // RESEARCH_PLAYBOOKS' web_search/sandbox_exec/save_artifact instructions) or the
+  // model fabricates tool calls and results (the coin-creation transcript). Real
+  // tool work is reached via DISPATCH (orchestrateGoal) below, whose CLAW prompts
+  // carry the full tool doctrines. Here we keep only persona + conversational
+  // voice + intent fidelity + the anti-fabrication guardrails (incl. the explicit
+  // tools-off rule and the secrets-safety rules).
   const systemPrompt =
     persona +
     CHAT_MODE_DIRECTIVE +
-    buildCapabilityCard(resolvedAgentId) +
-    buildLiveReachCard(resolvedAgentId) +
+    CHAT_NO_TOOLS_DIRECTIVE +
     OPERATOR_INTENT_FIDELITY +
-    RESEARCH_PLAYBOOKS +
     ANTI_HALLUCINATION_DIRECTIVE +
-    TOOL_CALL_DISCIPLINE +
-    SWARM_SAFETY_RULES +
-    CODING_LIFECYCLE_DOCTRINE +
-    JOB_COMPLETION_VALIDATOR +
-    GITHUB_RENDER_OPERATIONS_DOCTRINE +
-    SENIOR_SWE_GENIUS_DOCTRINE +
-    SWE_SKILLS +
-    (await buildVaultCard());
+    SWARM_SAFETY_RULES;
 
   // A user turn may carry uploaded files. Images are sent to the model as vision
   // input (which also reads text in the image — i.e. OCR); text-like files have
@@ -1048,6 +1091,43 @@ router.post("/ai/chat", async (req, res) => {
       });
       return;
     }
+    // Deterministic override: the operator explicitly invoked the swarm / online
+    // search / deep research, OR asked for live/current info the inline reply
+    // cannot truthfully produce. Inline chat has NO tools, so answering these here
+    // guarantees fabricated "search results", fake sandbox runs, and invented
+    // download links (the coin-creation transcript). Dispatch to the tool-capable
+    // orchestrator, where the CLAWs actually run web_search/web_scrape/http_request
+    // and return real, cited results — or report the exact failure.
+    if (requestsSwarmExecution(message)) {
+      const goal =
+        `${message.trim()}\n\n` +
+        `EXECUTE WITH REAL TOOLS — mandatory:\n` +
+        `- This is live swarm work, not a chat answer. Use web_search / web_scrape / http_request for every current or factual claim, and cite the REAL URLs you actually fetched this run.\n` +
+        `- Cross-check key facts against at least two independent sources; prefer primary/official sources.\n` +
+        `- If the operator wants a file/guide/deck/report, actually BUILD it and save_artifact it, then include the real download link the tool returns.\n` +
+        `- NEVER fabricate tool output, URLs, download links, file sizes, command results, addresses/IDs, or "verified"/"sandbox-tested" claims. Report only what a tool actually returned this run; if a tool fails, report its exact error.\n` +
+        `- Mark anything not backed by a tool result as unverified.`;
+      const ackText =
+        "**On it — dispatching the swarm.**\n\n" +
+        "The tool-capable path is running real web search / research now. It must return cited, verified results (or report the exact blocker) — not a chat-only answer.";
+      sendEvent({ token: ackText });
+      await finishWith(ackText, model, "abby-router");
+      orchestrateGoal({ goal, channelId, priority: "high", sourceContext: dispatchContext }).catch(async (e) => {
+        req.log.error({ e }, "orchestrateGoal (swarm-execution override) failed");
+        await db
+          .insert(messagesTable)
+          .values({
+            channelId,
+            agentId: agent.id,
+            agentName: agent.name,
+            agentColor: agent.color,
+            content: `Dispatch failed to start: ${String(e).slice(0, 300)}`,
+            messageType: "system",
+          })
+          .catch(() => {});
+      });
+      return;
+    }
     // Decide deterministically: DISPATCH the swarm, or just chat. We must not rely
     // on the model spontaneously calling a tool during a conversational turn — it
     // frequently NARRATES "dispatching…" without acting, leaving every agent idle.
@@ -1246,17 +1326,15 @@ router.post("/ai/complete", async (req, res) => {
   }
 
   const model = resolveModel(resolvedAgentId, agent?.model, overrideModel);
+  // /ai/complete is a one-shot completion with NO tools wired, so — like the
+  // inline chat path — it must not advertise tools or it will fabricate tool runs
+  // and results. Keep persona + the anti-fabrication guardrails (incl. the
+  // explicit tools-off rule).
   const systemPrompt =
     (resolvedAgentId ? (AGENT_PERSONAS[resolvedAgentId] ?? "") : "") +
-    buildCapabilityCard(resolvedAgentId) +
+    CHAT_NO_TOOLS_DIRECTIVE +
     ANTI_HALLUCINATION_DIRECTIVE +
-    TOOL_CALL_DISCIPLINE +
-    SWARM_SAFETY_RULES +
-    CODING_LIFECYCLE_DOCTRINE +
-    JOB_COMPLETION_VALIDATOR +
-    GITHUB_RENDER_OPERATIONS_DOCTRINE +
-    SENIOR_SWE_GENIUS_DOCTRINE +
-    SWE_SKILLS;
+    SWARM_SAFETY_RULES;
 
   const messages = [
     ...(systemPrompt ? [{ role: "system", content: systemPrompt }] : []),

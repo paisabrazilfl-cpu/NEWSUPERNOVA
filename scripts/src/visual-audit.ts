@@ -43,8 +43,11 @@ function routeSafe(route: string) {
 
 async function detectOverflow(page: any) {
   return await page.evaluate(() => {
-    const w = window.innerWidth;
-    const sw = document.documentElement.scrollWidth;
+    // Browser-context globals — typed via globalThis so this file needs no DOM
+    // lib (matches the pattern in responsive-check.ts).
+    const g = globalThis as unknown as { innerWidth: number; document: { documentElement: { scrollWidth: number } } };
+    const w = g.innerWidth;
+    const sw = g.document.documentElement.scrollWidth;
     return sw - w > 1;
   });
 }

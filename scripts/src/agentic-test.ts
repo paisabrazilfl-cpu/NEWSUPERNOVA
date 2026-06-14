@@ -1,5 +1,3 @@
-```ts id="agentic-proof-test"
-
 import { createHash } from "node:crypto";
 
 const BASE = (process.env["BASE_URL"] ?? "http://localhost:3001").replace(/\/$/, "");
@@ -142,4 +140,3 @@ main().catch((e) => {
   console.error("agentic-test crashed:", e);
   process.exit(1);
 });
-```
