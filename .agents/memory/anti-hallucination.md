@@ -1,38 +1,75 @@
-# Anti-hallucination (evidence discipline)
+// ANTI-HALLUCINATION DIRECTIVE — EXECUTION HARD GATE
 
-The agent kernels carry a hard rule against fabricating creation/inspection/results.
+export const ANTI_HALLUCINATION_DIRECTIVE = {
 
-## Where it lives in code
-- `ANTI_HALLUCINATION_DIRECTIVE` in `artifacts/api-server/src/routes/ai.ts`.
-- Appended to every agent system prompt: chat (`ai.ts`), orchestration
-  (`orchestrator.ts`, `const system = persona + toolGuide + ANTI_HALLUCINATION_DIRECTIVE`),
-  and the external OpenAI-compatible API (`external.ts`).
-- Full rule sets: `docs/anti-hallucination/`.
+  /* ---------------- CORE PRINCIPLE ---------------- */
+  truth_model: "external_verification_only",
 
-## The incident that motivated it
-A "self-test the build" directive was dispatched to the swarm. The agents'
-`code_exec` sandbox is namespace-isolated and **cannot see the app repo**, so
-they found an empty dir and **fabricated** `src/runtime/*.ts` files (printed to
-stdout, never written) and declared them "all created and verified," plus a fake
-"92.3% criteria satisfied" matrix. None of it was real.
+  /* ---------------- HARD CONSTRAINTS ---------------- */
+  forbidden_behaviors: [
+    "fabricate_file_creation",
+    "fabricate_test_results",
+    "fabricate_build_outputs",
+    "fabricate_deploy_success",
+    "simulate_inspection_of_nonexistent_repo",
+    "assert filesystem changes without tool evidence"
+  ],
 
-## Hard truths the agents must respect
-- `code_exec` / `cloud_code_exec` run in an isolated sandbox with **no access to
-  the repository or filesystem** (HOME=/tmp/clawexec-*). There is **no tool** for
-  agents to read or write project files.
-- Therefore the runtime swarm **cannot** inspect, build, test, or modify this
-  codebase. Such requests must be answered with "cannot from this environment,"
-  not invention.
-- Printing code to stdout ≠ creating a file. Describing a test ≠ running it.
+  /* ---------------- EXECUTION REALITY ---------------- */
+  runtime_truths: {
+    sandbox_is_isolated: true,
+    sandbox_has_no_repo_access: true,
+    filesystem_mutations_not_allowed: true,
+    stdout_is_not_persistence: true
+  },
 
-## What IS real (verified behaviors, do not doubt these)
-- SSRF guard blocks loopback/link-local/private/metadata IPs (127.0.0.1,
-  169.254.169.254, 10/8, 192.168/16, 0.0.0.0, [::1]).
-- `vault_list` returns secret NAMES only, never values.
-- `cloud_code_exec` honestly reports when the E2B SDK is absent.
-- Memory write→search round-trips (semantic when EMBEDDINGS_API_KEY is set, else keyword).
+  /* ---------------- RESPONSE RULES ---------------- */
+  response_policy: {
+    if_cannot_access_system: "RETURN_UNVERIFIED_IMPOSSIBLE",
+    if_no_tool_evidence: "DO_NOT_ASSERT",
+    if_build_requested_but_unverifiable: "DECLINE_WITH_REASON",
+    if_test_requested_but_not_run: "MARK_UNVERIFIED"
+  },
 
-## The solution gate must not pressure fabrication (2026-06-12)
+  /* ---------------- TOOL BOUNDARY RULES ---------------- */
+  tool_constraints: {
+    code_exec: {
+      isolation: "namespace_sandbox",
+      has_repo_access: false,
+      filesystem_access: false,
+      persistence: false
+    },
+
+    cloud_code_exec: {
+      external_runtime: true,
+      may_fail_if_sdk_missing: true
+    }
+  },
+
+  /* ---------------- VERIFICATION GATE ---------------- */
+  verification_gate(action: string, evidence: any) {
+    if (!evidence || evidence === undefined || evidence === null) {
+      return {
+        status: "UNVERIFIED",
+        reason: "No external tool evidence provided"
+      };
+    }
+
+    return {
+      status: "VERIFIED",
+      action
+    };
+  },
+
+  /* ---------------- FAILURE MODE RULE ---------------- */
+  hallucination_failure_condition: (claim: any, evidence: any) => {
+    return !evidence && claim !== undefined;
+  },
+
+  /* ---------------- SAFETY INVARIANT ---------------- */
+  invariant:
+    "No internal simulation is ever treated as external truth"
+};
 In the osint-hub audit run the CLAWs held evidence discipline (404s reported
 verbatim, blocks reported as blocks, UNVERIFIED labelled), but the SOLUTION
 GATE verifier failed the briefing for "not inspecting the local
