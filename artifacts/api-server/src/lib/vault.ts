@@ -153,3 +153,33 @@ export function hasSecretPlaceholder(input: string): boolean {
   SECRET_PLACEHOLDER.lastIndex = 0;
   return SECRET_PLACEHOLDER.test(input);
 }
+
+/**
+ * Build a TRUTHFUL, actionable error for an input that still has unresolved
+ * {{secret:NAME}} placeholders. The old generic "that name is not in the vault"
+ * was actively misleading when the name IS in the vault but its value can't be
+ * decrypted (the VAULT_KEY/SESSION_SECRET changed since it was saved) — agents
+ * then loop forever re-checking vault_list (which shows the name) and retrying.
+ * This distinguishes ORPHANED (present but undecryptable → re-enter it / set an
+ * env var; do NOT retry) from genuinely MISSING names.
+ */
+export async function unresolvedSecretError(text: string): Promise<string> {
+  const names = [...new Set([...text.matchAll(SECRET_PLACEHOLDER)].map((m) => m[1]))];
+  if (!names.length) return "error: a {{secret:NAME}} placeholder did not resolve. (No request was sent.)";
+  let existing = new Set<string>();
+  try {
+    existing = new Set((await listSecretNames()).map((s) => s.name));
+  } catch { /* fall through with empty set */ }
+  const orphaned = names.filter((n) => existing.has(n));
+  const missing = names.filter((n) => !existing.has(n));
+  const parts: string[] = [];
+  if (orphaned.length) {
+    parts.push(
+      `${orphaned.join(", ")} EXIST(S) in the vault but the stored value could NOT be decrypted — the vault encryption key (VAULT_KEY/SESSION_SECRET) changed since it was saved, so it is orphaned. Do NOT retry the placeholder. Fix: re-enter it in Settings → Stored Secrets, or set it as a Render environment variable (env vars win over the vault).`,
+    );
+  }
+  if (missing.length) {
+    parts.push(`${missing.join(", ")} is/are not in the vault — call vault_list for the exact names.`);
+  }
+  return `error: secret placeholder(s) did not resolve. ${parts.join(" ")} (No request was sent.)`;
+}

@@ -25,7 +25,7 @@ import { logger } from "./lib/logger";
 import { db } from "@workspace/db";
 import { agentMemoryTable, vaultSecretsTable, messagesTable, cronJobsTable, attachmentsTable, agentCommandsTable, tasksTable } from "@workspace/db";
 import { desc, ilike, or, isNotNull, eq } from "drizzle-orm";
-import { substituteSecrets, redactSecrets, hasSecretPlaceholder } from "./lib/vault";
+import { substituteSecrets, redactSecrets, hasSecretPlaceholder, unresolvedSecretError } from "./lib/vault";
 import { assessActionRisk, policyRefusal } from "./lib/safetyPolicy";
 import {
   PLATFORMS,
@@ -1146,7 +1146,7 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
       // literal "{{secret:...}}" string as a credential (a guaranteed 401) and
       // then mis-reporting the key as invalid/missing.
       if (hasSecretPlaceholder(url) || Object.values(headers).some(hasSecretPlaceholder) || (body != null && hasSecretPlaceholder(body))) {
-        return "error: a {{secret:NAME}} placeholder did not resolve — that exact secret name is not in the vault. Call vault_list to get the correct names, then retry. (No request was sent.)";
+        return await unresolvedSecretError(`${url}\n${Object.values(headers).join("\n")}\n${body ?? ""}`);
       }
 
       // Auto-authenticate the APIs the swarm calls constantly. Agents repeatedly
@@ -1278,7 +1278,7 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
       const usedSecrets = new Set<string>();
       const source = await substituteSecrets(rawSource, usedSecrets);
       if (hasSecretPlaceholder(source)) {
-        return "error: a {{secret:NAME}} placeholder did not resolve — that exact secret name is not in the vault. Call vault_list for the correct names. (Nothing was executed.)";
+        return await unresolvedSecretError(source);
       }
       return redactSecrets(await e2bExec(language, source), usedSecrets);
     },
@@ -1311,7 +1311,7 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
       const usedSecrets = new Set<string>();
       let script = await substituteSecrets(raw, usedSecrets);
       if (hasSecretPlaceholder(script)) {
-        return "error: a {{secret:NAME}} placeholder did not resolve — that exact secret name is not in the vault. Call vault_list for the correct names. (Nothing was executed.)";
+        return await unresolvedSecretError(script);
       }
       // Rewrite "https://<token>@github.com" → "https://x-access-token:<token>@…"
       // so authenticated git push/mirror works (the bare-token form is rejected
