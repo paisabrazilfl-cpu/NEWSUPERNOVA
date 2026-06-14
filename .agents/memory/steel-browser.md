@@ -1,33 +1,154 @@
----
-name: Steel browser live view
-description: Constraints and known limitations of the Steel.dev live browser embed
----
+````md id="steel-browser-live-view"
 
 # Steel browser live view
 
-## Live WebRTC stream (WHEP) is currently broken / plan-limited
-The embedded live-view player (`debugUrl` = `api.steel.dev/v1/sessions/<id>/player`)
-fails to connect with **WHEP 400 "Invalid live-stream request"** for BOTH default
-1920x1080 and custom-sized sessions. Proven dimension-independent in a real browser.
+## live webRTC stream (WHEP) limitation
 
-**Why it matters:** this is a Steel-side / account-plan limitation, NOT a bug in
-our code or iframe. Real Steel **scrape** and **screenshot** still work (the
-orchestrator uses scrape successfully). Don't chase this as a frontend/iframe bug.
-**How to apply:** if live view shows "Browser Disconnected", verify Steel's
-streaming/live-view entitlement on the account before touching our code.
+The Steel embedded live-view system (`debugUrl = api.steel.dev/v1/sessions/<id>/player`)
+is currently **not reliably operational for live streaming sessions**.
 
-## /scrape `content` may be an object, not a string
-Steel's `/scrape` can return `content` as `{ html, markdown, text }` (not a plain
-string). Rendering it directly in React throws
-**"Objects are not valid as a React child (found: object with keys {html})"** and
-blanks the whole panel.
-**Why it matters:** the server passes Steel's raw JSON straight through, so the
-client must coerce. **How to apply:** always flatten scrape payloads to strings
-(prefer markdown > text > content > html, else JSON.stringify) before storing in
-state / rendering.
+Observed behavior:
+- WHEP connection fails with `400 Invalid live-stream request`
+- Failure occurs across:
+  - 1920x1080 default sessions
+  - custom viewport sessions
+- Issue is **dimension-independent**
 
-## Session viewport must match the embedding container
-`POST /api/steel/sessions` accepts `dimensions:{width,height}`; the client measures
-its panel and passes it so the live player fills the container instead of floating a
-fixed 1920x1080 window. Dimensions are clamped (640-1920 x 480-1200) and **forced
-even** — the H.264 encoder rejects odd width/height. Keep dimensions even.
+---
+
+## root cause classification
+
+This is NOT:
+- a frontend iframe bug
+- a React rendering issue
+- a session configuration error in our API layer
+
+This IS:
+- Steel-side streaming entitlement limitation OR
+- plan-level restriction on live WebRTC sessions OR
+- disabled WHEP ingest on current account configuration
+
+---
+
+## operational implication
+
+Live view is **non-critical and non-blocking**.
+
+The system MUST treat:
+
+| Feature | Status |
+|--------|--------|
+| scrape | VALID |
+| screenshot | VALID |
+| live view (WHEP) | DEGRADED / UNRELIABLE |
+
+---
+
+## rendering safety rule (critical)
+
+Steel `/scrape` response `content` MAY be:
+
+```ts id="steel_1"
+{
+  html: string;
+  markdown: string;
+  text: string;
+}
+````
+
+NOT a string.
+
+---
+
+## frontend coercion rule
+
+All scraped content MUST be normalized before rendering:
+
+```ts id="steel_2"
+function normalizeSteelContent(content: any): string {
+  if (!content) return "";
+
+  if (typeof content === "string") return content;
+
+  return (
+    content.markdown ||
+    content.text ||
+    content.html ||
+    JSON.stringify(content)
+  );
+}
+```
+
+---
+
+## failure mode protection
+
+If raw object is rendered in React:
+
+* UI crashes with:
+  "Objects are not valid as a React child"
+
+Therefore:
+
+> ALL Steel outputs must pass through normalization layer before UI state assignment.
+
+---
+
+## session viewport contract
+
+### requirement
+
+Viewport MUST match embedding container.
+
+---
+
+### constraints
+
+* width: 640–1920
+* height: 480–1200
+* BOTH MUST BE EVEN NUMBERS
+
+Reason:
+
+* H.264 encoder rejects odd dimensions
+* WebRTC pipeline fails silently otherwise
+
+---
+
+### enforcement
+
+```ts id="steel_3"
+function clampEven(n: number, min: number, max: number) {
+  const clamped = Math.max(min, Math.min(max, n));
+  return clamped % 2 === 0 ? clamped : clamped - 1;
+}
+```
+
+---
+
+## API behavior rule
+
+When creating session:
+
+```ts id="steel_4"
+POST /api/steel/sessions
+{
+  dimensions: {
+    width: clampEven(containerWidth),
+    height: clampEven(containerHeight)
+  }
+}
+```
+
+---
+
+## system invariant
+
+> Live-view is best-effort observability, not a required execution dependency.
+
+---
+
+END OF SPEC
+
+```
+```
