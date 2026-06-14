@@ -426,6 +426,50 @@ async function serpapiSearch(query: string, limit: number): Promise<string> {
     .join("\n\n")}`;
 }
 
+// POST to the keyless FreeCrawl instance with COLD-START retry. FreeCrawl runs
+// on a free Render tier that spins DOWN when idle, so the first request after an
+// idle period must wake the dyno (~30-60s) and frequently aborts on the
+// per-attempt timeout. FreeCrawl is only ever reached when the paid providers
+// are out of credit/throttled — exactly the moment a single timeout blinds the
+// whole swarm (observed live 2026-06-14: every paid search provider 402/429 and
+// "freecrawl: operation aborted due to timeout" → zero results). Retrying lets
+// that first request wake the instance and a follow-up hit it warm. Retries only
+// transient failures (timeout / network / 5xx); a 4xx or a body-level error is a
+// real error and fails fast. Returns the parsed JSON body.
+async function freecrawlPost(
+  path: string,
+  body: Record<string, unknown>,
+  opts: { attempts?: number; perAttemptMs?: number } = {},
+): Promise<Record<string, unknown>> {
+  const attempts = opts.attempts ?? 3;
+  const perAttemptMs = opts.perAttemptMs ?? 60_000;
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    let retryable = true; // a thrown fetch timeout / network error is retryable
+    try {
+      const r = await fetch(`${FREECRAWL_BASE}${path}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(perAttemptMs),
+      });
+      if (r.ok) {
+        const data = (await r.json()) as Record<string, unknown>;
+        if (data["error"]) { retryable = false; throw new Error(String(data["error"])); }
+        return data;
+      }
+      const text = (await r.text()).slice(0, 200);
+      retryable = r.status >= 500; // 4xx = real client error; 5xx = cold-start/transient
+      throw new Error(`FreeCrawl ${r.status}: ${text}`);
+    } catch (e) {
+      lastErr = e;
+      if (!retryable || i === attempts - 1) break;
+      await new Promise((res) => setTimeout(res, 2000 * (i + 1))); // backoff lets the cold start wake
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+}
+
 // Keyless last-resort search: scrape DuckDuckGo's lightweight HTML results page
 // through FreeCrawl (self-hosted, always on). Needs NO API key or credits, so
 // web_search never fully fails just because the paid providers are throttled or
@@ -433,19 +477,14 @@ async function serpapiSearch(query: string, limit: number): Promise<string> {
 // whole swarm). Lower quality than Tavily/Exa, so it runs only after them.
 async function freecrawlSearch(query: string, limit: number): Promise<string> {
   const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
-  const r = await fetch(`${FREECRAWL_BASE}/scrape`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ url, formats: ["markdown", "links"], include_links: true }),
-    // 60s, not 30s: the keyless FreeCrawl instance spins down when idle (free
-    // tier) and a cold start takes ~30-50s. The shorter timeout made the very
-    // first request abort — leaving the swarm blind exactly when the paid
-    // providers were out of credit. The longer window lets the cold start wake.
-    signal: AbortSignal.timeout(60_000),
-  });
-  if (!r.ok) throw new Error(`FreeCrawl ${r.status}: ${(await r.text()).slice(0, 200)}`);
-  const data = (await r.json()) as { markdown?: string; links?: string[]; error?: string };
-  if (data.error) throw new Error(String(data.error));
+  // Cold-start retry (see freecrawlPost): the first request after idle wakes the
+  // free-tier dyno; without the retry that wake-up timeout left the swarm blind
+  // the instant the paid providers were out of credit.
+  const data = (await freecrawlPost(
+    "/scrape",
+    { url, formats: ["markdown", "links"], include_links: true },
+    { attempts: 3, perAttemptMs: 60_000 },
+  )) as { markdown?: string; links?: string[] };
   // DuckDuckGo HTML wraps each target in a redirect link (/l/?uddg=<encoded>).
   const decode = (href: string): string | null => {
     try {
@@ -676,17 +715,15 @@ export async function steelScrape(url: string): Promise<string> {
   }
 }
 
-/** FreeCrawl fallback scrape — used when Steel is unavailable or blocked. */
+/** FreeCrawl fallback scrape — used when Steel is unavailable or blocked.
+ * Uses the same cold-start retry as freecrawlSearch so an idle free-tier dyno
+ * doesn't fail the scrape on its first (wake-up) request. */
 async function freecrawlScrape(url: string): Promise<string> {
-  const r = await fetch(`${FREECRAWL_BASE}/scrape`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ url, formats: ["markdown", "text"], include_links: false }),
-    signal: AbortSignal.timeout(30_000),
-  });
-  if (!r.ok) throw new Error(`FreeCrawl ${r.status}: ${(await r.text()).slice(0, 200)}`);
-  const data = (await r.json()) as Record<string, unknown>;
-  if (data["error"]) throw new Error(String(data["error"]));
+  const data = await freecrawlPost(
+    "/scrape",
+    { url, formats: ["markdown", "text"], include_links: false },
+    { attempts: 3, perAttemptMs: 45_000 },
+  );
   return (data["markdown"] as string) || (data["text"] as string) || "";
 }
 
