@@ -2,22 +2,40 @@ name: Build & Deploy to Render
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
     paths-ignore:
-      - 'artifacts/api-server/dist/**'
-      - 'artifacts/openclaw/dist/**'
-      - '.agents/**'
-      - '**.md'
+      - "artifacts/api-server/dist/**"
+      - "artifacts/openclaw/dist/**"
+      - ".agents/**"
+      - "**.md"
+
+  workflow_dispatch:
+
+concurrency:
+  group: render-deploy-main
+  cancel-in-progress: true
+
+permissions:
+  contents: write
 
 jobs:
   build-and-deploy:
+    name: Build, Test, Bundle, Deploy
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
-    permissions:
-      contents: write
+    env:
+      NODE_VERSION: "24"
+      PNPM_VERSION: "10"
+      API_SERVER_FILTER: "@workspace/api-server"
+      FRONTEND_FILTER: "@workspace/openclaw"
+      RENDER_SERVICE_ID: "srv-d8hmeunlk1mc73faoh90"
+      FRONTEND_PORT: "10000"
+      BASE_PATH: "/"
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -26,36 +44,65 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 10
+          version: ${{ env.PNPM_VERSION }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
+
+      - name: Validate required secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ -z "${{ secrets.RENDER_TOKEN }}" ]; then
+            echo "RENDER_TOKEN is missing."
+            exit 1
+          fi
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Typecheck workspace
+        run: pnpm run typecheck
+
       - name: Test API server
-        run: pnpm --filter @workspace/api-server run test
+        run: pnpm --filter "${API_SERVER_FILTER}" run test
 
       - name: Build API server
-        run: pnpm --filter @workspace/api-server run build
+        run: pnpm --filter "${API_SERVER_FILTER}" run build
 
       - name: Build frontend
+        run: PORT="${FRONTEND_PORT}" BASE_PATH="${BASE_PATH}" pnpm --filter "${FRONTEND_FILTER}" run build
+
+      - name: Verify built artifacts exist
+        shell: bash
         run: |
-          PORT=10000 BASE_PATH=/ pnpm --filter @workspace/openclaw run build
+          set -euo pipefail
+
+          test -d artifacts/api-server/dist
+          test -d artifacts/openclaw/dist
+
+          echo "API dist:"
+          find artifacts/api-server/dist -maxdepth 2 -type f | sort | sed -n '1,80p'
+
+          echo "Frontend dist:"
+          find artifacts/openclaw/dist -maxdepth 2 -type f | sort | sed -n '1,80p'
 
       - name: Commit built artifacts
+        shell: bash
         run: |
+          set -euo pipefail
+
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
           git add -f artifacts/api-server/dist/ artifacts/openclaw/dist/
 
           if git diff --cached --quiet; then
-            echo "no changes to commit"
+            echo "No built artifact changes detected."
             exit 0
           fi
 
@@ -63,10 +110,65 @@ jobs:
           git push origin HEAD:main
 
       - name: Trigger Render deploy
+        id: render_deploy
+        shell: bash
         run: |
-          curl -s -o /dev/null -w "Render deploy HTTP %{http_code}\n" \
-            -X POST \
-            -H "Authorization: Bearer ${{ secrets.RENDER_TOKEN }}" \
-            -H "Content-Type: application/json" \
-            "https://api.render.com/v1/services/srv-d8hmeunlk1mc73faoh90/deploys" \
-            -d '{"clearCache":"do_not_clear"}'
+          set -euo pipefail
+
+          response_file="$(mktemp)"
+          http_code="$(
+            curl -sS \
+              -o "${response_file}" \
+              -w "%{http_code}" \
+              -X POST \
+              -H "Authorization: Bearer ${{ secrets.RENDER_TOKEN }}" \
+              -H "Content-Type: application/json" \
+              "https://api.render.com/v1/services/${RENDER_SERVICE_ID}/deploys" \
+              -d '{"clearCache":"do_not_clear"}'
+          )"
+
+          echo "Render deploy HTTP ${http_code}"
+
+          if [ "${http_code}" -lt 200 ] || [ "${http_code}" -ge 300 ]; then
+            echo "Render deploy request failed."
+            cat "${response_file}"
+            exit 1
+          fi
+
+          deploy_id="$(node -e '
+            const fs = require("fs");
+            const body = fs.readFileSync(process.argv[1], "utf8");
+            try {
+              const json = JSON.parse(body);
+              console.log(json.id || json.deploy?.id || "");
+            } catch {
+              console.log("");
+            }
+          ' "${response_file}")"
+
+          if [ -n "${deploy_id}" ]; then
+            echo "deploy_id=${deploy_id}" >> "$GITHUB_OUTPUT"
+            echo "Render deploy id: ${deploy_id}"
+          else
+            echo "Render deploy accepted; no deploy id found in response."
+            cat "${response_file}"
+          fi
+
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Build & Deploy to Render"
+            echo ""
+            echo "| Check | Result |"
+            echo "|---|---|"
+            echo "| Workspace typecheck | completed before deploy step |"
+            echo "| API tests | completed before deploy step |"
+            echo "| API build | completed before deploy step |"
+            echo "| Frontend build | completed before deploy step |"
+            echo "| Render deploy request | see job logs |"
+            echo ""
+            echo "Render service: \`${RENDER_SERVICE_ID}\`"
+            echo "Production URL: https://bos-aura.onrender.com"
+          } >> "$GITHUB_STEP_SUMMARY"
