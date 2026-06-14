@@ -604,7 +604,7 @@ export const ABBY_ID = 1;
 // (hung, no error — so the throttle-escape never fired and every ABBY turn
 // paid the full LLM_TIMEOUT_MS before failing over). The orchestrator now
 // defaults to the fast engine; the heavy models remain selectable per-agent.
-export const ABBY_DEFAULT_MODEL = "moonshotai/kimi-k2.6";
+export const ABBY_DEFAULT_MODEL = "openai/gpt-oss-120b";
 
 // Secondary chat model used when a primary turn fails (429-throttled or 5xxing
 // pool). A Mistral NIM build — a different model family from the kimi/nemotron/
