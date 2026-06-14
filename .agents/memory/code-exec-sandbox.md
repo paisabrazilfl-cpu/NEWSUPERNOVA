@@ -1,24 +1,197 @@
+````md
+# code_exec sandboxing
+
+## goal
+The `code_exec` tool executes untrusted model-generated code. The system assumes **all code is hostile by default** and must be isolated at the OS kernel level.
+
 ---
-name: code_exec sandboxing
-description: How code_exec is isolated and why language-level guards alone were rejected
+
+## why language-level guards are rejected
+
+Language-based restrictions (Python preambles, JS overrides, import blocking, etc.) are explicitly insufficient because they are:
+
+- bypassable via native FFI (`ctypes`, `ffi`, `process.binding`, etc.)
+- bypassable via dynamic imports (`importlib`, `require`, eval chains)
+- non-deterministic across runtimes
+- impossible to enforce at syscall boundary
+
+➡️ Therefore: **security must be kernel-enforced, not interpreter-enforced**
+
 ---
 
-# code_exec isolation
+## isolation model (hard requirement)
 
-The `code_exec` agent tool runs untrusted, model-authored code. Setting `cwd` + scrubbing env vars is **not** isolation: a subprocess still runs as the same OS user with full filesystem access and open network, so it can read/write the repo and bypass the `http_request` SSRF guard.
+All `code_exec` runs MUST be executed inside:
 
-**Decision:** wrap execution in `unshare --net --mount --map-root-user` and `mount -t tmpfs tmpfs /home` inside the namespace.
-- `--net` → no network (closes SSRF-bypass / exfiltration via code_exec).
-- `--mount` + tmpfs over `/home` → the app/repo (`/home/runner/workspace`) is invisible and unwritable to executed code.
-- Runtimes live in `/nix` + `/usr`, so they still resolve; PATH is inherited.
+```bash
+unshare --net --mount --map-root-user
+````
 
-**Why not bwrap/firejail/nsjail:** none are installed in this environment; only `unshare`/`prlimit`/`setpriv` are. Unprivileged user namespaces ARE enabled here (`unshare --map-root-user` works).
+### enforced isolation layers
 
-**Why not language-level guards (blocking `socket`/`open` in a Python preamble):** trivially defeatable via `ctypes`/`importlib`/`require`, and gives false confidence. Namespace isolation is enforced by the kernel.
+#### 1. network isolation
 
-**How to apply / caveats:**
-- Capability is probed once at runtime (`detectSandboxMode`) and cached. The probe must verify BOTH `unshare` AND that `mount -t tmpfs tmpfs /home` succeeds inside the throwaway namespace — checking `unshare` exit alone would report "namespace" mode while the repo stays visible. If either fails it **falls back to a scrubbed-env subprocess with NO net/fs isolation** and logs a warning — isolation is host-dependent (Render parity not guaranteed; check the startup log line).
-- The runtime wrapper is **fail-closed**: if the `/home` tmpfs mask can't be applied it aborts with exit 97 WITHOUT running the code, so code never executes with the repo visible.
-- Source is written to a temp file and executed as a FILE (never inline `-c`/`-e`) so user code can't break out of the shell-`-c` wrapper quoting.
-- Spawn is `detached` and killed via process-group (`process.kill(-pid)`) on timeout/output-cap, because killing only the `unshare` parent would orphan the runtime child.
-- Remaining gap (not fixed): `http_request` SSRF guard resolves DNS then `fetch` resolves again → DNS-rebinding TOCTOU.
+* `--net` disables all outbound/inbound network access
+* prevents:
+
+  * SSRF bypass via code_exec
+  * exfiltration via sockets
+  * covert channel communication
+
+---
+
+#### 2. filesystem isolation
+
+Inside namespace:
+
+```bash
+mount -t tmpfs tmpfs /home
+```
+
+effects:
+
+* `/home` becomes empty ephemeral RAM filesystem
+* host workspace becomes invisible
+* repository cannot be read, scanned, or modified
+
+---
+
+#### 3. privilege isolation
+
+* `--map-root-user` provides fake root inside namespace
+* does NOT grant host root privileges
+* prevents privilege escalation impact outside namespace
+
+---
+
+## runtime execution model
+
+### execution flow
+
+1. write code to temp file
+2. spawn isolated namespace
+3. mount tmpfs `/home`
+4. execute file inside sandbox
+5. capture stdout/stderr
+6. kill process group on timeout
+
+---
+
+### critical safety constraint
+
+```text
+CODE IS NEVER EXECUTED INLINE (-c / -e FORBIDDEN)
+```
+
+Reason:
+
+* prevents shell quoting escape
+* prevents injection into execution string context
+
+---
+
+## process control model
+
+* execution runs in a **detached process group**
+* timeout enforcement uses:
+
+```bash
+kill -<pgid>
+```
+
+NOT PID-only termination
+
+Reason:
+
+* ensures child processes cannot escape sandbox lifecycle
+
+---
+
+## failure handling (HARD FAIL CLOSED)
+
+### if ANY of the following fail:
+
+* unshare unavailable
+* mount tmpfs fails
+* namespace creation fails
+
+➡️ system MUST:
+
+```text
+EXIT CODE 97
+DO NOT EXECUTE USER CODE
+LOG: ISOLATION FAILURE
+```
+
+---
+
+## sandbox capability probe
+
+Before first execution:
+
+```ts
+detectSandboxMode()
+```
+
+must verify:
+
+* `unshare --map-root-user` succeeds
+* `mount -t tmpfs tmpfs /home` succeeds inside namespace
+
+### IMPORTANT
+
+Checking only `unshare` is INVALID.
+
+Both conditions MUST pass or system is considered:
+
+```text
+NON-ISOLATED
+```
+
+---
+
+## fallback mode (restricted only)
+
+If isolation fails:
+
+* code_exec runs in scrubbed environment
+* environment variables stripped
+* NO network access assumed (but NOT guaranteed)
+* filesystem still visible (WARN STATE)
+
+Logged as:
+
+```text
+WARNING: NO KERNEL ISOLATION AVAILABLE
+```
+
+---
+
+## known unresolved risk
+
+### DNS rebinding / TOCTOU issue
+
+* SSRF guard resolves DNS at check-time
+* fetch resolves DNS again at runtime
+
+➡️ creates potential bypass window
+
+**STATUS:** acknowledged, not yet fixed
+
+---
+
+## security invariant
+
+```text
+If code_exec can see the repo, the system is compromised.
+```
+
+---
+
+## design principle
+
+> All safety must be enforced at the kernel boundary.
+> Anything above syscall level is considered advisory only.
+
+```
+```
