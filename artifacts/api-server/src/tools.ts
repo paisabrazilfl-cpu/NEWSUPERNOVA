@@ -23,7 +23,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { logger } from "./lib/logger";
 import { db } from "@workspace/db";
-import { agentMemoryTable, vaultSecretsTable, messagesTable, cronJobsTable, attachmentsTable } from "@workspace/db";
+import { agentMemoryTable, vaultSecretsTable, messagesTable, cronJobsTable, attachmentsTable, agentCommandsTable, tasksTable } from "@workspace/db";
 import { desc, ilike, or, isNotNull, eq } from "drizzle-orm";
 import { substituteSecrets, redactSecrets, hasSecretPlaceholder } from "./lib/vault";
 import { assessActionRisk, policyRefusal } from "./lib/safetyPolicy";
@@ -1103,8 +1103,9 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
     name: "http_request",
     description:
       "Make a real outbound HTTP request to any API endpoint. Supports GET/POST/PUT/PATCH/DELETE with optional headers and a JSON/text body. Returns the status and response body (truncated). " +
-      "To authenticate ANY private/authenticated API (Render, GitHub, OpenAI, etc.), put a vault secret placeholder in the header rather than a raw key — e.g. headers { \"Authorization\": \"Bearer {{secret:RENDER_API_KEY}}\" } or for GitHub { \"Authorization\": \"Bearer {{secret:GITHUB_API_KEY}}\" }. " +
-      "The placeholder is resolved to the real value only at send time, so the secret never enters your context — the vault is write-only BY DESIGN and you never need the raw key. Use vault_list (or the STORED SECRETS list in your prompt) to see which names exist; if a name is there the credential is available — never report it missing, just use {{secret:NAME}} and make the call. Authenticating GitHub this way also raises its limit from 60 to 5,000 requests/hour.",
+      "To authenticate ANY private/authenticated API (Render, OpenAI, etc.), put a vault secret placeholder in the header rather than a raw key — e.g. headers { \"Authorization\": \"Bearer {{secret:RENDER_API_KEY}}\" }. " +
+      "The placeholder is resolved to the real value only at send time, so the secret never enters your context — the vault is write-only BY DESIGN and you never need the raw key. Use vault_list (or the STORED SECRETS list in your prompt) to see which names exist; if a name is there the credential is available — never report it missing, just use {{secret:NAME}} and make the call. " +
+      "GITHUB API (api.github.com): DO NOT add an Authorization header — GitHub is AUTO-AUTHENTICATED by the server at 5,000 req/hr. Just call https://api.github.com/... with NO Authorization header and the token is injected automatically. Adding {{secret:GITHUB_API_KEY}} manually will FAIL if that vault name does not exist; omitting the header lets auto-auth handle it correctly.",
     parameters: {
       type: "object",
       properties: {
@@ -2246,6 +2247,129 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
       return row ? `cancelled scheduled job #${id} ("${row.name}").` : `no scheduled job #${id} found.`;
     },
   },
+
+  // ── HEARTBEAT — autonomous persistence loop ──────────────────────────────
+  // Every CLAW calls this at the top of each heartbeat cron tick. It queries
+  // the DB for that agent's real pending / in-progress / recently-failed work
+  // and feeds the results back into the agent's context so it RESUMES work
+  // rather than starting blind. Without this, a CLAW completes one LLM pass,
+  // marks itself done, and idles — the heartbeat cron fires again but the agent
+  // has no memory of what it was doing. heartbeat_respond breaks that cycle:
+  //   tick → call heartbeat_respond → see unfinished tasks → continue executing
+  // → tick → call heartbeat_respond → queue clear → report IDLE.
+  heartbeat_respond: {
+    name: "heartbeat_respond",
+    description:
+      "HEARTBEAT — Report your alive status and pull your REAL task queue from the swarm DB. " +
+      "Call this FIRST on every heartbeat cycle. The result shows every task that is pending, " +
+      "in-progress, or recently failed for YOU specifically. " +
+      "If unfinished work is listed, resume executing it NOW using your other tools — " +
+      "do NOT stop after one pass, do NOT declare done until you have a verified tool result. " +
+      "Only report IDLE when your queue is genuinely empty. " +
+      "This is the core mechanism that keeps CLAWs autonomous across multiple heartbeat cycles.",
+    parameters: {
+      type: "object",
+      properties: {
+        status: {
+          type: "string",
+          enum: ["active", "idle", "resuming"],
+          description:
+            "'resuming' = picking up incomplete work found in queue, " +
+            "'active' = mid-execution on a task right now, " +
+            "'idle' = queue is genuinely empty, standing by.",
+        },
+        note: {
+          type: "string",
+          description: "Optional: one-line note on what you are working on or what you found.",
+        },
+      },
+      required: ["status"],
+    },
+    run: async (args, ctx) => {
+      const status = String(args["status"] ?? "active").trim();
+      const note = args["note"] ? String(args["note"]).slice(0, 300) : null;
+      const agentId = ctx.agentId;
+      const ts = new Date().toISOString();
+
+      // ── Query this agent's real work queue ──────────────────────────────
+      let pendingCmds: Array<{ id: number; command: string; status: string | null; result: string | null }> = [];
+      let pendingTasks: Array<{ id: number; title: string; status: string | null; progress: number | null }> = [];
+
+      try {
+        const cmds = await db
+          .select({
+            id: agentCommandsTable.id,
+            command: agentCommandsTable.command,
+            status: agentCommandsTable.status,
+            result: agentCommandsTable.result,
+          })
+          .from(agentCommandsTable)
+          .where(eq(agentCommandsTable.toAgentId, agentId))
+          .orderBy(desc(agentCommandsTable.id))
+          .limit(30);
+        // Keep only actionable states — done/interrupted are genuinely finished
+        pendingCmds = cmds.filter((c) =>
+          ["queued", "running", "failed"].includes(c.status ?? ""),
+        );
+      } catch { /* non-fatal — report empty */ }
+
+      try {
+        const tasks = await db
+          .select({
+            id: tasksTable.id,
+            title: tasksTable.title,
+            status: tasksTable.status,
+            progress: tasksTable.progress,
+          })
+          .from(tasksTable)
+          .where(eq(tasksTable.agentId, agentId))
+          .orderBy(desc(tasksTable.id))
+          .limit(30);
+        // Keep only unfinished tasks
+        pendingTasks = tasks.filter((t) =>
+          !["completed", "failed", "interrupted"].includes(t.status ?? ""),
+        );
+      } catch { /* non-fatal */ }
+
+      // ── Build the status report ──────────────────────────────────────────
+      const lines: string[] = [
+        `HEARTBEAT — ${ctx.agentName} (#${agentId}) | status: ${status} | ${ts}`,
+        note ? `Note: ${note}` : "",
+      ].filter(Boolean);
+
+      if (pendingCmds.length) {
+        lines.push(`\nPENDING COMMANDS (${pendingCmds.length}):`);
+        for (const c of pendingCmds.slice(0, 6)) {
+          const res = c.result ? ` → ${clip(c.result, 80)}` : "";
+          lines.push(`  #${c.id} [${c.status}] ${clip(c.command, 140)}${res}`);
+        }
+      } else {
+        lines.push("\nPENDING COMMANDS: none");
+      }
+
+      if (pendingTasks.length) {
+        lines.push(`\nIN-PROGRESS TASKS (${pendingTasks.length}):`);
+        for (const t of pendingTasks.slice(0, 6)) {
+          lines.push(
+            `  #${t.id} [${t.status}] ${clip(t.title, 140)} — ${t.progress ?? 0}% complete`,
+          );
+        }
+        lines.push(
+          "\n⚡ RESUME NOW: Use your tools to make real progress on the tasks above. " +
+          "Do NOT mark done until each item has a verified tool result. " +
+          "Continue executing — do not stop after one pass.",
+        );
+      } else {
+        lines.push("\nIN-PROGRESS TASKS: none");
+        lines.push(
+          "\n✅ Queue clear. You are IDLE. Stand by for new directives from ABBY, " +
+          "or use this cycle to run a proactive check relevant to your specialty.",
+        );
+      }
+
+      return lines.join("\n");
+    },
+  },
 };
 
 // ─── Per-agent tool permissions ──────────────────────────────────────────────
@@ -2256,11 +2380,11 @@ const ALL_TOOLS = Object.keys(TOOL_REGISTRY);
 
 export const AGENT_TOOLS: Record<number, string[]> = {
   1: ALL_TOOLS, // ABBY — full authority
-  2: ["code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "http_request", "web_scrape", "web_search", "tier1_sources", "site_crawl", "site_crawl_status", "memory_search", "memory_write", "vault_list", "save_artifact", "pdf_generate", "image_generate", "send_message"], // FORGE — code
-  3: ["web_scrape", "web_screenshot", "web_search", "tier1_sources", "site_crawl", "site_crawl_status", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "sandbox_exec", "browser_login", "save_artifact", "pdf_generate", "image_generate", "send_message"], // CRAWLER — browser
-  4: ["memory_write", "memory_search", "web_search", "tier1_sources", "web_scrape", "site_crawl", "site_crawl_status", "http_request", "calculator", "vault_list", "save_artifact", "pdf_generate", "image_generate", "send_message"], // VAULT — memory/RAG
-  5: ["http_request", "web_scrape", "web_search", "tier1_sources", "site_crawl", "site_crawl_status", "marketing_playbook", "code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_tools", "composio_action", "instagram_post", "browser_login", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task", "save_artifact", "pdf_generate", "image_generate", "render_card", "send_message"], // WIRE — APIs + scheduling
-  6: ["web_scrape", "web_search", "tier1_sources", "marketing_playbook", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_tools", "composio_action", "instagram_post", "browser_login", "save_artifact", "pdf_generate", "image_generate", "render_card", "send_message"], // MR.NICE — social
+  2: ["code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "http_request", "web_scrape", "web_search", "tier1_sources", "site_crawl", "site_crawl_status", "memory_search", "memory_write", "vault_list", "save_artifact", "pdf_generate", "image_generate", "heartbeat_respond", "send_message"], // FORGE — code
+  3: ["web_scrape", "web_screenshot", "web_search", "tier1_sources", "site_crawl", "site_crawl_status", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "sandbox_exec", "browser_login", "save_artifact", "pdf_generate", "image_generate", "heartbeat_respond", "send_message"], // CRAWLER — browser
+  4: ["memory_write", "memory_search", "web_search", "tier1_sources", "web_scrape", "site_crawl", "site_crawl_status", "http_request", "calculator", "vault_list", "save_artifact", "pdf_generate", "image_generate", "heartbeat_respond", "send_message"], // VAULT — memory/RAG
+  5: ["http_request", "web_scrape", "web_search", "tier1_sources", "site_crawl", "site_crawl_status", "marketing_playbook", "code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_tools", "composio_action", "instagram_post", "browser_login", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task", "save_artifact", "pdf_generate", "image_generate", "render_card", "heartbeat_respond", "send_message"], // WIRE — APIs + scheduling
+  6: ["web_scrape", "web_search", "tier1_sources", "marketing_playbook", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_tools", "composio_action", "instagram_post", "browser_login", "save_artifact", "pdf_generate", "image_generate", "render_card", "heartbeat_respond", "send_message"], // MR.NICE — social
 };
 
 export function getToolNamesForAgent(agentId: number): string[] {

@@ -649,7 +649,7 @@ export const ABBY_ID = 1;
 // (hung, no error — so the throttle-escape never fired and every ABBY turn
 // paid the full LLM_TIMEOUT_MS before failing over). The orchestrator now
 // defaults to the fast engine; the heavy models remain selectable per-agent.
-export const ABBY_DEFAULT_MODEL = "moonshotai/kimi-k2.6";
+export const ABBY_DEFAULT_MODEL = "openai/gpt-oss-120b";
 
 // Secondary chat model used when a primary turn fails (429-throttled or 5xxing
 // pool). A Mistral NIM build — a different model family from the kimi/nemotron/
@@ -709,7 +709,8 @@ export function resolveModel(agentId: number, agentModel: string | null | undefi
     !candidate.startsWith("openai/") &&
     !candidate.startsWith("nvidia/nemotron") &&
     !candidate.startsWith("moonshotai/") &&
-    !candidate.startsWith("deepseek-ai/")
+    !candidate.startsWith("deepseek-ai/") &&
+    !candidate.startsWith("or:")   // explicit OpenRouter selection
   ) {
     return ABBY_DEFAULT_MODEL;
   }
@@ -736,13 +737,32 @@ const NIM_FEATURED_MODELS = [
   { id: "mistralai/mistral-medium-3.5-128b", name: "Mistral Medium 3.5 128B (NIM)", context_length: 131072 },
   { id: "mistralai/mistral-small-4-119b-2603", name: "Mistral Small 4 119B (NIM)", context_length: 131072 },
   { id: "z-ai/glm-5.1", name: "Zhipu GLM-5.1 (NIM)", context_length: 131072 },
+  { id: "stepfun-ai/step-3.7-flash", name: "StepFun Step 3.7 Flash (NIM, fast)", context_length: 256000 },
 ];
 
-// List available models — the curated NVIDIA NIM catalog (no external catalog
-// fetch: the swarm is NIM-only, and NIM's /models lists hundreds of engines the
-// swarm has not verified for tools/json mode, so the curated list is the truth).
+// OpenRouter models — available as direct model selections (not just fallback).
+// These require OPENROUTER_API_KEY. When selected, the model id is passed
+// directly to OpenRouter's OpenAI-compatible endpoint.
+const OPENROUTER_FEATURED_MODELS = [
+  { id: "or:openai/gpt-4o", name: "GPT-4o (OpenRouter)", context_length: 128000 },
+  { id: "or:openai/gpt-4o-mini", name: "GPT-4o Mini (OpenRouter, fast)", context_length: 128000 },
+  { id: "or:anthropic/claude-3.5-haiku", name: "Claude 3.5 Haiku (OpenRouter)", context_length: 200000 },
+  { id: "or:x-ai/grok-3", name: "Grok 3 (OpenRouter)", context_length: 131072 },
+  { id: "or:x-ai/grok-3-mini", name: "Grok 3 Mini (OpenRouter, fast)", context_length: 131072 },
+  { id: "or:qwen/qwen3-235b-a22b", name: "Qwen 3 235B MoE (OpenRouter)", context_length: 128000 },
+  { id: "or:deepseek/deepseek-chat", name: "DeepSeek Chat (OpenRouter)", context_length: 64000 },
+  { id: "or:meta-llama/llama-3.3-70b-instruct", name: "Llama 3.3 70B (OpenRouter)", context_length: 131072 },
+  { id: "or:mistralai/mistral-medium-3", name: "Mistral Medium 3 (OpenRouter)", context_length: 131072 },
+];
+
+// List available models — NIM curated catalog + OpenRouter when configured.
 router.get("/ai/models", async (_req, res) => {
-  res.json({ models: NIM_FEATURED_MODELS });
+  const { openrouterConfigured } = await import("../lib/integrations");
+  const models = [
+    ...NIM_FEATURED_MODELS,
+    ...(openrouterConfigured() ? OPENROUTER_FEATURED_MODELS : []),
+  ];
+  res.json({ models });
 });
 
 // SSE streaming AI chat — POST /api/ai/chat

@@ -213,9 +213,9 @@ describe("llmFetch — rotation, breaker, and stall failover", () => {
     expect(seen).toEqual(["Bearer nvapi-a", "Bearer nvapi-b"]);
   });
 
-  it("rejected on EVERY pooled key: marks NIM unhealthy and returns the honest failure — zero off-NVIDIA traffic", async () => {
+  it("rejected on EVERY pooled key: tries both NIM keys, then OpenRouter as last resort, and surfaces the NIM failure when OpenRouter also fails", async () => {
     process.env["NVIDIA_API_KEY"] = "nvapi-a,nvapi-b";
-    process.env["OPENROUTER_API_KEY"] = "or-test"; // present but must never be used
+    process.env["OPENROUTER_API_KEY"] = "or-test"; // configured → used only after NIM is exhausted
     const urls: string[] = [];
     const keys: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
@@ -224,15 +224,18 @@ describe("llmFetch — rotation, breaker, and stall failover", () => {
       return jsonResponse(403);
     }));
     const { r, req } = await llmFetch("z-ai/glm-5.1", { messages: [] });
-    // The failure is surfaced honestly to the caller.
+    // OpenRouter (stubbed) ALSO returns 403, so the NIM failure is surfaced
+    // honestly to the caller — the primary provider's error, not OpenRouter's.
     expect(r.status).toBe(403);
     expect(req.provider).toBe("nvidia-nim");
     expect(nimHealthy()).toBe(false);
-    // Both pooled keys were tried; every single request stayed on NVIDIA.
-    expect(new Set(keys)).toEqual(new Set(["Bearer nvapi-a", "Bearer nvapi-b"]));
-    expect(urls.length).toBeGreaterThanOrEqual(2);
-    expect(urls.every((u) => u.includes("nvidia"))).toBe(true);
-    expect(urls.some((u) => u.includes("openrouter"))).toBe(false);
+    // Both pooled NIM keys were tried BEFORE leaving NVIDIA.
+    expect(keys).toContain("Bearer nvapi-a");
+    expect(keys).toContain("Bearer nvapi-b");
+    // After the NIM gauntlet was exhausted, OpenRouter was attempted as the
+    // last-resort backstop (operator policy: OpenRouter fallback ON).
+    expect(keys).toContain("Bearer or-test");
+    expect(urls.some((u) => u.includes("openrouter"))).toBe(true);
   });
 
   it("retries a 5xx (Nemotron 504 under load) once on the fast NIM model", async () => {
@@ -357,9 +360,9 @@ describe("llmFetch — rotation, breaker, and stall failover", () => {
     expect(modelStalled("nvidia/nemotron-3-super-120b-a12b")).toBe(false);
   });
 
-  it("FINAL ESCAPE (NIM-only): 429 on every key + backoff retry → NIM marked degraded and the failure surfaced honestly — zero off-NVIDIA traffic", async () => {
+  it("FINAL ESCAPE: 429 on every key + backoff retry, then OpenRouter last resort → NIM marked degraded and the failure surfaced honestly", async () => {
     process.env["NVIDIA_API_KEY"] = "nvapi-valid-but-throttled";
-    process.env["OPENROUTER_API_KEY"] = "or-test"; // present but must never be used
+    process.env["OPENROUTER_API_KEY"] = "or-test"; // configured → used only after NIM is exhausted
     process.env["NIM_429_BACKOFF_MS"] = "5";
     const urls: string[] = [];
     vi.stubGlobal("fetch", vi.fn(async (url: string) => {
@@ -367,18 +370,16 @@ describe("llmFetch — rotation, breaker, and stall failover", () => {
       return jsonResponse(429);
     }));
     const { r, req } = await llmFetch("nvidia/nemotron-3-super-120b-a12b", { messages: [] });
-    // OpenRouter is removed: the throttle is surfaced honestly — it is NOT
-    // silently rerouted to a third-party router with no credits (the source
-    // of the live 402 outage).
+    // OpenRouter is attempted as the last-resort backstop, but the stub throttles
+    // it too (429), so the honest NIM throttle is surfaced to the caller — not a
+    // silent reroute presented as success.
     expect(r.status).toBe(429);
     expect(req.provider).toBe("nvidia-nim");
-    expect(urls.length).toBeGreaterThanOrEqual(2); // initial + backoff retry at minimum
-    expect(urls.every((u) => u.includes("nvidia.com"))).toBe(true);
-    expect(urls.some((u) => u.includes("openrouter"))).toBe(false);
+    expect(urls.length).toBeGreaterThanOrEqual(2); // NIM initial + backoff retry at minimum
+    expect(urls.some((u) => u.includes("nvidia.com"))).toBe(true); // NIM is tried first
+    expect(urls.some((u) => u.includes("openrouter"))).toBe(true); // OpenRouter attempted last
     // NIM is marked degraded so operators/vault routes can see and clear it.
     expect(nimDegraded()).toBe(true);
-    // Routing still targets NVIDIA — there is no other provider.
-    expect(chatRequestFor("qwen/qwen3.5-397b-a17b").provider).toBe("nvidia-nim");
     delete process.env["NIM_429_BACKOFF_MS"];
   });
 });

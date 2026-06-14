@@ -217,6 +217,18 @@ export const MAX_SOLVE_CYCLES = Number(process.env["MAX_SOLVE_CYCLES"]) > 0 ? Nu
 export const MAX_SOLVE_STALL = Number(process.env["MAX_SOLVE_STALL"]) > 0 ? Number(process.env["MAX_SOLVE_STALL"]) : 3;
 
 /**
+ * Hard time ceiling for the entire orchestrateGoal solve loop — coordinator
+ * rounds + solution gate combined. Acts as a safety backstop alongside the
+ * cycle budget: whichever limit is hit first terminates the loop. Prevents
+ * runaway cost / infinite oscillation when cycle count alone is insufficient.
+ * Default 5 minutes. Operator-tunable via MAX_SOLVE_RUNTIME_MS env var.
+ */
+export const MAX_SOLVE_RUNTIME_MS =
+  Number(process.env["MAX_SOLVE_RUNTIME_MS"]) > 0
+    ? Number(process.env["MAX_SOLVE_RUNTIME_MS"])
+    : 5 * 60 * 1000;
+
+/**
  * SOLUTION GATE — the verifier contract appended when ABBY judges whether the
  * final briefing actually solves the operator's input. Exported (and asserted
  * by tests) so the gate's strictness can't silently drift.
@@ -262,7 +274,13 @@ DIRECTIVES MUST BE EXECUTABLE: every corrective directive must be achievable
 with the swarm's REAL tools (web search/scrape, HTTP, isolated code exec,
 memory, connected accounts). The CLAWs' sandbox CANNOT see the application
 repository, the operator's filesystem, or any local path — never direct an
-agent to clone, open, inspect, build, or test local files or the codebase.`;
+agent to clone, open, inspect, build, or test local files or the codebase.
+EVIDENCE REQUIRED — NO HALLUCINATION GATE: you MUST cite the specific tool
+outputs, URLs, or results that support your verdict. "solved: true" with an
+empty evidence array is INVALID and will be treated as "solved: false". Every
+verdict must include at least one concrete evidence item drawn from what is
+actually present in the briefing. If you cannot cite real evidence, the goal is
+not solved — do not fabricate sources.`;
 
 /**
  * Code-level enforcement of "DIRECTIVES MUST BE EXECUTABLE". The doctrine above
@@ -291,21 +309,34 @@ export function directiveIsExecutable(text: string): boolean {
   return !OUT_OF_SCOPE_DIRECTIVE_PATTERNS.some((re) => re.test(text));
 }
 
+/** One cited piece of evidence supporting a solution-gate verdict. */
+export interface SolutionEvidence { source: string; excerpt: string; url?: string }
+
 /**
  * Parse the solution-gate verifier's verdict. The verifier replies with a JSON
- * object {"solved": boolean, "reason": string, "directives": [...]}; models
+ * object {"solved": boolean, "reason": string, "evidence": [...], "directives": [...]}; models
  * wrap JSON in prose/fences often enough that this is regex-hardened. An
  * unparseable verdict fails OPEN (solved=true) so a flaky judge can never burn
  * the whole cycle budget churning on its own garbage — the failure is logged.
+ * Evidence is extracted and surfaced so the caller can enforce the evidence gate.
  */
-export function parseSolutionVerdict(raw: string): { solved: boolean; reason: string } {
+export function parseSolutionVerdict(raw: string): { solved: boolean; reason: string; evidence: SolutionEvidence[] } {
   const start = raw.indexOf("{");
   const end = raw.lastIndexOf("}");
   if (start !== -1 && end > start) {
     try {
       const parsed = JSON.parse(raw.slice(start, end + 1)) as Record<string, unknown>;
       if (typeof parsed["solved"] === "boolean") {
-        return { solved: parsed["solved"], reason: String(parsed["reason"] ?? "").slice(0, 600) };
+        const ev = Array.isArray(parsed["evidence"])
+          ? (parsed["evidence"] as Record<string, unknown>[])
+              .filter((e) => typeof e === "object" && e !== null && typeof e["source"] === "string")
+              .map((e) => ({
+                source: String(e["source"]).slice(0, 200),
+                excerpt: String(e["excerpt"] ?? "").slice(0, 400),
+                url: typeof e["url"] === "string" ? e["url"].slice(0, 300) : undefined,
+              }))
+          : [];
+        return { solved: parsed["solved"], reason: String(parsed["reason"] ?? "").slice(0, 600), evidence: ev };
       }
     } catch {
       // fall through to regex
@@ -314,9 +345,10 @@ export function parseSolutionVerdict(raw: string): { solved: boolean; reason: st
   const m = raw.match(/"solved"\s*:\s*(true|false)/i);
   if (m) {
     const reason = raw.match(/"reason"\s*:\s*"([^"]{0,600})/i)?.[1] ?? "";
-    return { solved: m[1]!.toLowerCase() === "true", reason };
+    return { solved: m[1]!.toLowerCase() === "true", reason, evidence: [] };
   }
-  return { solved: true, reason: "verdict unparseable — accepted without verification" };
+  return { solved: true, reason: "verdict unparseable — accepted without verification", evidence: [] };
+
 }
 
 /**
@@ -1346,10 +1378,31 @@ Otherwise respond with ONLY a JSON array (no prose, no code fences) of up to 2 f
       // or the MAX_SOLVE_CYCLES safety ceiling), in which case the remaining gap
       // is stated honestly in the briefing itself — never papered over as solved.
       // Skipped for forceAgentId runs (single-shot actions must not repeat).
+      //
+      // UPGRADES (adaptive gate):
+      //   • runtime budget (MAX_SOLVE_RUNTIME_MS) as a hard safety backstop
+      //   • evidence contract: solved=true with no cited evidence = forced retry
+      //   • research injection: when stuck, CRAWLER dispatched with a targeted
+      //     web search so the next synthesis has external grounding
       if (finalAnswer && !forceAgentId) {
         let gateChecks = 0;
         let lastGateReason = "";
+        let researchRounds = 0;
+        const MAX_RESEARCH_ROUNDS = 3;
+        const gateStartTime = Date.now();
+
+        // Find the browser/crawler agent for research injection
+        const crawlerAgent = claws.find((c) =>
+          /claw-?2|crawler|browser/i.test(c.name ?? ""),
+        ) ?? claws[0];
+
         while (!isSwarmPaused()) {
+          // ── Hard time backstop ──────────────────────────────────────────
+          if (Date.now() - gateStartTime > MAX_SOLVE_RUNTIME_MS) {
+            finalAnswer += `\n\n---\n⚠️ SOLUTION GATE — RUNTIME BUDGET EXCEEDED (${Math.round(MAX_SOLVE_RUNTIME_MS / 1000)}s): the swarm ran out of time before fully solving this goal. The above is the best verified progress.`;
+            break;
+          }
+
           gateChecks++;
           const gateUser = `Operator input: "${goal}"
 
@@ -1359,8 +1412,10 @@ ${finalAnswer.slice(0, 8000)}
 """
 ${SOLUTION_GATE_DOCTRINE}
 Respond with ONLY a JSON object (no prose, no code fences) shaped:
-{"solved": <true|false>, "reason": "<one sentence: why it is/isn't a solution>", "directives": [{"agentId": <number>, "directive": "<corrective instruction that closes the gap>"}]}
-"directives" must be [] when solved is true, and otherwise contain 1-2 directives. Available CLAWs: ${roster}.`;
+{"solved": <true|false>, "reason": "<one sentence: why it is/isn't a solution>", "evidence": [{"source": "<tool name or URL>", "excerpt": "<verbatim snippet proving the claim>", "url": "<optional>"}], "directives": [{"agentId": <number>, "directive": "<corrective instruction that closes the gap>"}]}
+"directives" must be [] when solved is true, and otherwise contain 1-2 directives.
+"evidence" MUST contain at least one item when solved is true — empty evidence with solved=true is treated as solved=false.
+Available CLAWs: ${roster}.`;
           let verdictRaw = "";
           try {
             verdictRaw = await completeChat(model, planSystem, gateUser);
@@ -1369,7 +1424,11 @@ Respond with ONLY a JSON object (no prose, no code fences) shaped:
             break; // can't verify — ship what we have rather than stall
           }
           const verdict = parseSolutionVerdict(verdictRaw);
-          if (verdict.solved) {
+
+          // ── Evidence gate ────────────────────────────────────────────────
+          // solved=true with no cited evidence = hallucinated verdict. Force retry.
+          const hasEvidence = verdict.evidence.length > 0;
+          if (verdict.solved && hasEvidence) {
             // Fail-open is deliberate (a flaky judge must not burn the budget),
             // but an unverifiable verdict is NOT a clean pass — label it so the
             // operator isn't told "solved" on the strength of unparseable output.
@@ -1377,6 +1436,12 @@ Respond with ONLY a JSON object (no prose, no code fences) shaped:
               finalAnswer += `\n\n---\n_Note: the solution-gate verifier returned an unreadable verdict, so this answer was accepted WITHOUT automated verification._`;
             }
             break;
+          }
+
+          // Hallucinated "solved" — no evidence provided
+          if (verdict.solved && !hasEvidence) {
+            logger.warn({ gateChecks }, "solution gate: solved=true but no evidence — treating as unsolved");
+            // Fall through to retry logic below as if solved=false
           }
 
           const proposed = parseDirectives(verdictRaw, claws).slice(0, 2);
@@ -1401,7 +1466,10 @@ Respond with ONLY a JSON object (no prose, no code fences) shaped:
           }
           // No fixed round count: keep cycling while the swarm is still making
           // progress. Stop only when it has STALLED (MAX_SOLVE_STALL consecutive
-          // no-progress rounds) or hit the high safety ceiling.
+          // no-progress rounds), hit the high safety ceiling, or the runtime
+          // backstop above fired. When there are no direct fixes but we're still
+          // within budget, control falls through to RESEARCH INJECTION below so
+          // the swarm searches online for the missing piece before conceding.
           const reasonNorm = (verdict.reason || "").trim().toLowerCase().slice(0, 160);
           const keepGoing = solveRoundsUsed < MAX_SOLVE_CYCLES && solveStall < MAX_SOLVE_STALL;
           await postMessage({
@@ -1409,20 +1477,49 @@ Respond with ONLY a JSON object (no prose, no code fences) shaped:
             agentId: ABBY_ID,
             agentName: "ABBY",
             agentColor: abby?.color ?? ABBY_COLOR,
-            content: `Solution gate (round ${solveRoundsUsed}): briefing does not yet solve the goal — ${verdict.reason || "gap unspecified"}.${keepGoing && fixes.length ? " Researching a fix and retrying." : ""}`,
+            content: `Solution gate (round ${solveRoundsUsed}): briefing does not yet solve the goal — ${verdict.reason || "gap unspecified"}.${keepGoing ? " Researching a fix and retrying." : ""}${!hasEvidence && verdict.solved ? " (verdict had no evidence — evidence gate forced retry)" : ""}`,
             messageType: "system",
           });
 
-          if (!keepGoing || !fixes.length || isSwarmPaused()) {
-            // Stalled, no actionable fix, or ceiling reached: report the gap
-            // honestly in the deliverable itself — never present an unsolved goal
-            // as solved.
-            const why = !fixes.length
-              ? "no further action the swarm's tools can take"
-              : `repeated attempts (including researching the fix) stopped making progress`;
-            finalAnswer += `\n\n---\n⚠️ SOLUTION GATE — NOT FULLY SOLVED after ${solveRoundsUsed} dispatch round${solveRoundsUsed === 1 ? "" : "s"} (UNVERIFIED): ${verdict.reason || "the briefing does not fully solve the operator's input"} — ${why}. The above is the swarm's best verified progress, not a complete solution.`;
+          if (!keepGoing || isSwarmPaused()) {
+            // Stalled or ceiling reached (the runtime backstop is handled above):
+            // report the gap honestly in the deliverable itself — never present an
+            // unsolved goal as solved.
+            finalAnswer += `\n\n---\n⚠️ SOLUTION GATE — NOT FULLY SOLVED after ${solveRoundsUsed} dispatch round${solveRoundsUsed === 1 ? "" : "s"} (UNVERIFIED): ${verdict.reason || "the briefing does not fully solve the operator's input"} — repeated attempts (including researching the fix) stopped making progress. The above is the swarm's best verified progress, not a complete solution.`;
             break;
           }
+
+          // ── Research injection ───────────────────────────────────────────
+          // When stuck (no actionable fixes OR repeated failure), dispatch
+          // CRAWLER with a targeted web search so the next synthesis cycle
+          // has external grounding instead of re-reasoning from the same data.
+          if ((!fixes.length || researchRounds > 0) && researchRounds < MAX_RESEARCH_ROUNDS && crawlerAgent) {
+            researchRounds++;
+            const researchDirective: Directive = {
+              agentId: crawlerAgent.id,
+              directive: `RESEARCH INJECTION (gate round ${gateChecks}): the solution gate says the goal is not yet solved — "${(verdict.reason || "gap unspecified").slice(0, 200)}". Use web_search and web_scrape to find specific documentation, examples, or verified facts that would close this gap. Search query: "${goal.slice(0, 120)} solution steps documentation examples". Return concrete sourced findings with URLs — this will be injected into the next synthesis pass.`,
+            };
+            await postMessage({
+              channelId,
+              agentId: ABBY_ID,
+              agentName: "ABBY",
+              agentColor: abby?.color ?? ABBY_COLOR,
+              content: `Research injection round ${researchRounds}/${MAX_RESEARCH_ROUNDS}: dispatching ${crawlerAgent.name} to find external grounding before next synthesis pass.`,
+              messageType: "system",
+            });
+            const research = await dispatchDirectives([researchDirective], claws, channelId, priority, abby, sourceContext);
+            solveRoundsUsed++;
+            if (research.length) results.push(...research);
+            const redone = await synthesize();
+            if (redone) finalAnswer = redone;
+            continue; // re-enter gate loop with enriched briefing
+          }
+
+          if (!fixes.length) {
+            finalAnswer += `\n\n---\n⚠️ SOLUTION GATE — NOT FULLY SOLVED after ${solveRoundsUsed} dispatch round${solveRoundsUsed === 1 ? "" : "s"} (UNVERIFIED): ${verdict.reason || "the briefing does not fully solve the operator's input"}. The above is the swarm's best verified progress, not a complete solution.`;
+            break;
+          }
+
           const more = await dispatchDirectives(fixes, claws, channelId, priority, abby, sourceContext);
           solveRoundsUsed++;
           if (more.length) results.push(...more);
