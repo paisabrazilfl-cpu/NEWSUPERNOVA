@@ -1,32 +1,145 @@
----
-name: orchestration execution model
-description: How real agent orchestration runs and the invariant that keeps dashboard status honest
----
 
-# Orchestration execution model
+// ===============================
+// ORCHESTRATION EXECUTION MODEL
+// GOD MODE MVP CORE
+// ===============================
 
-Agent commands execute **in-process, fire-and-forget**: `POST /api/commands` returns
-immediately and a background `executeAgentCommand` / `orchestrateGoal` does the real
-work (NVIDIA NIM model call, optional Steel scrape, DB writes), surfaced via the
-dashboard's polling.
+import { db } from "../db";
+import { agentCommands, cronJobs } from "../db/schema/commands";
 
-## Invariant: boot-time reconciliation
-Because execution is in-process, a crash/restart mid-run orphans rows. Any new
-long-running execution path MUST be covered by `reconcileStaleWork()` (runs on boot
-before `app.listen`): fail `running` commands/tasks/tool_calls and reset non-idle
-agent status → `idle`.
+/* ===============================
+   IN-MEMORY SWARM STATE
+=============================== */
 
-**Why:** without it the dashboard shows phantom "thinking" agents and perpetually
-`running` work after every restart (and Render redeploys restart often).
-**How to apply:** when adding a new status a long-running path can leave behind,
-add it to `reconcileStaleWork` so it's cleared on boot.
+let swarmPaused = false;
 
-## Pause is authoritative mid-run
-`isSwarmPaused()` (in-memory, resets on restart) is checked at orchestration start
-AND before each directive dispatch in `orchestrateGoal`'s loop, so pausing after a
-run starts halts remaining directives instead of only blocking new runs.
+export function pauseSwarm() {
+  swarmPaused = true;
+}
 
-## Contract note
-Broadcast `POST /commands` (no `toAgentId`) returns `202 {orchestrating:true}`, not
-the created rows. Only caller is CommandBar, which checks `res.ok` and ignores the
-body. This endpoint is not in the OpenAPI spec, so codegen won't catch drift.
+export function resumeSwarm() {
+  swarmPaused = false;
+}
+
+export function isSwarmPaused() {
+  return swarmPaused;
+}
+
+/* ===============================
+   BOOT RECONCILIATION INVARIANT
+=============================== */
+
+export async function reconcileStaleWork() {
+  // FAIL-OPEN SAFE RESET ON STARTUP
+
+  await db
+    .update(agentCommands)
+    .set({
+      status: "failed",
+    })
+    .where((cmd) => cmd.status === "running");
+
+  await db
+    .update(cronJobs)
+    .set({
+      lastResult: { error: "reconciled_on_boot" },
+    })
+    .where((job) => job.enabled === true);
+
+  // NOTE: agent runtime statuses would also be reset here
+}
+
+/* ===============================
+   CORE EXECUTION PIPELINE
+=============================== */
+
+export async function executeAgentCommand(command: any) {
+  if (isSwarmPaused()) {
+    return { status: "paused" };
+  }
+
+  // mark running
+  await db
+    .update(agentCommands)
+    .set({ status: "running" })
+    .where({ id: command.id });
+
+  try {
+    // simulated NIM call / tool execution layer
+    const result = await runToolPipeline(command);
+
+    await db
+      .update(agentCommands)
+      .set({
+        status: "done",
+        result,
+        completedAt: new Date(),
+      })
+      .where({ id: command.id });
+
+    return result;
+  } catch (err) {
+    await db
+      .update(agentCommands)
+      .set({
+        status: "failed",
+        result: { error: String(err) },
+        completedAt: new Date(),
+      })
+      .where({ id: command.id });
+
+    return { error: String(err) };
+  }
+}
+
+/* ===============================
+   ORCHESTRATION LOOP (FIRE & FORGET)
+=============================== */
+
+export async function orchestrateGoal(goal: any, commands: any[]) {
+  if (isSwarmPaused()) return;
+
+  for (const cmd of commands) {
+    if (isSwarmPaused()) break;
+
+    // dispatch execution asynchronously (fire-and-forget)
+    executeAgentCommand(cmd).catch(() => {
+      // intentionally isolated failure
+    });
+  }
+
+  return { orchestrating: true };
+}
+
+/* ===============================
+   TOOL PIPELINE (STUB CORE)
+=============================== */
+
+async function runToolPipeline(command: any) {
+  // placeholder for:
+  // - NVIDIA NIM call
+  // - Steel scrape
+  // - memory writes
+  // - tool routing layer
+
+  return {
+    ok: true,
+    command: command.command,
+    processed: true,
+  };
+}
+
+/* ===============================
+   CRITICAL INVARIANT
+=============================== */
+
+/*
+BOOT-TIME RECONCILIATION RULE:
+
+Any state that can be left "running" across restart MUST be reset in:
+reconcileStaleWork()
+
+Otherwise dashboard will display phantom execution state.
+
+This is a HARD consistency invariant.
+*/
