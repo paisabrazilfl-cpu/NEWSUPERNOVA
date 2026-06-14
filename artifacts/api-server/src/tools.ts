@@ -1066,8 +1066,9 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
     name: "http_request",
     description:
       "Make a real outbound HTTP request to any API endpoint. Supports GET/POST/PUT/PATCH/DELETE with optional headers and a JSON/text body. Returns the status and response body (truncated). " +
-      "To authenticate ANY private/authenticated API (Render, GitHub, OpenAI, etc.), put a vault secret placeholder in the header rather than a raw key — e.g. headers { \"Authorization\": \"Bearer {{secret:RENDER_API_KEY}}\" } or for GitHub { \"Authorization\": \"Bearer {{secret:GITHUB_API_KEY}}\" }. " +
-      "The placeholder is resolved to the real value only at send time, so the secret never enters your context — the vault is write-only BY DESIGN and you never need the raw key. Use vault_list (or the STORED SECRETS list in your prompt) to see which names exist; if a name is there the credential is available — never report it missing, just use {{secret:NAME}} and make the call. Authenticating GitHub this way also raises its limit from 60 to 5,000 requests/hour.",
+      "To authenticate ANY private/authenticated API (Render, OpenAI, etc.), put a vault secret placeholder in the header rather than a raw key — e.g. headers { \"Authorization\": \"Bearer {{secret:RENDER_API_KEY}}\" }. " +
+      "The placeholder is resolved to the real value only at send time, so the secret never enters your context — the vault is write-only BY DESIGN and you never need the raw key. Use vault_list (or the STORED SECRETS list in your prompt) to see which names exist; if a name is there the credential is available — never report it missing, just use {{secret:NAME}} and make the call. " +
+      "GITHUB API (api.github.com): DO NOT add an Authorization header — GitHub is AUTO-AUTHENTICATED by the server at 5,000 req/hr. Just call https://api.github.com/... with NO Authorization header and the token is injected automatically. Adding {{secret:GITHUB_API_KEY}} manually will FAIL if that vault name does not exist; omitting the header lets auto-auth handle it correctly.",
     parameters: {
       type: "object",
       properties: {
