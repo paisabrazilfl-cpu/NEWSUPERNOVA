@@ -55196,6 +55196,27 @@ function hasSecretPlaceholder(input) {
   SECRET_PLACEHOLDER.lastIndex = 0;
   return SECRET_PLACEHOLDER.test(input);
 }
+async function unresolvedSecretError(text2) {
+  const names = [...new Set([...text2.matchAll(SECRET_PLACEHOLDER)].map((m) => m[1]))];
+  if (!names.length) return "error: a {{secret:NAME}} placeholder did not resolve. (No request was sent.)";
+  let existing = /* @__PURE__ */ new Set();
+  try {
+    existing = new Set((await listSecretNames()).map((s) => s.name));
+  } catch {
+  }
+  const orphaned = names.filter((n) => existing.has(n));
+  const missing = names.filter((n) => !existing.has(n));
+  const parts = [];
+  if (orphaned.length) {
+    parts.push(
+      `${orphaned.join(", ")} EXIST(S) in the vault but the stored value could NOT be decrypted \u2014 the vault encryption key (VAULT_KEY/SESSION_SECRET) changed since it was saved, so it is orphaned. Do NOT retry the placeholder. Fix: re-enter it in Settings \u2192 Stored Secrets, or set it as a Render environment variable (env vars win over the vault).`
+    );
+  }
+  if (missing.length) {
+    parts.push(`${missing.join(", ")} is/are not in the vault \u2014 call vault_list for the exact names.`);
+  }
+  return `error: secret placeholder(s) did not resolve. ${parts.join(" ")} (No request was sent.)`;
+}
 var cachedKey, SECRET_PLACEHOLDER;
 var init_vault2 = __esm({
   "src/lib/vault.ts"() {
@@ -111338,7 +111359,9 @@ ${pageTexts}`, 12e3);
           }
           const body = args["body"] != null && method !== "GET" && method !== "DELETE" ? await substituteSecrets(String(args["body"]), usedSecrets) : void 0;
           if (hasSecretPlaceholder(url2) || Object.values(headers).some(hasSecretPlaceholder) || body != null && hasSecretPlaceholder(body)) {
-            return "error: a {{secret:NAME}} placeholder did not resolve \u2014 that exact secret name is not in the vault. Call vault_list to get the correct names, then retry. (No request was sent.)";
+            return await unresolvedSecretError(`${url2}
+${Object.values(headers).join("\n")}
+${body ?? ""}`);
           }
           try {
             const host = new URL(url2).hostname.toLowerCase();
@@ -111444,7 +111467,7 @@ ${clip3(safe, 4e3)}${hint}`;
           const usedSecrets = /* @__PURE__ */ new Set();
           const source = await substituteSecrets(rawSource, usedSecrets);
           if (hasSecretPlaceholder(source)) {
-            return "error: a {{secret:NAME}} placeholder did not resolve \u2014 that exact secret name is not in the vault. Call vault_list for the correct names. (Nothing was executed.)";
+            return await unresolvedSecretError(source);
           }
           return redactSecrets(await e2bExec(language, source), usedSecrets);
         }
@@ -111468,7 +111491,7 @@ ${clip3(safe, 4e3)}${hint}`;
           const usedSecrets = /* @__PURE__ */ new Set();
           let script = await substituteSecrets(raw, usedSecrets);
           if (hasSecretPlaceholder(script)) {
-            return "error: a {{secret:NAME}} placeholder did not resolve \u2014 that exact secret name is not in the vault. Call vault_list for the correct names. (Nothing was executed.)";
+            return await unresolvedSecretError(script);
           }
           script = normalizeGitHubAuth(script);
           return redactSecrets(await runInSandbox(script), usedSecrets);
