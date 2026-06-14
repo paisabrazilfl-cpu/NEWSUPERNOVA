@@ -207,16 +207,20 @@ CREATE TABLE IF NOT EXISTS "relay_sessions" (
 CREATE INDEX IF NOT EXISTS "relay_sessions_relay_id_idx" ON "relay_sessions" ("relay_id");
 `;
 
+// SOLO MODE: ABBY is the only agent and holds EVERY tool herself — the five
+// CLAW sub-agents were removed (operator decision). Fresh installs seed ABBY
+// only; existing DBs are cleaned by REMOVE_OTHER_AGENTS below.
 const SEED_AGENTS = `
 INSERT INTO agents (name, role, description, status, color, avatar_initials, model, capabilities)
 VALUES
-  ('ABBY',   'Orchestrator',  'Master orchestrator and directive router',       'idle', '#00e5ff', 'AB', 'moonshotai/kimi-k2.6',               ARRAY['orchestration','planning','routing']),
-  ('CLAW-1', 'Code Executor', 'Code generation and execution specialist',       'idle', '#bf00ff', 'C1', 'qwen/qwen3.5-397b-a17b',             ARRAY['code','execution','debugging']),
-  ('CLAW-2', 'Browser Agent', 'Web browsing and scraping via Steel',            'idle', '#0066ff', 'C2', 'deepseek-ai/deepseek-v4-flash',      ARRAY['browser','scraping','research']),
-  ('CLAW-3', 'Memory & RAG',  'Long-term memory and retrieval',                 'idle', '#00cc88', 'C3', 'qwen/qwen3.5-122b-a10b',             ARRAY['memory','rag','search']),
-  ('CLAW-4', 'API Connector', 'External API integration and automation',        'idle', '#ff6b00', 'C4', 'nvidia/nemotron-3-super-120b-a12b',  ARRAY['api','integration','automation']),
-  ('MR.NICE','Social Agent',  'Social media and communications specialist',     'idle', '#ff2d78', 'MN', 'qwen/qwen3.5-122b-a10b',             ARRAY['social','communications','engagement'])
+  ('ABBY', 'Operator', 'Solo autonomous agent — holds every tool and does the work end to end', 'idle', '#00e5ff', 'AB', 'moonshotai/kimi-k2.6', ARRAY['code','execution','browser','scraping','research','memory','rag','api','integration','automation','social','images','files','scheduling'])
 `;
+
+// Idempotently remove the legacy CLAW sub-agents from any existing DB so the
+// swarm is ABBY-only. Safe: the agents table has no foreign-key dependents
+// (messages/tool-calls store agent_id as a plain value), so historical rows
+// keep their attribution. Runs every boot.
+const REMOVE_OTHER_AGENTS = `DELETE FROM agents WHERE name <> 'ABBY'`;
 
 // 2026-06-10 NVIDIA NIM migration: upgrade each agent's LEGACY default model to
 // its NIM replacement (live-verified on integrate.api.nvidia.com — completion,
@@ -253,12 +257,9 @@ VALUES
 // Synced into agents.capabilities so the dashboard Inspector reflects the tools
 // each CLAW actually wields.
 const AGENT_CAPABILITIES: Record<number, string[]> = {
-  1: ["web_scrape", "web_screenshot", "http_request", "code_exec", "memory_write", "memory_search"],
-  2: ["code_exec", "http_request", "web_scrape", "memory_search", "memory_write"],
-  3: ["web_scrape", "web_screenshot", "http_request", "memory_search", "memory_write"],
-  4: ["memory_write", "memory_search", "web_scrape", "http_request"],
-  5: ["http_request", "web_scrape", "code_exec", "memory_search", "memory_write"],
-  6: ["web_scrape", "http_request", "memory_search", "memory_write"],
+  // ABBY only — solo agent with the full toolset (display metadata; real tool
+  // access is ALL_TOOLS via AGENT_TOOLS[1] in tools.ts).
+  1: ["code_exec", "sandbox_exec", "web_search", "web_scrape", "web_screenshot", "http_request", "memory_search", "memory_write", "composio_action", "instagram_post", "image_generate", "pdf_generate", "save_artifact", "schedule_task"],
 };
 
 export async function runMigrations(): Promise<void> {
@@ -274,6 +275,11 @@ export async function runMigrations(): Promise<void> {
       await client.query(SEED_CHANNELS);
       logger.info("Default agents and channels seeded");
     }
+
+    // SOLO MODE: keep only ABBY (removes the legacy CLAW sub-agents from
+    // existing prod DBs). Idempotent — a no-op once only ABBY remains.
+    const del = await client.query(REMOVE_OTHER_AGENTS);
+    if (del.rowCount) logger.info({ removed: del.rowCount }, "Removed legacy CLAW sub-agents — ABBY is solo");
 
     // Idempotently sync each agent's real tool capabilities.
     for (const [id, caps] of Object.entries(AGENT_CAPABILITIES)) {

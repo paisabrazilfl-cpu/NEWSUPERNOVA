@@ -171,10 +171,15 @@ describe("ABBY persona — mythology removed, grounded worker", () => {
     assertNoMythology(abby!);
   });
 
-  it("frames ABBY as a delegating, evidence-driven, self-reflecting worker", () => {
-    for (const beat of ["PLAN FIRST", "DELEGATE", "DEMAND EVIDENCE", "SELF-REFLECT", "DELIVER"]) {
+  it("frames ABBY as a solo, tool-using, evidence-driven, self-reflecting worker", () => {
+    for (const beat of ["PLAN FIRST", "USE YOUR TOOLS", "DEMAND EVIDENCE", "SELF-REFLECT", "DELIVER"]) {
       expect(abby, `ABBY persona should include "${beat}"`).toContain(beat);
     }
+  });
+
+  it("is solo — no sub-agents/CLAWs to delegate to", () => {
+    expect(abby!.toLowerCase()).toContain("work alone");
+    expect(abby!.toLowerCase()).toContain("full toolset");
   });
 });
 
