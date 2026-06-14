@@ -1,23 +1,116 @@
----
-name: tool-call status enum
-description: The allowed status values for the tool_calls table / telemetry are fixed by the OpenAPI spec.
----
+-````md id="tool-call-status-enum"
 
 # tool_calls.status enum
 
-The `tool_calls` status field is typed by the OpenAPI spec as exactly:
-`pending | running | success | error`. The generated TS client narrows to this
-union, so the frontend (e.g. AgentInspector execution matrix) only renders those.
+## canonical type definition
 
-**Rule:** server code that writes tool-call rows must use `success`/`error` on
-completion — never `done`/`failed`. (`done`/`failed` belong to the separate
-agent_commands / tasks status conventions, which are NOT the tool-call enum.)
+The `tool_calls.status` field is strictly defined by the OpenAPI schema as:
 
-**Why:** writing `done`/`failed` to tool_calls produced TS2367 "no overlap"
-errors in the frontend and silently broke the inspector's status icons (no
-green/red shown) because the union didn't include those values.
+```ts id="tool_status_1"
+type ToolCallStatus =
+  | "pending"
+  | "running"
+  | "success"
+  | "error";
+````
 
-**How to apply:** when adding/altering tool-call persistence in
-`artifacts/api-server/src/orchestrator.ts` (or any tool runner), map ok→`success`,
-fail→`error`. If you need a new status, change the OpenAPI spec first and rerun
-`pnpm --filter @workspace/api-spec run codegen`.
+---
+
+## persistence rule (STRICT)
+
+All server-side tool execution code MUST conform to:
+
+| runtime outcome                  | stored value |
+| -------------------------------- | ------------ |
+| execution starts                 | `running`    |
+| execution queued                 | `pending`    |
+| execution completes successfully | `success`    |
+| execution fails                  | `error`      |
+
+---
+
+## forbidden values (HARD FAILURE)
+
+The following MUST NEVER be written to `tool_calls.status`:
+
+* `done`
+* `failed`
+* `completed`
+* `ok`
+* `succeeded`
+
+Reason:
+
+> These values are NOT part of the OpenAPI contract and will break generated clients.
+
+---
+
+## frontend contract dependency
+
+Frontend systems (AgentInspector, execution matrix UI) assume:
+
+* green = `success`
+* red = `error`
+* yellow = `running`
+* gray = `pending`
+
+Any deviation results in:
+
+* missing UI indicators
+* broken status rendering
+* silent failure in execution visualization
+
+---
+
+## mapping rule (SERVER SIDE ONLY)
+
+```ts id="tool_status_2"
+function mapToolResult(ok: boolean): ToolCallStatus {
+  return ok ? "success" : "error";
+}
+```
+
+---
+
+## orchestration enforcement rule
+
+Inside any tool runner / orchestrator:
+
+```ts id="tool_status_3"
+tool_call.status = "running"; // on start
+
+try {
+  await executeTool();
+  tool_call.status = "success";
+} catch {
+  tool_call.status = "error";
+}
+```
+
+---
+
+## migration constraint
+
+If a new status is required:
+
+1. update OpenAPI spec first
+2. regenerate client:
+
+```bash id="tool_status_4"
+pnpm --filter @workspace/api-spec run codegen
+```
+
+3. THEN update backend + frontend
+
+---
+
+## system invariant
+
+> tool_calls.status is a closed set enforced by schema, not runtime convention.
+
+---
+
+END OF SPEC
+
+```
+```
