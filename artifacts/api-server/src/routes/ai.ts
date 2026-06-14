@@ -708,7 +708,11 @@ export function resolveModel(agentId: number, agentModel: string | null | undefi
     !candidate.startsWith("nvidia/nemotron") &&
     !candidate.startsWith("moonshotai/") &&
     !candidate.startsWith("deepseek-ai/") &&
-    !candidate.startsWith("or:")   // explicit OpenRouter selection
+    !candidate.startsWith("qwen/") &&
+    !candidate.startsWith("mistralai/") &&
+    !candidate.startsWith("meta/") &&
+    !candidate.startsWith("or:") &&  // explicit OpenRouter selection
+    !candidate.startsWith("bd:")     // explicit Bitdeer selection
   ) {
     return ABBY_DEFAULT_MODEL;
   }
@@ -753,12 +757,22 @@ const OPENROUTER_FEATURED_MODELS = [
   { id: "or:mistralai/mistral-medium-3", name: "Mistral Medium 3 (OpenRouter)", context_length: 131072 },
 ];
 
-// List available models — NIM curated catalog + OpenRouter when configured.
+// Bitdeer (api-inference.bitdeer.ai) models — selected via the "bd:" prefix.
+// Only shown when BITDEER_API_KEY is configured.
+const BITDEER_FEATURED_MODELS = [
+  { id: "bd:mistralai/Devstral-2-123B-Instruct-2512", name: "Bitdeer · Devstral 2 123B (code)", context_length: 131072 },
+  { id: "bd:nvidia/NVIDIA-Nemotron-3-Super-120B-A12B", name: "Bitdeer · Nemotron 3 Super 120B (reasoning)", context_length: 131072 },
+  { id: "bd:nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning", name: "Bitdeer · Nemotron Nano 30B (reasoning)", context_length: 131072 },
+  { id: "bd:google/gemma-4-E4B-it", name: "Bitdeer · Gemma 4 E4B (fast)", context_length: 131072 },
+];
+
+// List available models — NIM curated catalog + OpenRouter + Bitdeer when configured.
 router.get("/ai/models", async (_req, res) => {
-  const { openrouterConfigured } = await import("../lib/integrations");
+  const { openrouterConfigured, bitdeerConfigured } = await import("../lib/integrations");
   const models = [
     ...NIM_FEATURED_MODELS,
     ...(openrouterConfigured() ? OPENROUTER_FEATURED_MODELS : []),
+    ...(bitdeerConfigured() ? BITDEER_FEATURED_MODELS : []),
   ];
   res.json({ models });
 });
