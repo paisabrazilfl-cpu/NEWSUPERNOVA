@@ -1,15 +1,25 @@
 {
   "name": "workspace",
   "version": "0.0.0",
+  "private": true,
   "license": "MIT",
+  "packageManager": "pnpm@10.0.0",
+  "engines": {
+    "node": ">=24.0.0",
+    "pnpm": ">=10.0.0"
+  },
   "scripts": {
-    "preinstall": "sh -c 'rm -f package-lock.json yarn.lock; case \"$npm_config_user_agent\" in pnpm/*) ;; *) echo \"Use pnpm instead\" >&2; exit 1 ;; esac'",
+    "preinstall": "sh -c 'rm -f package-lock.json yarn.lock bun.lockb bun.lock; case \"$npm_config_user_agent\" in pnpm/*) ;; *) echo \"Use pnpm instead\" >&2; exit 1 ;; esac'",
+    "clean": "pnpm -r --if-present run clean && rm -rf node_modules .turbo .self-test",
     "build": "pnpm run typecheck && pnpm -r --if-present run build",
     "typecheck:libs": "tsc --build",
     "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck",
-    "test": "pnpm -r --if-present run test"
+    "test": "pnpm -r --if-present run test",
+    "verify": "pnpm run typecheck && pnpm run test && pnpm run build",
+    "self-test": "pnpm --filter @workspace/scripts run self-test",
+    "ui-smoke": "pnpm --filter @workspace/scripts run ui-smoke",
+    "visual-audit": "pnpm --filter @workspace/scripts run visual-audit"
   },
-  "private": true,
   "devDependencies": {
     "prettier": "^3.8.3",
     "typescript": "~5.9.3"
