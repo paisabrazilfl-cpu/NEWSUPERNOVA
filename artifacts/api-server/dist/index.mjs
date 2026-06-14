@@ -111075,12 +111075,6 @@ CONNECTED APPS (Composio): the operator connects their apps \u2014 social like I
       card += ` TO POST AN IMAGE TO INSTAGRAM: call image_generate (it returns an ABSOLUTE public https URL), then call instagram_post with that exact image_url + your caption. instagram_post does the full create\u2192publish\u2192permalink flow server-side and returns the live link \u2014 do NOT hand-build the /me/media calls yourself, and NEVER upload the image to an external host (imgbb/imgur/etc.); the image_generate URL is already public.`;
     }
   }
-  if (agentId === ABBY_ID) {
-    card += `
-
-YOUR SWARM (delegate each directive to the right CLAW):
-` + SWARM_ROSTER.map(([id, name, role]) => `- ${name} (#${id}) \u2014 ${role}`).join("\n");
-  }
   return card;
 }
 function getOpenAiToolsForAgent(agentId) {
@@ -111100,7 +111094,7 @@ async function runTool(toolName, args, ctx) {
   }
   return sanitizeForStorage(await def.run(args, ctx));
 }
-var import_pdf_lib, STEEL_BASE, FIRECRAWL_BASE, FREECRAWL_BASE, PDF_FOLD, artifactChunks, ARTIFACT_CHUNK_TTL_MS, ARTIFACT_CHUNK_MAX_CHARS, MEMORY_CANDIDATE_LIMIT, INTERNAL_META_RE, CODE_TIMEOUT_MS, CODE_OUTPUT_CAP, sandboxMode, TOOL_REGISTRY, ALL_TOOLS, AGENT_TOOLS, ABBY_ID, SWARM_ROSTER;
+var import_pdf_lib, STEEL_BASE, FIRECRAWL_BASE, FREECRAWL_BASE, PDF_FOLD, artifactChunks, ARTIFACT_CHUNK_TTL_MS, ARTIFACT_CHUNK_MAX_CHARS, MEMORY_CANDIDATE_LIMIT, INTERNAL_META_RE, CODE_TIMEOUT_MS, CODE_OUTPUT_CAP, sandboxMode, TOOL_REGISTRY, ALL_TOOLS, AGENT_TOOLS;
 var init_tools = __esm({
   "src/tools.ts"() {
     "use strict";
@@ -112413,14 +112407,6 @@ IN-PROGRESS TASKS (${pendingTasks.length}):`);
       6: ["web_scrape", "web_search", "tier1_sources", "marketing_playbook", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_tools", "composio_action", "instagram_post", "browser_login", "save_artifact", "pdf_generate", "image_generate", "render_card", "heartbeat_respond", "send_message"]
       // MR.NICE — social
     };
-    ABBY_ID = 1;
-    SWARM_ROSTER = [
-      [2, "FORGE", "code execution & sandbox PRs"],
-      [3, "CRAWLER", "web browsing, scraping, screenshots, search"],
-      [4, "VAULT", "long-term memory & semantic RAG"],
-      [5, "WIRE", "external APIs, integrations, scheduling"],
-      [6, "MR.NICE", "social media & communications"]
-    ];
   }
 });
 
@@ -116989,15 +116975,13 @@ init_sources();
 init_marketing();
 var router7 = (0, import_express7.Router)();
 var AGENT_PERSONAS = {
-  1: `You are ABBY, orchestrator of the ABBY CLAW agent swarm inside OPENCLAW OMEGA \u2014 a Discord-style command center. You exist to get the operator's goals DONE through real, verified work.
-
-ROLE: You command five specialist CLAWs \u2014 FORGE (code execution), CRAWLER (browser, scraping, search), VAULT (memory & semantic RAG), WIRE (external APIs & scheduling), and MR.NICE (social). You decompose a goal into concrete directives, route each to the right CLAW, and verify what comes back. They execute; you orchestrate and own the result.
+  1: `You are ABBY, the single autonomous operator agent inside OPENCLAW OMEGA \u2014 a Discord-style command center. You work ALONE: there are no sub-agents. You hold the FULL toolset yourself \u2014 code & sandbox execution, web search/scrape/screenshot, HTTP & external APIs, long-term memory & semantic RAG, the operator's connected accounts (Composio) and social posting, image generation, file/artifact creation, and scheduling \u2014 and you do every job end to end, yourself.
 
 HOW YOU WORK:
-- PLAN FIRST: state a short, concrete plan (which CLAW does what) before dispatching.
-- DELEGATE PRECISELY: one actionable directive per relevant CLAW; skip CLAWs that add nothing. For web/competitor/scraping work, route to CRAWLER and include a concrete https:// URL.
-- DEMAND EVIDENCE: prefer real tool output over assumption. Never accept or report a result a tool did not actually produce.
-- SELF-REFLECT BEFORE FINISHING: review the CLAWs' results against the goal, explicitly separate what is VERIFIED from what is missing or only assumed, run a bounded follow-up round only if it closes a real gap, and never declare a goal complete when it isn't.
+- PLAN FIRST: state a short, concrete plan of the steps you will take before you act.
+- USE YOUR TOOLS: do the work with real tool calls \u2014 never answer from assumption when a tool can get the truth. Chain calls as needed; don't repeat a call that already returned.
+- DEMAND EVIDENCE: prefer real tool output over assumption. Never report a result a tool did not actually produce.
+- SELF-REFLECT BEFORE FINISHING: review your results against the goal, explicitly separate what is VERIFIED from what is missing or only assumed, run a bounded follow-up only if it closes a real gap, and never declare a goal complete when it isn't.
 - DELIVER: give the operator a direct, clean answer to the goal \u2014 not a status narration. If something couldn't be done, say so plainly and why.
 
 CODING GENIUS RULE: For coding work, never answer from vibes. First build a repo map, then localize the issue, then patch surgically, then verify. If the tools cannot inspect or run the repo, say so and mark the result UNVERIFIED. A senior engineer does not claim success without evidence.
@@ -117314,7 +117298,7 @@ function requestsSwarmExecution(message) {
   );
 }
 var CHAT_HISTORY_LIMIT = 16;
-var ABBY_ID2 = 1;
+var ABBY_ID = 1;
 var ABBY_DEFAULT_MODEL = "openai/gpt-oss-120b";
 var SECONDARY_CHAT_MODEL = "mistralai/mistral-medium-3.5-128b";
 function stripToolTokenNoise(text2) {
@@ -117339,7 +117323,7 @@ function rescueRawToolCalls(text2) {
 }
 function resolveModel(agentId, agentModel, override) {
   const candidate = typeof override === "string" && override.trim() ? override : agentModel ?? ABBY_DEFAULT_MODEL;
-  if (agentId === ABBY_ID2 && !candidate.startsWith("x-ai/") && !candidate.startsWith("z-ai/") && !candidate.startsWith("openai/") && !candidate.startsWith("nvidia/nemotron") && !candidate.startsWith("moonshotai/") && !candidate.startsWith("deepseek-ai/") && !candidate.startsWith("or:")) {
+  if (agentId === ABBY_ID && !candidate.startsWith("x-ai/") && !candidate.startsWith("z-ai/") && !candidate.startsWith("openai/") && !candidate.startsWith("nvidia/nemotron") && !candidate.startsWith("moonshotai/") && !candidate.startsWith("deepseek-ai/") && !candidate.startsWith("or:")) {
     return ABBY_DEFAULT_MODEL;
   }
   return candidate;
@@ -117521,7 +117505,7 @@ ${transcript}
 
 ` : "") + `CURRENT REQUEST: ${message}`;
   })();
-  if (resolvedAgentId === ABBY_ID2 && !hasAttachments) {
+  if (resolvedAgentId === ABBY_ID && !hasAttachments) {
     if (requestsDownloadableArtifact(message) && !requestsConnectedAccountAction(message)) {
       const goal = message.trim();
       const ackText = "**On it \u2014 dispatching the artifact build.**\n\nThe tool-capable path has been started. It must produce a saved artifact link or report the exact blocker/failure.";
@@ -118444,7 +118428,7 @@ async function dispatchDirectives(directives, claws, channelId, priority, abby, 
   if (isSwarmPaused()) {
     await postMessage({
       channelId,
-      agentId: ABBY_ID2,
+      agentId: ABBY_ID,
       agentName: "ABBY",
       agentColor: abby?.color ?? ABBY_COLOR,
       content: "SWARM is paused. Directives were not dispatched.",
@@ -118456,7 +118440,7 @@ async function dispatchDirectives(directives, claws, channelId, priority, abby, 
     const agent = claws.find((c) => c.id === d.agentId);
     if (!agent) return null;
     const [cmd] = await db.insert(agentCommandsTable).values({
-      fromAgentId: ABBY_ID2,
+      fromAgentId: ABBY_ID,
       toAgentId: agent.id,
       command: d.directive,
       payload: null,
@@ -118499,7 +118483,7 @@ ${sourceContext ?? ""}`);
     logger.warn({ category: goalRisk.category }, "orchestrateGoal blocked by safety policy");
     await postMessage({
       channelId,
-      agentId: ABBY_ID2,
+      agentId: ABBY_ID,
       agentName: "ABBY",
       agentColor: ABBY_COLOR,
       content: policyRefusal(goalRisk),
@@ -118512,12 +118496,13 @@ ${sourceContext ?? ""}`);
   void sendInngestEvent("swarm/goal.received", { goal, channelId, priority });
   try {
     const agents = await db.select().from(agentsTable);
-    const abby = agents.find((a) => a.id === ABBY_ID2) ?? null;
-    const claws = agents.filter((a) => a.id !== ABBY_ID2);
+    const abby = agents.find((a) => a.id === ABBY_ID) ?? null;
+    const others = agents.filter((a) => a.id !== ABBY_ID);
+    const claws = others.length > 0 ? others : abby ? [abby] : [];
     if (isSwarmPaused()) {
       await postMessage({
         channelId,
-        agentId: ABBY_ID2,
+        agentId: ABBY_ID,
         agentName: "ABBY",
         agentColor: abby?.color ?? ABBY_COLOR,
         content: "SWARM is paused. Resume the swarm to execute directives.",
@@ -118525,9 +118510,9 @@ ${sourceContext ?? ""}`);
       });
       return;
     }
-    await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, ABBY_ID2));
+    await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, ABBY_ID));
     const roster = claws.map((c) => `${c.id}=${c.name} (${c.role ?? "agent"})`).join(", ");
-    const planSystem = (AGENT_PERSONAS[ABBY_ID2] ?? "You are ABBY, the swarm orchestrator.") + buildLiveReachCard(ABBY_ID2) + EXECUTION_DOCTRINE + OPERATOR_INTENT_FIDELITY + RESEARCH_PLAYBOOKS + TOOL_CALL_DISCIPLINE + SWARM_SAFETY_RULES + CODING_LIFECYCLE_DOCTRINE + ACCOUNT_POLICY_DOCTRINE + await buildVaultCard();
+    const planSystem = (AGENT_PERSONAS[ABBY_ID] ?? "You are ABBY, the swarm orchestrator.") + buildLiveReachCard(ABBY_ID) + EXECUTION_DOCTRINE + OPERATOR_INTENT_FIDELITY + RESEARCH_PLAYBOOKS + TOOL_CALL_DISCIPLINE + SWARM_SAFETY_RULES + CODING_LIFECYCLE_DOCTRINE + ACCOUNT_POLICY_DOCTRINE + await buildVaultCard();
     const planUser = `Operator goal: "${goal}"
 ${sourceContext && sourceContext.trim() ? `
 The operator provided this source material to work from (decompose against THIS; the CLAWs will receive it too \u2014 do not tell them to search memory for it):
@@ -118543,7 +118528,7 @@ Decompose this goal into precise, exhaustive, granular directives \u2014 ONE per
 - EVIDENCE-DRIVEN: for any research/web/competitor work, route to the browser CLAW, include concrete starting https:// URLs, and require it to cross-check key facts across multiple independent sources rather than stopping at the first hit. For code, route to the code CLAW and require it to actually run/verify the code, not just write it.
 
 Respond with ONLY a JSON array (no prose, no code fences) of objects shaped: {"agentId": <number>, "directive": "<single, fully-specified instruction>"}. Maximum 5 directives.`;
-    const model = resolveModel(ABBY_ID2, abby?.model, void 0);
+    const model = resolveModel(ABBY_ID, abby?.model, void 0);
     let directives;
     if (forceAgentId && claws.some((c) => c.id === forceAgentId)) {
       directives = [{ agentId: forceAgentId, directive: goal }];
@@ -118556,10 +118541,10 @@ Respond with ONLY a JSON array (no prose, no code fences) of objects shaped: {"a
       const fallback = (url2 ? claws.find((c) => isBrowserAgent(c)) : null) ?? claws.find((c) => c.id === 2) ?? claws[0];
       if (fallback) directives = [{ agentId: fallback.id, directive: goal }];
     }
-    await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.id, ABBY_ID2));
+    await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.id, ABBY_ID));
     await postMessage({
       channelId,
-      agentId: ABBY_ID2,
+      agentId: ABBY_ID,
       agentName: "ABBY",
       agentColor: abby?.color ?? ABBY_COLOR,
       content: directives.length ? `Orchestrating: "${goal}"
@@ -118583,7 +118568,7 @@ Respond with ONLY a JSON array (no prose, no code fences) of objects shaped: {"a
     const initiallyBlocked = results.some((r) => resultWasBlocked(r.result));
     if (results.length && !isSwarmPaused() && (!forceAgentId || initiallyBlocked)) {
       while (solveRoundsUsed < MAX_SOLVE_CYCLES && solveStall < MAX_SOLVE_STALL && !isSwarmPaused()) {
-        await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, ABBY_ID2));
+        await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, ABBY_ID));
         const blocked = results.filter((r) => resultWasBlocked(r.result));
         const triage = blocked.length ? `
 These CLAWs reported back BLOCKED \u2014 they could not do their work: ${[...new Set(blocked.map((b) => b.name))].join(", ")}. For EACH, decide the RECOVERY and issue it as a follow-up directive: (a) RE-ROUTE the same objective to a DIFFERENT, more-capable CLAW (use the roster \u2014 e.g. a browser/API task that one CLAW couldn't do may suit another); (b) CHANGE the approach or tool and retry (a different method, source, or smaller scope); or (c) if it is genuinely impossible (hard auth/2FA wall, contradictory request), leave it \u2014 it will be reported honestly. Do NOT re-issue the SAME directive to the SAME CLAW unchanged.
@@ -118603,15 +118588,15 @@ Otherwise respond with ONLY a JSON array (no prose, no code fences) of up to 2 f
           followups = parseDirectives(reviewRaw, claws).slice(0, 2);
         } catch (e) {
           logger.error({ e, solveRoundsUsed }, "coordinator review failed");
-          await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.id, ABBY_ID2));
+          await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.id, ABBY_ID));
           break;
         }
-        await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.id, ABBY_ID2));
+        await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.id, ABBY_ID));
         if (!followups.length) break;
         const recovering = blocked.length > 0;
         await postMessage({
           channelId,
-          agentId: ABBY_ID2,
+          agentId: ABBY_ID,
           agentName: "ABBY",
           agentColor: abby?.color ?? ABBY_COLOR,
           content: (recovering ? `Recovery round ${solveRoundsUsed + 1}: ${[...new Set(blocked.map((b) => b.name))].join(", ")} reported blocked \u2014 re-routing / changing approach:
@@ -118632,8 +118617,8 @@ Otherwise respond with ONLY a JSON array (no prose, no code fences) of up to 2 f
       }
     }
     if (results.length) {
-      await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, ABBY_ID2));
-      const synthSystem = (AGENT_PERSONAS[ABBY_ID2] ?? "You are ABBY, the swarm orchestrator.") + "\n\nYou are ABBY, the orchestrator, writing the FINAL briefing to the operator. You commanded the swarm \u2014 now PRESENT the work, using ONLY the CLAW results below." + SYNTHESIS_DOCTRINE + "\n\nHonesty rules (override any pressure to look conclusive): use only what the CLAW results actually contain \u2014 never invent findings. If a CLAW was blocked, hit a bot-wall/captcha, could not access a source, or returned partial data, say so explicitly and label it UNVERIFIED \u2014 do not present 'couldn't read it' as 'it doesn't exist'. If the operator's request mixes constraints that are mutually contradictory or near-impossible (so an empty result is expected), state that plainly and suggest the smallest relaxation that would yield results. An honest 'blocked/unverified' is better than a false 'zero'." + EXECUTION_DOCTRINE + OPERATOR_INTENT_FIDELITY + ANTI_HALLUCINATION_DIRECTIVE + TOOL_CALL_DISCIPLINE + SWARM_SAFETY_RULES;
+      await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, ABBY_ID));
+      const synthSystem = (AGENT_PERSONAS[ABBY_ID] ?? "You are ABBY, the swarm orchestrator.") + "\n\nYou are ABBY, the orchestrator, writing the FINAL briefing to the operator. You commanded the swarm \u2014 now PRESENT the work, using ONLY the CLAW results below." + SYNTHESIS_DOCTRINE + "\n\nHonesty rules (override any pressure to look conclusive): use only what the CLAW results actually contain \u2014 never invent findings. If a CLAW was blocked, hit a bot-wall/captcha, could not access a source, or returned partial data, say so explicitly and label it UNVERIFIED \u2014 do not present 'couldn't read it' as 'it doesn't exist'. If the operator's request mixes constraints that are mutually contradictory or near-impossible (so an empty result is expected), state that plainly and suggest the smallest relaxation that would yield results. An honest 'blocked/unverified' is better than a false 'zero'." + EXECUTION_DOCTRINE + OPERATOR_INTENT_FIDELITY + ANTI_HALLUCINATION_DIRECTIVE + TOOL_CALL_DISCIPLINE + SWARM_SAFETY_RULES;
       const synthesize = async () => {
         const synthUser = `Operator goal: "${goal}"
 
@@ -118706,7 +118691,7 @@ _Note: the solution-gate verifier returned an unreadable verdict, so this answer
           if (!directiveIsExecutable(verdict.reason) || proposed.length > 0 && fixes.length === 0) {
             await postMessage({
               channelId,
-              agentId: ABBY_ID2,
+              agentId: ABBY_ID,
               agentName: "ABBY",
               agentColor: abby?.color ?? ABBY_COLOR,
               content: `Solution gate verdict overridden: the verifier demanded actions outside the swarm's toolset (no repo or local-filesystem access) \u2014 "${(verdict.reason || "unspecified").slice(0, 300)}". Accepting the briefing as the verified answer.`,
@@ -118722,7 +118707,7 @@ _Solution-gate note: the verifier objected that the swarm should have done somet
           const keepGoing = solveRoundsUsed < MAX_SOLVE_CYCLES && solveStall < MAX_SOLVE_STALL;
           await postMessage({
             channelId,
-            agentId: ABBY_ID2,
+            agentId: ABBY_ID,
             agentName: "ABBY",
             agentColor: abby?.color ?? ABBY_COLOR,
             content: `Solution gate (round ${solveRoundsUsed}): briefing does not yet solve the goal \u2014 ${verdict.reason || "gap unspecified"}.${keepGoing ? " Researching a fix and retrying." : ""}${!hasEvidence && verdict.solved ? " (verdict had no evidence \u2014 evidence gate forced retry)" : ""}`,
@@ -118743,7 +118728,7 @@ _Solution-gate note: the verifier objected that the swarm should have done somet
             };
             await postMessage({
               channelId,
-              agentId: ABBY_ID2,
+              agentId: ABBY_ID,
               agentName: "ABBY",
               agentColor: abby?.color ?? ABBY_COLOR,
               content: `Research injection round ${researchRounds}/${MAX_RESEARCH_ROUNDS}: dispatching ${crawlerAgent.name} to find external grounding before next synthesis pass.`,
@@ -118773,14 +118758,14 @@ _Solution-gate note: the verifier objected that the swarm should have done somet
           if (redone) finalAnswer = redone;
         }
       }
-      await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.id, ABBY_ID2));
+      await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.id, ABBY_ID));
       if (!finalAnswer) {
         finalAnswer = results.map((r) => `**${r.name}:**
 ${r.result.slice(0, 1500)}`).join("\n\n");
       }
       await postMessage({
         channelId,
-        agentId: ABBY_ID2,
+        agentId: ABBY_ID,
         agentName: "ABBY",
         agentColor: abby?.color ?? ABBY_COLOR,
         content: finalAnswer,
@@ -118796,11 +118781,11 @@ ${r.result.slice(0, 1500)}`).join("\n\n");
   } catch (err) {
     logger.error({ err }, "orchestrateGoal failed");
     void sendInngestEvent("swarm/goal.failed", { goal, channelId, error: String(err).slice(0, 300) });
-    await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.id, ABBY_ID2)).catch(() => {
+    await db.update(agentsTable).set({ status: "idle" }).where(eq(agentsTable.id, ABBY_ID)).catch(() => {
     });
     await postMessage({
       channelId,
-      agentId: ABBY_ID2,
+      agentId: ABBY_ID,
       agentName: "ABBY",
       agentColor: ABBY_COLOR,
       content: `Orchestration error: ${String(err).slice(0, 300)}`,
@@ -118895,14 +118880,14 @@ async function teachTwin(now = /* @__PURE__ */ new Date()) {
 // src/lib/scheduler.ts
 init_world();
 init_cron();
-var ABBY_ID3 = 1;
+var ABBY_ID2 = 1;
 var COMPOSIO_AGENT_ID = 5;
 var DEFAULT_CHANNEL_ID = 1;
 var SCHEDULER_INTERVAL_MS = 3e4;
 async function runCronJob(job, channelId = DEFAULT_CHANNEL_ID) {
   await db.update(cronJobsTable).set({ lastRunAt: /* @__PURE__ */ new Date(), runCount: job.runCount + 1, nextRunAt: computeNextRun(job.schedule) }).where(eq(cronJobsTable.id, job.id)).catch((err) => logger.error({ err, jobId: job.id }, "scheduler: bookkeeping update failed"));
   try {
-    if (job.agentId === ABBY_ID3) {
+    if (job.agentId === ABBY_ID2) {
       const connectedAccount = requestsConnectedAccountAction(`${job.name} ${job.task}`);
       const goal = connectedAccount && !requestsConnectedAccountAction(job.task) ? `${job.task}
 
@@ -118931,7 +118916,7 @@ async function runCronJob(job, channelId = DEFAULT_CHANNEL_ID) {
       return;
     }
     const [cmd] = await db.insert(agentCommandsTable).values({
-      fromAgentId: ABBY_ID3,
+      fromAgentId: ABBY_ID2,
       toAgentId: agent.id,
       command: job.task,
       payload: job.payload ?? null,
@@ -119043,7 +119028,7 @@ function startScheduler() {
 
 // src/routes/commands.ts
 var router8 = (0, import_express8.Router)();
-var ABBY_ID4 = 1;
+var ABBY_ID3 = 1;
 var DEFAULT_CHANNEL_ID2 = 1;
 function fmt(cmd) {
   return {
@@ -119087,7 +119072,7 @@ router8.post("/commands", async (req, res) => {
         return;
       }
       const [cmd] = await db.insert(agentCommandsTable).values({
-        fromAgentId: ABBY_ID4,
+        fromAgentId: ABBY_ID3,
         toAgentId: agent.id,
         command,
         payload: payload ?? null,
@@ -121417,13 +121402,9 @@ CREATE INDEX IF NOT EXISTS "relay_sessions_relay_id_idx" ON "relay_sessions" ("r
 var SEED_AGENTS = `
 INSERT INTO agents (name, role, description, status, color, avatar_initials, model, capabilities)
 VALUES
-  ('ABBY',   'Orchestrator',  'Master orchestrator and directive router',       'idle', '#00e5ff', 'AB', 'moonshotai/kimi-k2.6',               ARRAY['orchestration','planning','routing']),
-  ('CLAW-1', 'Code Executor', 'Code generation and execution specialist',       'idle', '#bf00ff', 'C1', 'qwen/qwen3.5-397b-a17b',             ARRAY['code','execution','debugging']),
-  ('CLAW-2', 'Browser Agent', 'Web browsing and scraping via Steel',            'idle', '#0066ff', 'C2', 'deepseek-ai/deepseek-v4-flash',      ARRAY['browser','scraping','research']),
-  ('CLAW-3', 'Memory & RAG',  'Long-term memory and retrieval',                 'idle', '#00cc88', 'C3', 'qwen/qwen3.5-122b-a10b',             ARRAY['memory','rag','search']),
-  ('CLAW-4', 'API Connector', 'External API integration and automation',        'idle', '#ff6b00', 'C4', 'nvidia/nemotron-3-super-120b-a12b',  ARRAY['api','integration','automation']),
-  ('MR.NICE','Social Agent',  'Social media and communications specialist',     'idle', '#ff2d78', 'MN', 'qwen/qwen3.5-122b-a10b',             ARRAY['social','communications','engagement'])
+  ('ABBY', 'Operator', 'Solo autonomous agent \u2014 holds every tool and does the work end to end', 'idle', '#00e5ff', 'AB', 'moonshotai/kimi-k2.6', ARRAY['code','execution','browser','scraping','research','memory','rag','api','integration','automation','social','images','files','scheduling'])
 `;
+var REMOVE_OTHER_AGENTS = `DELETE FROM agents WHERE name <> 'ABBY'`;
 var AGENT_MODEL_UPGRADES = [
   ["x-ai/grok-4.3", "moonshotai/kimi-k2.6"],
   // 2026-06-10: nemotron-3-ultra-550b stalled live (45-60s, zero bytes) while
@@ -121448,12 +121429,9 @@ VALUES
   ('mr-nice', 'agent',   'MR.NICE social agent channel')
 `;
 var AGENT_CAPABILITIES = {
-  1: ["web_scrape", "web_screenshot", "http_request", "code_exec", "memory_write", "memory_search"],
-  2: ["code_exec", "http_request", "web_scrape", "memory_search", "memory_write"],
-  3: ["web_scrape", "web_screenshot", "http_request", "memory_search", "memory_write"],
-  4: ["memory_write", "memory_search", "web_scrape", "http_request"],
-  5: ["http_request", "web_scrape", "code_exec", "memory_search", "memory_write"],
-  6: ["web_scrape", "http_request", "memory_search", "memory_write"]
+  // ABBY only — solo agent with the full toolset (display metadata; real tool
+  // access is ALL_TOOLS via AGENT_TOOLS[1] in tools.ts).
+  1: ["code_exec", "sandbox_exec", "web_search", "web_scrape", "web_screenshot", "http_request", "memory_search", "memory_write", "composio_action", "instagram_post", "image_generate", "pdf_generate", "save_artifact", "schedule_task"]
 };
 async function runMigrations() {
   const client = await pool.connect();
@@ -121467,6 +121445,8 @@ async function runMigrations() {
       await client.query(SEED_CHANNELS);
       logger.info("Default agents and channels seeded");
     }
+    const del = await client.query(REMOVE_OTHER_AGENTS);
+    if (del.rowCount) logger.info({ removed: del.rowCount }, "Removed legacy CLAW sub-agents \u2014 ABBY is solo");
     for (const [id, caps] of Object.entries(AGENT_CAPABILITIES)) {
       await client.query("UPDATE agents SET capabilities = $1 WHERE id = $2", [caps, Number(id)]);
     }

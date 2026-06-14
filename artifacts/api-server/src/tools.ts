@@ -2391,15 +2391,6 @@ export function getToolNamesForAgent(agentId: number): string[] {
   return AGENT_TOOLS[agentId] ?? ["web_scrape", "memory_search"];
 }
 
-const ABBY_ID = 1;
-const SWARM_ROSTER: Array<[number, string, string]> = [
-  [2, "FORGE", "code execution & sandbox PRs"],
-  [3, "CRAWLER", "web browsing, scraping, screenshots, search"],
-  [4, "VAULT", "long-term memory & semantic RAG"],
-  [5, "WIRE", "external APIs, integrations, scheduling"],
-  [6, "MR.NICE", "social media & communications"],
-];
-
 /** First sentence of a tool's description, for a compact capability listing. */
 function toolSummary(name: string): string {
   const d = TOOL_REGISTRY[name]?.description ?? "";
@@ -2443,10 +2434,8 @@ export function buildCapabilityCard(agentId: number): string {
       card += ` TO POST AN IMAGE TO INSTAGRAM: call image_generate (it returns an ABSOLUTE public https URL), then call instagram_post with that exact image_url + your caption. instagram_post does the full create→publish→permalink flow server-side and returns the live link — do NOT hand-build the /me/media calls yourself, and NEVER upload the image to an external host (imgbb/imgur/etc.); the image_generate URL is already public.`;
     }
   }
-  if (agentId === ABBY_ID) {
-    card += `\n\nYOUR SWARM (delegate each directive to the right CLAW):\n` +
-      SWARM_ROSTER.map(([id, name, role]) => `- ${name} (#${id}) — ${role}`).join("\n");
-  }
+  // SOLO MODE: ABBY is the only agent and holds every tool herself — no swarm
+  // roster to delegate to.
   return card;
 }
 

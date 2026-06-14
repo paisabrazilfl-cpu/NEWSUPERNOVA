@@ -1171,7 +1171,11 @@ export async function orchestrateGoal(opts: {
   try {
     const agents = await db.select().from(agentsTable);
     const abby = agents.find((a) => a.id === ABBY_ID) ?? null;
-    const claws = agents.filter((a) => a.id !== ABBY_ID);
+    // SOLO MODE: the CLAW sub-agents were removed, so ABBY is her own worker —
+    // she holds every tool and executes directives herself. (Falls back to the
+    // legacy multi-CLAW set if any sub-agents still exist.)
+    const others = agents.filter((a) => a.id !== ABBY_ID);
+    const claws = others.length > 0 ? others : (abby ? [abby] : []);
 
     if (isSwarmPaused()) {
       await postMessage({
