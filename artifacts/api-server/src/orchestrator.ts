@@ -117,10 +117,13 @@ present and attribute the failure to the malformed call.`;
  * set high enough that RELENTLESS PERSISTENCE in EXECUTION_DOCTRINE is real:
  * deep research (broad search → several scrapes → cross-checking sources →
  * synthesis) PLUS multiple self-learn research-retry cycles and alternate-tool
- * attempts must all fit before the budget truncates a mission. Operator-tunable
- * via MAX_AGENT_STEPS without a redeploy.
+ * attempts must all fit before the budget truncates a mission. Default raised
+ * 24 → 40 so a single CLAW can web_search a fix when stuck, scrape it, and retry
+ * several times within one directive instead of running out of steps mid-solve.
+ * The anti-spin guards still stop flailing, so the extra steps buy real progress,
+ * not repeats. Operator-tunable via MAX_AGENT_STEPS without a redeploy.
  */
-const MAX_AGENT_STEPS = Number(process.env["MAX_AGENT_STEPS"]) > 0 ? Number(process.env["MAX_AGENT_STEPS"]) : 24;
+const MAX_AGENT_STEPS = Number(process.env["MAX_AGENT_STEPS"]) > 0 ? Number(process.env["MAX_AGENT_STEPS"]) : 40;
 
 /**
  * Loop-accuracy guards. A CLAW that keeps making the SAME call — or makes no
@@ -181,15 +184,24 @@ export function resultWasBlocked(result: string): boolean {
 /**
  * Total solve budget per operator goal, expressed as a multiple of a single
  * run: at most MAX_SOLVE_CYCLES dispatch rounds INCLUDING the initial one, so
- * the default of 4 caps total spend at 4× one single run. The budget is SHARED
+ * the default of 8 caps total spend at 8× one single run. The budget is SHARED
  * between the coordinator review loop and the solution gate — corrective
  * rounds from either draw from the same pool. The contract: the final output
  * the operator reads must BE a solution to their input — if a review or the
  * gate judges it isn't, the swarm keeps solving until it is or the budget runs
  * out (in which case the gap is reported honestly, never papered over).
- * Operator-tunable via MAX_SOLVE_CYCLES without a redeploy.
+ *
+ * Default raised 4 → 8 (operator wants "don't stop until it's done"): more
+ * corrective rounds before the swarm concedes, so a goal that needs research +
+ * a couple of self-correct passes actually finishes instead of stopping at
+ * "round 4/4 — NOT FULLY SOLVED". This does NOT risk an infinite/runaway loop:
+ * the per-CLAW anti-spin guards (MAX_IDENTICAL_CALL_ATTEMPTS, MAX_NO_PROGRESS_
+ * STREAK) still cut off flailing within each round, and a round that makes no
+ * real progress ends — the extra budget buys persistence on PROGRESS, not spin.
+ * Operator-tunable via MAX_SOLVE_CYCLES without a redeploy (raise it further for
+ * very long missions, lower it to cap cost).
  */
-export const MAX_SOLVE_CYCLES = Number(process.env["MAX_SOLVE_CYCLES"]) > 0 ? Number(process.env["MAX_SOLVE_CYCLES"]) : 4;
+export const MAX_SOLVE_CYCLES = Number(process.env["MAX_SOLVE_CYCLES"]) > 0 ? Number(process.env["MAX_SOLVE_CYCLES"]) : 8;
 
 /**
  * SOLUTION GATE — the verifier contract appended when ABBY judges whether the
