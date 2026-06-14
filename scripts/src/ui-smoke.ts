@@ -1,5 +1,3 @@
-```ts id="ui-smoke-test-playwright"
-
 import { chromium, type Browser, type Page, type ConsoleMessage } from "playwright";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -202,4 +200,3 @@ run()
     console.error("[UI_SMOKE_FATAL]", err);
     process.exit(1);
   });
-```
