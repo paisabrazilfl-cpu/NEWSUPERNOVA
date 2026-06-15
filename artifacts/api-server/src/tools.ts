@@ -61,6 +61,35 @@ const FIRECRAWL_BASE = "https://api.firecrawl.dev/v1";
 // Async: POST .../start → {data:{_id,status}}, then poll GET .../{_id} until
 // status=completed. Activated by A2E_API_KEY (an sk_ token; free credits on signup).
 const A2E_BASE = "https://video.a2e.ai/api/v1";
+
+// Well-known platform secrets are bound to the API host they belong to. http_request
+// will NOT attach one of these to any other host — so an agent can't leak (e.g.)
+// RENDER_API_KEY to a random content site it's merely scraping. Custom/unlisted
+// secrets are left to the operator's judgement (they know which API they're for).
+const SECRET_HOST_BINDINGS: Record<string, string[]> = {
+  RENDER_API_KEY: ["render.com"],
+  GITHUB_API_KEY: ["github.com", "githubusercontent.com"],
+  GITHUB_TOKEN: ["github.com", "githubusercontent.com"],
+  SANDBOX_GITHUB_TOKEN: ["github.com", "githubusercontent.com"],
+  OPENAI_API_KEY: ["openai.com"],
+  HUGGINGFACE_API_KEY: ["huggingface.co", "hf.co"],
+  HF_TOKEN: ["huggingface.co", "hf.co"],
+  NVIDIA_API_KEY: ["nvidia.com"],
+  BITDEER_API_KEY: ["bitdeer.ai"],
+  A2E_API_KEY: ["a2e.ai"],
+  STEEL_API_KEY: ["steel.dev"],
+  FIRECRAWL_API_KEY: ["firecrawl.dev"],
+  TAVILY_API_KEY: ["tavily.com"],
+  EXA_API_KEY: ["exa.ai"],
+  SERP_API_KEY: ["serpapi.com"],
+  PINECONE_API_KEY: ["pinecone.io"],
+  COMPOSIO_API_KEY: ["composio.dev"],
+};
+function secretBoundElsewhere(secretName: string, host: string): boolean {
+  const allowed = SECRET_HOST_BINDINGS[secretName.toUpperCase()];
+  if (!allowed) return false; // unlisted/custom secret — operator's call
+  return !allowed.some((h) => host === h || host.endsWith(`.${h}`) || host.endsWith(h));
+}
 const FREECRAWL_BASE = process.env["FREECRAWL_URL"] ?? "https://freecrawl-api.onrender.com";
 
 // ─── Real, server-side PDF rendering (powers the pdf_generate tool) ──────────
@@ -1226,7 +1255,7 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
     name: "http_request",
     description:
       "Make a real outbound HTTP request to any API endpoint. Supports GET/POST/PUT/PATCH/DELETE with optional headers and a JSON/text body. Returns the status and response body (truncated). " +
-      "To authenticate ANY private/authenticated API (Render, OpenAI, etc.), put a vault secret placeholder in the header rather than a raw key — e.g. headers { \"Authorization\": \"Bearer {{secret:RENDER_API_KEY}}\" }. " +
+      "To authenticate ANY private/authenticated API (Render, OpenAI, etc.), put a vault secret placeholder in the header rather than a raw key — e.g. headers { \"Authorization\": \"Bearer {{secret:RENDER_API_KEY}}\" }. ONLY attach a secret to ITS OWN API host: {{secret:RENDER_API_KEY}} goes to api.render.com, never to a content site you are merely reading. Reading a public web page needs NO Authorization header at all — and the server will DROP a platform secret aimed at the wrong host. " +
       "The placeholder is resolved to the real value only at send time, so the secret never enters your context — the vault is write-only BY DESIGN and you never need the raw key. Use vault_list (or the STORED SECRETS list in your prompt) to see which names exist; if a name is there the credential is available — never report it missing, just use {{secret:NAME}} and make the call. " +
       "GITHUB API (api.github.com): DO NOT add an Authorization header — GitHub is AUTO-AUTHENTICATED by the server at 5,000 req/hr. Just call https://api.github.com/... with NO Authorization header and the token is injected automatically. Adding {{secret:GITHUB_API_KEY}} manually will FAIL if that vault name does not exist; omitting the header lets auto-auth handle it correctly.",
     parameters: {
@@ -1252,13 +1281,27 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
       const blocked = await ssrfGuard(url);
       if (blocked) return blocked;
       const method = String(args["method"] ?? "GET").toUpperCase();
+      const reqHost = (() => { try { return new URL(url).hostname.toLowerCase(); } catch { return ""; } })();
       const headers: Record<string, string> = {};
+      const strippedSecrets: string[] = [];
       const rawHeaders = args["headers"];
       if (rawHeaders && typeof rawHeaders === "object") {
         for (const [k, v] of Object.entries(rawHeaders as Record<string, unknown>)) {
-          headers[k] = await substituteSecrets(String(v), usedSecrets);
+          const rawVal = String(v);
+          // Leak guard: a platform secret may ONLY be sent to its own API host.
+          // If the agent tries to attach e.g. {{secret:RENDER_API_KEY}} to a site
+          // that isn't Render, drop the header (never send the key) and note it.
+          const m = rawVal.match(/\{\{secret:([A-Za-z0-9_]+)\}\}/);
+          if (m && secretBoundElsewhere(m[1], reqHost)) {
+            strippedSecrets.push(`${m[1]} (→ ${k})`);
+            continue;
+          }
+          headers[k] = await substituteSecrets(rawVal, usedSecrets);
         }
       }
+      const secretGuardNote = strippedSecrets.length
+        ? `[security: dropped Authorization carrying ${strippedSecrets.join(", ")} — that secret belongs to its own API, not ${reqHost}; never attach a platform key to an unrelated site. Request sent WITHOUT it.]\n\n`
+        : "";
       const body =
         args["body"] != null && method !== "GET" && method !== "DELETE"
           ? await substituteSecrets(String(args["body"]), usedSecrets)
@@ -1346,7 +1389,7 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
           (r.status === 401 || r.status === 403) && !authSent
             ? `\n\n[hint: this request was sent with NO Authorization header — that is why it was rejected. This is NOT evidence the credential is missing or invalid. Retry with headers {"Authorization":"Bearer {{secret:NAME}}"} using the correct vault name (see vault_list / your STORED SECRETS list).]`
             : "";
-        return `HTTP ${r.status} ${r.statusText}\n${clip(safe, 4000)}${hint}`;
+        return `${secretGuardNote}HTTP ${r.status} ${r.statusText}\n${clip(safe, 4000)}${hint}`;
       } catch (e) {
         return redactSecrets(`error: request failed: ${String(e).slice(0, 200)}`, usedSecrets);
       } finally {
