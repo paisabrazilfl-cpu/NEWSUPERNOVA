@@ -150,6 +150,75 @@ export async function renderPdf(title: string, content: string): Promise<Uint8Ar
   return await doc.save();
 }
 
+// Assemble already-decoded image bytes into a real PDF (one image per page, scaled
+// to fit, optional caption/title/footer) with pdf-lib's native embedPng/embedJpg.
+// Pure JS — no sandbox, no headless browser — mirroring renderPdf. Only PNG and JPEG
+// embed; anything else is skipped defensively so the call never throws on bad input.
+export interface PdfImage { bytes: Uint8Array; caption?: string }
+export async function renderImagePdf(
+  images: PdfImage[],
+  opts: { title?: string; subtitle?: string; footer?: string } = {},
+): Promise<Uint8Array> {
+  const doc = await PDFDocument.create();
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  const bold = await doc.embedFont(StandardFonts.HelveticaBold);
+  if (opts.title) doc.setTitle(pdfWinAnsi(opts.title).slice(0, 200));
+  doc.setCreator("OPENCLAW OMEGA");
+  doc.setProducer("OPENCLAW OMEGA — images_to_pdf");
+
+  const PAGE_W = 612, PAGE_H = 792, MARGIN = 48;
+  const ink = rgb(0.12, 0.12, 0.14), head = rgb(0.07, 0.09, 0.2), muted = rgb(0.42, 0.42, 0.48);
+  const footer = opts.footer ? pdfWinAnsi(opts.footer).slice(0, 140) : "";
+  const footerH = footer ? 18 : 0;
+  type Pg = ReturnType<typeof doc.addPage>;
+  const drawFooter = (page: Pg) => { if (footer) page.drawText(footer, { x: MARGIN, y: 26, size: 8, font, color: muted }); };
+  const centered = (page: Pg, text: string, f: typeof font, size: number, y: number, color = ink) => {
+    const t = pdfWinAnsi(text);
+    const w = f.widthOfTextAtSize(t, size);
+    page.drawText(t, { x: Math.max(MARGIN, (PAGE_W - w) / 2), y, size, font: f, color });
+  };
+
+  // Title page (only when a title/subtitle is given).
+  if (opts.title || opts.subtitle) {
+    const page = doc.addPage([PAGE_W, PAGE_H]);
+    let y = PAGE_H / 2 + 30;
+    if (opts.title) { centered(page, opts.title, bold, 26, y, head); y -= 38; }
+    if (opts.subtitle) centered(page, opts.subtitle, font, 13, y, muted);
+    drawFooter(page);
+  }
+
+  let embedded = 0;
+  for (const img of images) {
+    const b = img.bytes;
+    let image: Awaited<ReturnType<typeof doc.embedPng>>;
+    try {
+      if (b.length >= 4 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) image = await doc.embedPng(b);
+      else if (b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) image = await doc.embedJpg(b);
+      else continue; // not PNG/JPEG — skip
+    } catch { continue; } // corrupt/unsupported — skip, never throw
+    const page = doc.addPage([PAGE_W, PAGE_H]);
+    const captionH = img.caption ? 24 : 0;
+    const availW = PAGE_W - MARGIN * 2;
+    const availH = PAGE_H - MARGIN * 2 - captionH - footerH;
+    const scale = Math.min(availW / image.width, availH / image.height, 1);
+    const drawW = image.width * scale, drawH = image.height * scale;
+    const x = (PAGE_W - drawW) / 2;
+    const y = MARGIN + captionH + footerH + (availH - drawH) / 2;
+    page.drawImage(image, { x, y, width: drawW, height: drawH });
+    if (img.caption) centered(page, img.caption.slice(0, 160), font, 11, MARGIN + footerH, ink);
+    drawFooter(page);
+    embedded++;
+  }
+
+  // Always return a valid PDF — if nothing embedded, say so on a page.
+  if (embedded === 0) {
+    const page = doc.addPage([PAGE_W, PAGE_H]);
+    centered(page, "No embeddable images (PNG/JPEG) were provided.", font, 12, PAGE_H - MARGIN - 20, ink);
+    drawFooter(page);
+  }
+  return await doc.save();
+}
+
 /**
  * Absolute, publicly-reachable base URL for serving saved files. Saved artifacts
  * and generated images MUST be referenced by an absolute https URL so external
@@ -2058,6 +2127,74 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
     },
   },
 
+  images_to_pdf: {
+    name: "images_to_pdf",
+    description:
+      "Assemble a set of IMAGES into ONE real, downloadable PDF — one image per page, scaled to fit, with optional per-image captions, a title page, and a footer. Pass `image_urls` (absolute https URLs — exactly the URLs image_generate returns). Use this to package generated images into a deliverable document (e.g. a news-cast image set, a moodboard, a portfolio, a storyboard). NOTE: pdf_generate is TEXT-only and cannot embed pictures — this is the correct tool to put images INTO a PDF. Only PNG and JPEG embed (other formats are skipped with a note). Returns a genuine download link — never fabricate a URL.",
+    parameters: {
+      type: "object",
+      properties: {
+        image_urls: { type: "array", items: { type: "string" }, description: "Absolute https URLs of the images to embed, IN ORDER (the URLs image_generate returns)." },
+        captions: { type: "array", items: { type: "string" }, description: "Optional caption per image, same order & length as image_urls." },
+        title: { type: "string", description: "Optional title-page heading (omit for no title page)." },
+        subtitle: { type: "string", description: "Optional title-page subtitle (e.g. a date or 'Final Deliverable')." },
+        footer: { type: "string", description: "Optional footer text shown on every page." },
+        filename: { type: "string", description: "Optional output filename, e.g. 'AI_News_Cast_Final_Set.pdf'." },
+      },
+      required: ["image_urls"],
+    },
+    run: async (args) => {
+      const urls = Array.isArray(args["image_urls"]) ? (args["image_urls"] as unknown[]).map((u) => String(u).trim()).filter(Boolean) : [];
+      if (!urls.length) return "error: image_urls is required — an array of absolute https image URLs (the URLs image_generate returns).";
+      if (urls.length > 40) return "error: too many images (max 40 per PDF). Split into multiple PDFs.";
+      const caps = Array.isArray(args["captions"]) ? (args["captions"] as unknown[]).map((c) => String(c)) : [];
+      const errors: string[] = [];
+      const images: PdfImage[] = [];
+      for (let i = 0; i < urls.length; i++) {
+        const u = urls[i];
+        if (!/^https?:\/\//i.test(u)) { errors.push(`#${i + 1}: not an absolute http(s) URL`); continue; }
+        try {
+          const ctrl = new AbortController();
+          const t = setTimeout(() => ctrl.abort(), 30000);
+          const r = await fetch(u, { signal: ctrl.signal });
+          clearTimeout(t);
+          if (!r.ok) { errors.push(`#${i + 1}: HTTP ${r.status}`); continue; }
+          const buf = new Uint8Array(await r.arrayBuffer());
+          if (buf.length > 20_000_000) { errors.push(`#${i + 1}: too large (>20MB)`); continue; }
+          const isPng = buf.length >= 4 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47;
+          const isJpg = buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff;
+          if (!isPng && !isJpg) { errors.push(`#${i + 1}: unsupported format (PNG/JPEG only)`); continue; }
+          images.push({ bytes: buf, caption: caps[i] });
+        } catch (e) {
+          errors.push(`#${i + 1}: ${String(e instanceof Error ? e.message : e).slice(0, 60)}`);
+        }
+      }
+      if (!images.length) return `error: no images could be fetched/embedded — ${errors.join("; ")}`;
+      try {
+        const bytes = await renderImagePdf(images, {
+          title: args["title"] != null ? String(args["title"]) : undefined,
+          subtitle: args["subtitle"] != null ? String(args["subtitle"]) : undefined,
+          footer: args["footer"] != null ? String(args["footer"]) : undefined,
+        });
+        const b64 = Buffer.from(bytes).toString("base64");
+        let stem = (args["filename"] != null ? String(args["filename"]) : (args["title"] != null ? String(args["title"]) : "images"))
+          .replace(/\.pdf$/i, "").replace(/[^a-z0-9._-]+/gi, "_").replace(/^[_.]+|[_.]+$/g, "").slice(0, 80);
+        if (!stem) stem = "images";
+        const filename = `${stem}.pdf`;
+        const [row] = await db
+          .insert(attachmentsTable)
+          .values({ filename, mimeType: "application/pdf", kind: "other", sizeBytes: bytes.length, data: b64, extractedText: null })
+          .returning();
+        const dl = uploadUrl(row.id, true);
+        const view = uploadUrl(row.id);
+        const note = errors.length ? ` (${errors.length} skipped: ${errors.slice(0, 3).join("; ")}${errors.length > 3 ? "…" : ""})` : "";
+        return `generated PDF "${filename}" with ${images.length} image${images.length > 1 ? "s" : ""} (${bytes.length} bytes)${note}. REAL downloadable file — put THIS exact link in your final answer (never invent any other URL):\n[Download ${filename}](${dl})\nInline view URL: ${view}`;
+      } catch (e) {
+        return `error: PDF assembly failed: ${String(e instanceof Error ? e.message : e).slice(0, 200)}`;
+      }
+    },
+  },
+
   send_message: {
     name: "send_message",
     description:
@@ -2633,7 +2770,7 @@ export const AGENT_TOOLS: Record<number, string[]> = {
   3: ["composio_apps", "composio_tools", "composio_action", "instagram_post", "social_accounts", "social_api", "browser_login", "marketing_playbook", "render_card", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task"], // BUZZ — social media + Composio ONLY; acts only when ABBY assigns it
   4: ["web_search", "web_scrape", "web_screenshot", "tier1_sources", "site_crawl", "site_crawl_status", "http_request", "memory_search", "memory_write"], // SCOUT — research & web ONLY
   5: ["code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "http_request", "web_search", "web_scrape", "web_screenshot", "tier1_sources", "site_crawl", "site_crawl_status", "save_artifact", "pdf_generate", "memory_search", "memory_write"], // FORGE — code & deploy + research-when-stuck (search/crawl/self-learn)
-  6: ["save_artifact", "pdf_generate", "memory_search"], // QUILL — documents & artifacts ONLY
+  6: ["save_artifact", "pdf_generate", "images_to_pdf", "memory_search"], // QUILL — documents & artifacts ONLY (text PDFs + image-set PDFs)
 };
 
 export function getToolNamesForAgent(agentId: number): string[] {

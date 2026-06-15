@@ -325,8 +325,8 @@ const AGENT_CAPABILITIES: Record<number, string[]> = {
   4: ["web_search", "web_scrape", "web_screenshot", "tier1_sources", "site_crawl", "site_crawl_status", "http_request", "memory_search", "memory_write"],
   // FORGE — code & deploy + research-when-stuck (search/crawl/self-learn).
   5: ["code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "http_request", "web_search", "web_scrape", "web_screenshot", "tier1_sources", "site_crawl", "site_crawl_status", "save_artifact", "pdf_generate", "memory_search", "memory_write"],
-  // QUILL — documents & artifacts ONLY.
-  6: ["save_artifact", "pdf_generate", "memory_search"],
+  // QUILL — documents & artifacts ONLY (text PDFs + image-set PDFs).
+  6: ["save_artifact", "pdf_generate", "images_to_pdf", "memory_search"],
 };
 
 export async function runMigrations(): Promise<void> {

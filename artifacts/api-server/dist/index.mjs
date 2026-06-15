@@ -110535,6 +110535,66 @@ async function renderPdf(title, content) {
   }
   return await doc.save();
 }
+async function renderImagePdf(images, opts = {}) {
+  const doc = await import_pdf_lib.PDFDocument.create();
+  const font = await doc.embedFont(import_pdf_lib.StandardFonts.Helvetica);
+  const bold = await doc.embedFont(import_pdf_lib.StandardFonts.HelveticaBold);
+  if (opts.title) doc.setTitle(pdfWinAnsi(opts.title).slice(0, 200));
+  doc.setCreator("OPENCLAW OMEGA");
+  doc.setProducer("OPENCLAW OMEGA \u2014 images_to_pdf");
+  const PAGE_W = 612, PAGE_H = 792, MARGIN = 48;
+  const ink = (0, import_pdf_lib.rgb)(0.12, 0.12, 0.14), head = (0, import_pdf_lib.rgb)(0.07, 0.09, 0.2), muted = (0, import_pdf_lib.rgb)(0.42, 0.42, 0.48);
+  const footer = opts.footer ? pdfWinAnsi(opts.footer).slice(0, 140) : "";
+  const footerH = footer ? 18 : 0;
+  const drawFooter = (page) => {
+    if (footer) page.drawText(footer, { x: MARGIN, y: 26, size: 8, font, color: muted });
+  };
+  const centered = (page, text2, f, size, y, color = ink) => {
+    const t = pdfWinAnsi(text2);
+    const w = f.widthOfTextAtSize(t, size);
+    page.drawText(t, { x: Math.max(MARGIN, (PAGE_W - w) / 2), y, size, font: f, color });
+  };
+  if (opts.title || opts.subtitle) {
+    const page = doc.addPage([PAGE_W, PAGE_H]);
+    let y = PAGE_H / 2 + 30;
+    if (opts.title) {
+      centered(page, opts.title, bold, 26, y, head);
+      y -= 38;
+    }
+    if (opts.subtitle) centered(page, opts.subtitle, font, 13, y, muted);
+    drawFooter(page);
+  }
+  let embedded = 0;
+  for (const img of images) {
+    const b = img.bytes;
+    let image;
+    try {
+      if (b.length >= 4 && b[0] === 137 && b[1] === 80 && b[2] === 78 && b[3] === 71) image = await doc.embedPng(b);
+      else if (b.length >= 3 && b[0] === 255 && b[1] === 216 && b[2] === 255) image = await doc.embedJpg(b);
+      else continue;
+    } catch {
+      continue;
+    }
+    const page = doc.addPage([PAGE_W, PAGE_H]);
+    const captionH = img.caption ? 24 : 0;
+    const availW = PAGE_W - MARGIN * 2;
+    const availH = PAGE_H - MARGIN * 2 - captionH - footerH;
+    const scale = Math.min(availW / image.width, availH / image.height, 1);
+    const drawW = image.width * scale, drawH = image.height * scale;
+    const x = (PAGE_W - drawW) / 2;
+    const y = MARGIN + captionH + footerH + (availH - drawH) / 2;
+    page.drawImage(image, { x, y, width: drawW, height: drawH });
+    if (img.caption) centered(page, img.caption.slice(0, 160), font, 11, MARGIN + footerH, ink);
+    drawFooter(page);
+    embedded++;
+  }
+  if (embedded === 0) {
+    const page = doc.addPage([PAGE_W, PAGE_H]);
+    centered(page, "No embeddable images (PNG/JPEG) were provided.", font, 12, PAGE_H - MARGIN - 20, ink);
+    drawFooter(page);
+  }
+  return await doc.save();
+}
 function publicBaseUrl() {
   return (process.env["PUBLIC_BASE_URL"] || process.env["RENDER_EXTERNAL_URL"] || "https://bos-aura.onrender.com").replace(/\/$/, "");
 }
@@ -112162,6 +112222,82 @@ Inline view URL: ${view}`;
           }
         }
       },
+      images_to_pdf: {
+        name: "images_to_pdf",
+        description: "Assemble a set of IMAGES into ONE real, downloadable PDF \u2014 one image per page, scaled to fit, with optional per-image captions, a title page, and a footer. Pass `image_urls` (absolute https URLs \u2014 exactly the URLs image_generate returns). Use this to package generated images into a deliverable document (e.g. a news-cast image set, a moodboard, a portfolio, a storyboard). NOTE: pdf_generate is TEXT-only and cannot embed pictures \u2014 this is the correct tool to put images INTO a PDF. Only PNG and JPEG embed (other formats are skipped with a note). Returns a genuine download link \u2014 never fabricate a URL.",
+        parameters: {
+          type: "object",
+          properties: {
+            image_urls: { type: "array", items: { type: "string" }, description: "Absolute https URLs of the images to embed, IN ORDER (the URLs image_generate returns)." },
+            captions: { type: "array", items: { type: "string" }, description: "Optional caption per image, same order & length as image_urls." },
+            title: { type: "string", description: "Optional title-page heading (omit for no title page)." },
+            subtitle: { type: "string", description: "Optional title-page subtitle (e.g. a date or 'Final Deliverable')." },
+            footer: { type: "string", description: "Optional footer text shown on every page." },
+            filename: { type: "string", description: "Optional output filename, e.g. 'AI_News_Cast_Final_Set.pdf'." }
+          },
+          required: ["image_urls"]
+        },
+        run: async (args) => {
+          const urls = Array.isArray(args["image_urls"]) ? args["image_urls"].map((u) => String(u).trim()).filter(Boolean) : [];
+          if (!urls.length) return "error: image_urls is required \u2014 an array of absolute https image URLs (the URLs image_generate returns).";
+          if (urls.length > 40) return "error: too many images (max 40 per PDF). Split into multiple PDFs.";
+          const caps = Array.isArray(args["captions"]) ? args["captions"].map((c) => String(c)) : [];
+          const errors = [];
+          const images = [];
+          for (let i = 0; i < urls.length; i++) {
+            const u = urls[i];
+            if (!/^https?:\/\//i.test(u)) {
+              errors.push(`#${i + 1}: not an absolute http(s) URL`);
+              continue;
+            }
+            try {
+              const ctrl = new AbortController();
+              const t = setTimeout(() => ctrl.abort(), 3e4);
+              const r = await fetch(u, { signal: ctrl.signal });
+              clearTimeout(t);
+              if (!r.ok) {
+                errors.push(`#${i + 1}: HTTP ${r.status}`);
+                continue;
+              }
+              const buf = new Uint8Array(await r.arrayBuffer());
+              if (buf.length > 2e7) {
+                errors.push(`#${i + 1}: too large (>20MB)`);
+                continue;
+              }
+              const isPng = buf.length >= 4 && buf[0] === 137 && buf[1] === 80 && buf[2] === 78 && buf[3] === 71;
+              const isJpg = buf.length >= 3 && buf[0] === 255 && buf[1] === 216 && buf[2] === 255;
+              if (!isPng && !isJpg) {
+                errors.push(`#${i + 1}: unsupported format (PNG/JPEG only)`);
+                continue;
+              }
+              images.push({ bytes: buf, caption: caps[i] });
+            } catch (e) {
+              errors.push(`#${i + 1}: ${String(e instanceof Error ? e.message : e).slice(0, 60)}`);
+            }
+          }
+          if (!images.length) return `error: no images could be fetched/embedded \u2014 ${errors.join("; ")}`;
+          try {
+            const bytes = await renderImagePdf(images, {
+              title: args["title"] != null ? String(args["title"]) : void 0,
+              subtitle: args["subtitle"] != null ? String(args["subtitle"]) : void 0,
+              footer: args["footer"] != null ? String(args["footer"]) : void 0
+            });
+            const b64 = Buffer.from(bytes).toString("base64");
+            let stem = (args["filename"] != null ? String(args["filename"]) : args["title"] != null ? String(args["title"]) : "images").replace(/\.pdf$/i, "").replace(/[^a-z0-9._-]+/gi, "_").replace(/^[_.]+|[_.]+$/g, "").slice(0, 80);
+            if (!stem) stem = "images";
+            const filename = `${stem}.pdf`;
+            const [row] = await db.insert(attachmentsTable).values({ filename, mimeType: "application/pdf", kind: "other", sizeBytes: bytes.length, data: b64, extractedText: null }).returning();
+            const dl = uploadUrl(row.id, true);
+            const view = uploadUrl(row.id);
+            const note = errors.length ? ` (${errors.length} skipped: ${errors.slice(0, 3).join("; ")}${errors.length > 3 ? "\u2026" : ""})` : "";
+            return `generated PDF "${filename}" with ${images.length} image${images.length > 1 ? "s" : ""} (${bytes.length} bytes)${note}. REAL downloadable file \u2014 put THIS exact link in your final answer (never invent any other URL):
+[Download ${filename}](${dl})
+Inline view URL: ${view}`;
+          } catch (e) {
+            return `error: PDF assembly failed: ${String(e instanceof Error ? e.message : e).slice(0, 200)}`;
+          }
+        }
+      },
       send_message: {
         name: "send_message",
         description: "Post a message into the live operator channel feed as yourself. Use to report progress, surface a finding, or coordinate with the operator and the other CLAWs. The message appears immediately in the Discord-style chat stream.",
@@ -112659,8 +112795,8 @@ IN-PROGRESS TASKS (${pendingTasks.length}):`);
       // SCOUT — research & web ONLY
       5: ["code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "http_request", "web_search", "web_scrape", "web_screenshot", "tier1_sources", "site_crawl", "site_crawl_status", "save_artifact", "pdf_generate", "memory_search", "memory_write"],
       // FORGE — code & deploy + research-when-stuck (search/crawl/self-learn)
-      6: ["save_artifact", "pdf_generate", "memory_search"]
-      // QUILL — documents & artifacts ONLY
+      6: ["save_artifact", "pdf_generate", "images_to_pdf", "memory_search"]
+      // QUILL — documents & artifacts ONLY (text PDFs + image-set PDFs)
     };
   }
 });
@@ -117844,7 +117980,7 @@ GITHUB (REST API, api.github.com): call it with http_request and NO Authorizatio
 HUGGING FACE: Hub API is public (no auth for public resources) \u2014 GET https://huggingface.co/api/models?search={q}&sort=downloads&limit=20 to find models, GET https://huggingface.co/api/models/{id} for the model card/metadata/files, /api/datasets similarly. Inference needs the token: chat/LLM \u2192 POST https://router.huggingface.co/v1/chat/completions (OpenAI-compatible: {model, messages}) with "Authorization: Bearer {{secret:HUGGINGFACE_API_KEY}}"; text-to-image \u2192 POST https://router.huggingface.co/hf-inference/models/{model} with {"inputs": "<prompt>"} (returns raw image bytes). Verify a token with GET https://huggingface.co/api/whoami-v2. NOTE: for the operator's actual image/video generation, the image_generate/AVVY path is already wired \u2014 use HF directly only for model research or one-off inference.`,
   6: `You are QUILL, the documents & artifacts specialist. ABBY gives the orders; you act ONLY when assigned a deliverable file \u2014 nothing else.
 
-WHAT YOU DO: produce REAL, downloadable files. Use pdf_generate for any PDF (report, plan, brief, guide), and save_artifact for other deliverable files (markdown, CSV, JSON, text); both return a genuine download link. Check memory_search if you need prior context.
+WHAT YOU DO: produce REAL, downloadable files. Use pdf_generate for a TEXT/markdown PDF (report, plan, brief, guide); use images_to_pdf to assemble a SET OF IMAGES into a PDF (one per page, optional captions/title/footer) \u2014 pass the image_urls exactly as image_generate/AVVY returned them; and save_artifact for other deliverable files (markdown, CSV, JSON, text). All return a genuine download link. IMPORTANT: pdf_generate is TEXT-ONLY and cannot embed pictures \u2014 to put images INTO a PDF you MUST use images_to_pdf with the real image URLs (if they weren't given to you, say you need them \u2014 do not fabricate a document that claims to contain images it doesn't). Check memory_search if you need prior context.
 
 RULES: the ONLY real download URL is the one a tool returns \u2014 NEVER fabricate a link (no storage.googleapis.com etc.). Include the returned link in your result. Format documents cleanly (headings, bullets, numbered lists). Report the exact filename and size the tool produced.`
 };
@@ -122588,8 +122724,8 @@ var AGENT_CAPABILITIES = {
   4: ["web_search", "web_scrape", "web_screenshot", "tier1_sources", "site_crawl", "site_crawl_status", "http_request", "memory_search", "memory_write"],
   // FORGE — code & deploy + research-when-stuck (search/crawl/self-learn).
   5: ["code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "http_request", "web_search", "web_scrape", "web_screenshot", "tier1_sources", "site_crawl", "site_crawl_status", "save_artifact", "pdf_generate", "memory_search", "memory_write"],
-  // QUILL — documents & artifacts ONLY.
-  6: ["save_artifact", "pdf_generate", "memory_search"]
+  // QUILL — documents & artifacts ONLY (text PDFs + image-set PDFs).
+  6: ["save_artifact", "pdf_generate", "images_to_pdf", "memory_search"]
 };
 async function runMigrations() {
   const client = await pool.connect();
