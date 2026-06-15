@@ -55061,7 +55061,7 @@ function integrationStatus() {
     { key: "inngest", name: "Inngest", category: "events", envVar: "INNGEST_EVENT_KEY", configured: has2("INNGEST_EVENT_KEY") },
     { key: "e2b", name: "E2B", category: "sandbox", envVar: "E2B_API_KEY", configured: has2("E2B_API_KEY") },
     { key: "composio", name: "Composio", category: "tools", envVar: "COMPOSIO_API_KEY", configured: has2("COMPOSIO_API_KEY") },
-    { key: "image-generation", name: "Image generation (image_generate)", category: "tools", envVar: "IMAGE_API_KEY", configured: has2("IMAGE_API_KEY") || has2("DEEPINFRA_API_KEY") || has2("OPENAI_API_KEY") }
+    { key: "image-generation", name: "Image generation (image_generate)", category: "tools", envVar: "IMAGE_API_KEY", configured: has2("IMAGE_API_KEY") || has2("DEEPINFRA_API_KEY") || has2("OPENAI_API_KEY") || has2("HUGGINGFACE_API_KEY") || has2("HF_TOKEN") || has2("HF_API_KEY") || has2("BITDEER_API_KEY") }
   ];
 }
 var NVIDIA_NIM_BASE, HELICONE_GATEWAY, nimKeyIndex, NIM_AUTH_COOLDOWN_MS, nimDisabledUntil, nimDegradedUntil, MODEL_STALL_COOLDOWN_MS, modelStallUntil, NIM_PREFIXES, NIM_MODEL_FALLBACKS, NIM_GENERIC_FALLBACK, NIM_MODEL_BANS, BITDEER_BASE, OPENROUTER_BASE, OPENROUTER_FALLBACK_MODEL, OR_MODEL_MAP, NIM_FAST_MODEL, E2B_PKG, E2B_TIMEOUT_MS;
@@ -111850,6 +111850,10 @@ ${stored}` : stored);
           const di = (id, label, tags) => ({ id, label, base: diBase, key: diKey, tags });
           const bitdeer = { id: bdImageModel, label: `Bitdeer ${bdImageModel}`, base: bdBase, key: bdKey, tags: ["bitdeer", "bd", "seedream", "imagen"] };
           const gptImage = { id: "gpt-image-1", label: "gpt-image-1", base: oaBase, key: oaKey, tags: ["openai", "dalle", "gpt"] };
+          const hfBase = (process.env["HF_IMAGE_BASE_URL"] ?? "https://router.huggingface.co/hf-inference/models").replace(/\/$/, "");
+          const hfKey = process.env["HUGGINGFACE_API_KEY"] || process.env["HF_TOKEN"] || process.env["HF_API_KEY"];
+          const hfImageModel = process.env["HF_IMAGE_MODEL"] ?? "black-forest-labs/FLUX.1-schnell";
+          const huggingface = { id: hfImageModel, label: `Hugging Face ${hfImageModel}`, base: hfBase, key: hfKey, tags: ["hf", "huggingface", "free", "flux", "schnell"], kind: "hf" };
           let chain;
           const custom2 = (process.env["IMAGE_MODELS"] ?? "").split(",").map((s) => s.trim()).filter(Boolean);
           const single = process.env["IMAGE_MODEL"];
@@ -111860,6 +111864,7 @@ ${stored}` : stored);
             chain = [slug ? di(single, single, []) : { ...gptImage, id: single, label: single }];
           } else {
             chain = [
+              huggingface,
               di("black-forest-labs/FLUX-2-pro", "FLUX.2 pro", ["photo", "flux", "default", "photoreal", "logo", "poster", "banner"]),
               di("google/flash-image-2.5", "Gemini Flash Image 2.5", ["text", "edit", "gemini", "flash", "instruction", "nano"]),
               di("byteplus/Seedream-5.0-Lite", "Seedream 5.0 Lite", ["seedream", "bilingual", "byteplus"]),
@@ -111880,31 +111885,56 @@ ${stored}` : stored);
             else if (idx < 0 && prefer.includes("/")) chain = [di(prefer, prefer, []), ...chain];
           }
           const candidates = chain.filter((m) => !!m.key).slice(0, 5);
-          if (!candidates.length) return "error: image generation is not configured (set IMAGE_API_KEY for DeepInfra, or OPENAI_API_KEY).";
+          if (!candidates.length) return "error: image generation is not configured. Set a FREE Hugging Face token (HUGGINGFACE_API_KEY \u2014 huggingface.co token, no card) for zero-cost generation, or IMAGE_API_KEY (DeepInfra) / BITDEER_API_KEY / OPENAI_API_KEY.";
           const errors = [];
           for (const m of candidates) {
             const ctrl = new AbortController();
             const timer2 = setTimeout(() => ctrl.abort(), 6e4);
             try {
-              const r = await fetch(`${m.base}/images/generations`, {
-                method: "POST",
-                headers: { Authorization: `Bearer ${m.key}`, "Content-Type": "application/json" },
-                body: JSON.stringify({ model: m.id, prompt, size, n: 1 }),
-                signal: ctrl.signal
-              });
-              const data = await r.json();
-              if (!r.ok) {
-                errors.push(`${m.label}: ${r.status} ${data?.error?.message ?? "request failed"}`);
-                continue;
-              }
-              let b64 = data.data?.[0]?.b64_json ?? "";
-              if (!b64 && data.data?.[0]?.url) {
-                const img = await fetch(data.data[0].url);
-                b64 = Buffer.from(await img.arrayBuffer()).toString("base64");
-              }
-              if (!b64) {
-                errors.push(`${m.label}: returned no image data`);
-                continue;
+              let b64 = "";
+              if (m.kind === "hf") {
+                const r = await fetch(`${m.base}/${m.id}`, {
+                  method: "POST",
+                  headers: { Authorization: `Bearer ${m.key}`, "Content-Type": "application/json", Accept: "image/png" },
+                  body: JSON.stringify({ inputs: prompt }),
+                  signal: ctrl.signal
+                });
+                if (!r.ok) {
+                  let detail = "request failed";
+                  try {
+                    const j = await r.json();
+                    if (j?.error) detail = j.error;
+                  } catch {
+                  }
+                  errors.push(`${m.label}: ${r.status} ${detail}`);
+                  continue;
+                }
+                b64 = Buffer.from(await r.arrayBuffer()).toString("base64");
+                if (!b64) {
+                  errors.push(`${m.label}: returned no image data`);
+                  continue;
+                }
+              } else {
+                const r = await fetch(`${m.base}/images/generations`, {
+                  method: "POST",
+                  headers: { Authorization: `Bearer ${m.key}`, "Content-Type": "application/json" },
+                  body: JSON.stringify({ model: m.id, prompt, size, n: 1 }),
+                  signal: ctrl.signal
+                });
+                const data = await r.json();
+                if (!r.ok) {
+                  errors.push(`${m.label}: ${r.status} ${data?.error?.message ?? "request failed"}`);
+                  continue;
+                }
+                b64 = data.data?.[0]?.b64_json ?? "";
+                if (!b64 && data.data?.[0]?.url) {
+                  const img = await fetch(data.data[0].url);
+                  b64 = Buffer.from(await img.arrayBuffer()).toString("base64");
+                }
+                if (!b64) {
+                  errors.push(`${m.label}: returned no image data`);
+                  continue;
+                }
               }
               const buf = Buffer.from(b64, "base64");
               const filename = (args["filename"] != null ? String(args["filename"]) : prompt.slice(0, 40).replace(/[^a-z0-9]+/gi, "_")).replace(/\.(png|jpg|jpeg)$/i, "") + ".png";
