@@ -11,10 +11,9 @@ import { SwarmDispatch } from "@/components/dashboard/SwarmDispatch";
 import { SteelBrowser } from "@/components/dashboard/SteelBrowser";
 import { DispatchPanel } from "@/components/dashboard/DispatchPanel";
 
-// Cyber-Minimal Slate 3-column workspace: channel rail · split workspace
-// (40% spatial canvas / 60% tabbed text+browser) · telemetry inspector drawer.
-// All surfaces are theme-token driven (slate dark) so child modules stay
-// consistent; the real, data-wired components are preserved (no stubs).
+// Slate workspace: channel rail · canvas over tabbed logs/browser/dispatch ·
+// telemetry drawer. Robust flex sizing (NOT a rigid %-grid) so it never crushes
+// the canvas or overflows on phones; tabs absorb the variable space.
 export default function Dashboard() {
   const [activeChannelId, setActiveChannelId] = useState<number | null>(null);
   const [viewMode, setViewMode] = useState<"canvas" | "chat" | "browser" | "dispatch">("canvas");
@@ -27,7 +26,6 @@ export default function Dashboard() {
 
   return (
     <div className="flex w-full h-full relative overflow-hidden bg-background text-foreground">
-      {/* Channel / agent rail (own responsive drawer on mobile) */}
       <LeftPanel
         activeChannelId={activeChannelId}
         setActiveChannelId={setActiveChannelId}
@@ -37,10 +35,9 @@ export default function Dashboard() {
         onClose={() => setPanelOpen(false)}
       />
 
-      {/* ── WORKSPACE ENGINE ── */}
-      <main className="flex-1 flex flex-col min-w-0 relative z-10">
+      <main className="flex-1 flex flex-col min-w-0 min-h-0 relative z-10 overflow-hidden">
         {/* System header */}
-        <header className="flex h-14 shrink-0 items-center justify-between gap-3 px-4 sm:px-6 border-b border-card-border bg-background/70 backdrop-blur-md">
+        <header className="flex h-12 sm:h-14 shrink-0 items-center justify-between gap-3 px-3 sm:px-6 border-b border-card-border bg-background/70 backdrop-blur-md">
           <div className="flex items-center gap-3 min-w-0">
             <button
               onClick={() => setPanelOpen(true)}
@@ -54,32 +51,28 @@ export default function Dashboard() {
           <SwarmStatusStrip />
         </header>
 
-        {/* Dynamic multi-window split: 40% canvas / 60% tabs */}
-        <div className="flex-1 grid grid-rows-[40%_60%] gap-4 p-3 sm:p-4 overflow-hidden min-h-0">
+        {/* Workspace: canvas (fixed, never a sliver) + tabs (fill the rest) */}
+        <div className="flex-1 flex flex-col min-h-0 gap-3 p-3 sm:p-4 overflow-hidden">
           {/* TOP — spatial swarm canvas */}
-          <section className="relative overflow-hidden rounded-xl border border-card-border bg-card/30 min-h-0">
-            <div className="absolute top-3 left-4 z-10 flex items-center gap-2">
-              <span className="h-1.5 w-1.5 rounded-full bg-primary animate-pulse" />
-              <span className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Live Swarm Canvas</span>
-            </div>
-            <div className="absolute inset-0 pointer-events-none opacity-40 [background-size:16px_16px] bg-[radial-gradient(hsl(var(--card-border))_1px,transparent_1px)]" />
+          <section className="relative shrink-0 h-[32vh] min-h-[180px] sm:h-[40vh] overflow-hidden rounded-xl border border-card-border bg-card/30">
+            <div className="absolute inset-0 pointer-events-none opacity-30 [background-size:18px_18px] bg-[radial-gradient(hsl(var(--card-border))_1px,transparent_1px)]" />
             <div className="w-full h-full">
               <SwarmCanvas onAgentClick={setSelectedAgentId} />
             </div>
           </section>
 
-          {/* BOTTOM — tabbed text / browser / dispatch panes */}
-          <section className="flex flex-col overflow-hidden rounded-xl border border-card-border bg-card/50 min-h-0">
+          {/* BOTTOM — tabbed text / browser / dispatch panes (fills remaining height) */}
+          <section className="flex-1 min-h-0 flex flex-col overflow-hidden rounded-xl border border-card-border bg-card/50">
             <Tabs defaultValue="logs" className="flex-1 flex flex-col min-h-0">
-              <div className="flex shrink-0 items-center justify-between px-4 border-b border-card-border bg-card/30">
-                <TabsList className="h-11 gap-4 bg-transparent p-0">
+              <div className="flex shrink-0 items-center justify-between px-3 sm:px-4 border-b border-card-border bg-card/30">
+                <TabsList className="h-11 gap-3 sm:gap-4 bg-transparent p-0">
                   <TabsTrigger value="logs" className={tabBase}>💬 Live Logs</TabsTrigger>
-                  <TabsTrigger value="browser" className={tabBase}>🌐 Steel Browser</TabsTrigger>
+                  <TabsTrigger value="browser" className={tabBase}>🌐 Browser</TabsTrigger>
                   <TabsTrigger value="dispatch" className={tabBase}>⚡ Dispatch</TabsTrigger>
                 </TabsList>
-                <div className="hidden sm:flex items-center gap-2 font-mono text-[10px] text-muted-foreground">
+                <div className="hidden md:flex items-center gap-2 font-mono text-[10px] text-muted-foreground">
                   <span>SANDBOX:</span>
-                  <span className="text-foreground/70">oc-node-00-runtime</span>
+                  <span className="text-foreground/70">oc-node-00</span>
                 </div>
               </div>
               <TabsContent value="logs" className="m-0 flex-1 min-h-0 overflow-hidden">
@@ -95,7 +88,7 @@ export default function Dashboard() {
           </section>
         </div>
 
-        {/* Idle onboarding cue (self-removes once agents work) → prefills dispatch */}
+        {/* Idle starter cues (auto-hide once agents work) → prefill dispatch */}
         <SwarmIdleHint onPick={setDispatchDraft} />
         {/* Direct dispatch into the real engine while you watch */}
         <SwarmDispatch channelId={activeChannelId} value={dispatchDraft} onChange={setDispatchDraft} />
