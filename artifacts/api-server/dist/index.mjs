@@ -110761,10 +110761,14 @@ async function freecrawlSearch(query, limit) {
     if (urls.length >= limit) break;
   }
   const md = (data.markdown ?? "").trim();
-  if (!urls.length && !md) return `no web results for "${query}".`;
+  const looksBlocked = /captcha|are you a robot|unusual traffic|verify (you are|that you are) (a )?human|select all (squares|images|tiles)|automated queries/i.test(md);
+  if (!urls.length) {
+    if (looksBlocked) throw new Error("duckduckgo served an anti-bot/CAPTCHA challenge (no usable results)");
+    return `no web results for "${query}".`;
+  }
   const list = urls.map((u, i) => `${i + 1}. ${u}`).join("\n");
   return `[search provider: freecrawl/duckduckgo \u2014 keyless fallback]
-${list}${md ? `
+${list}${md && !looksBlocked ? `
 
 --- results page text ---
 ${clip3(md, 1500)}` : ""}`;

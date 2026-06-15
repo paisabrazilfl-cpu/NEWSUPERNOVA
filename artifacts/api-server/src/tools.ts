@@ -502,9 +502,20 @@ async function freecrawlSearch(query: string, limit: number): Promise<string> {
     if (urls.length >= limit) break;
   }
   const md = (data.markdown ?? "").trim();
-  if (!urls.length && !md) return `no web results for "${query}".`;
+  // Anti-bot / CAPTCHA wall: when DuckDuckGo (the keyless engine) challenges the
+  // request it returns a page with NO result links and CAPTCHA chrome in the body
+  // ("select all squares…", "verify you are human"). Previously that page TEXT was
+  // returned as "results" — so ABBY tried to SOLVE the CAPTCHA and looped (observed
+  // live). Never feed a challenge page to the model: with no real result URLs, treat
+  // a CAPTCHA wall as a failure (the operator's Tavily/Exa/Firecrawl/Steel carry the
+  // real load), and otherwise report an honest "no results" — never the raw page.
+  const looksBlocked = /captcha|are you a robot|unusual traffic|verify (you are|that you are) (a )?human|select all (squares|images|tiles)|automated queries/i.test(md);
+  if (!urls.length) {
+    if (looksBlocked) throw new Error("duckduckgo served an anti-bot/CAPTCHA challenge (no usable results)");
+    return `no web results for "${query}".`;
+  }
   const list = urls.map((u, i) => `${i + 1}. ${u}`).join("\n");
-  return `[search provider: freecrawl/duckduckgo — keyless fallback]\n${list}${md ? `\n\n--- results page text ---\n${clip(md, 1500)}` : ""}`;
+  return `[search provider: freecrawl/duckduckgo — keyless fallback]\n${list}${md && !looksBlocked ? `\n\n--- results page text ---\n${clip(md, 1500)}` : ""}`;
 }
 
 // ─── Multi-provider web search ───────────────────────────────────────────────
