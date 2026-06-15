@@ -1696,7 +1696,17 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
       const diKey = process.env["IMAGE_API_KEY"] || process.env["DEEPINFRA_API_KEY"];
       const oaBase = (process.env["OPENAI_BASE_URL"] ?? "https://api.openai.com/v1").replace(/\/$/, "");
       const oaKey = process.env["OPENAI_API_KEY"] || process.env["IMAGE_API_KEY"];
+      // Bitdeer image backend — OpenAI-compatible /images/generations at
+      // api-inference.bitdeer.ai (model: seedream-5.0-lite). Keyed off the
+      // operator's own BITDEER_API_KEY, so when no DeepInfra key is set the chain
+      // does NOT collapse to a single billing-blocked OpenAI model: Bitdeer is a
+      // real, key-backed fallback that keeps image_generate working. Verified
+      // 2026-06-15 against bitdeer.ai/en/services/ai-inference (OpenAI-compatible).
+      const bdBase = (process.env["BITDEER_IMAGE_BASE_URL"] ?? "https://api-inference.bitdeer.ai/v1").replace(/\/$/, "");
+      const bdKey = process.env["BITDEER_API_KEY"];
+      const bdImageModel = process.env["BITDEER_IMAGE_MODEL"] ?? "seedream-5.0-lite";
       const di = (id: string, label: string, tags: string[]): ImgModel => ({ id, label, base: diBase, key: diKey, tags });
+      const bitdeer: ImgModel = { id: bdImageModel, label: `Bitdeer ${bdImageModel}`, base: bdBase, key: bdKey, tags: ["bitdeer", "bd", "seedream", "imagen"] };
       const gptImage: ImgModel = { id: "gpt-image-1", label: "gpt-image-1", base: oaBase, key: oaKey, tags: ["openai", "dalle", "gpt"] };
 
       let chain: ImgModel[];
@@ -1717,6 +1727,9 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
           di("byteplus/Seedream-5.0-Lite", "Seedream 5.0 Lite", ["seedream", "bilingual", "byteplus"]),
           di("black-forest-labs/FLUX-2-dev", "FLUX.2 dev", ["budget", "cheap", "dev", "draft"]),
           di("black-forest-labs/FLUX-2-max", "FLUX.2 max", ["max", "hero", "premium"]),
+          // Bitdeer (operator's own key) sits ahead of the OpenAI backstop so a
+          // billing-blocked gpt-image-1 is never the ONLY reachable model.
+          bitdeer,
           gptImage,
         ];
       }

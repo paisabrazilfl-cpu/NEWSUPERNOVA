@@ -691,6 +691,79 @@ export function rescueRawToolCalls(text: string): { clean: string; calls: Rescue
   return { clean: stripToolTokenNoise(text), calls };
 }
 
+// ─── Plain-JSON tool-call rescue ─────────────────────────────────────────────
+// A second, MORE COMMON failure mode (observed live 2026-06-15): instead of the
+// native <|tool_call|> markup, the model emits a tool call as a bare JSON object
+// in the message CONTENT — e.g. {"name":"http_request","parameters":{...}} or a
+// ```json fenced block — and the provider returns NO structured tool_calls. The
+// orchestrator then sees zero calls, treats the JSON as the final answer, and the
+// action NEVER runs (the model "can't tool call"). This recovers those calls so
+// they execute. It is GATED on a known-tool-name allowlist and only runs when
+// there were no real tool_calls, so it cannot misfire on a legitimate JSON
+// deliverable. It tolerates several key spellings and a single truncated tail.
+export function rescuePlainJsonToolCalls(
+  text: string,
+  knownNames: string[],
+): { clean: string; calls: RescuedToolCall[] } {
+  const calls: RescuedToolCall[] = [];
+  if (!text || !text.includes("{") || !knownNames.length) return { clean: text, calls };
+  const known = new Set(knownNames);
+  const spans: Array<[number, number]> = [];
+
+  const tryParse = (s: string): unknown => {
+    try { return JSON.parse(s); } catch { /* maybe truncated — try closing braces */ }
+    for (let add = 1; add <= 2; add++) {
+      try { return JSON.parse(s + "}".repeat(add)); } catch { /* keep trying */ }
+    }
+    return undefined;
+  };
+
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] !== "{") continue;
+    // Scan a balanced object starting at i (respecting strings/escapes).
+    let depth = 0, inStr = false, esc = false, end = -1;
+    for (let j = i; j < text.length; j++) {
+      const ch = text[j];
+      if (inStr) {
+        if (esc) esc = false;
+        else if (ch === "\\") esc = true;
+        else if (ch === '"') inStr = false;
+        continue;
+      }
+      if (ch === '"') inStr = true;
+      else if (ch === "{") depth++;
+      else if (ch === "}") { depth--; if (depth === 0) { end = j; break; } }
+    }
+    // Balanced object, or a truncated tail (last `{...` in the message).
+    const slice = end >= 0 ? text.slice(i, end + 1) : text.slice(i);
+    const obj = tryParse(slice) as Record<string, unknown> | undefined;
+    if (!obj || typeof obj !== "object" || Array.isArray(obj)) { if (end < 0) break; i = end; continue; }
+    const nameVal = obj["name"] ?? obj["tool"] ?? obj["tool_name"] ?? obj["function"];
+    const name = typeof nameVal === "string" ? nameVal.trim() : "";
+    if (!known.has(name)) { if (end < 0) break; i = end; continue; }
+    let rawArgs = obj["parameters"] ?? obj["arguments"] ?? obj["args"] ?? obj["input"] ?? {};
+    if (typeof rawArgs === "string") { try { rawArgs = JSON.parse(rawArgs); } catch { rawArgs = {}; } }
+    const argsObj = rawArgs && typeof rawArgs === "object" && !Array.isArray(rawArgs) ? rawArgs : {};
+    calls.push({ name, arguments: JSON.stringify(argsObj) });
+    spans.push([i, end >= 0 ? end + 1 : text.length]);
+    if (end < 0) break;
+    i = end;
+  }
+
+  if (!calls.length) return { clean: text, calls };
+  let clean = "";
+  let cursor = 0;
+  for (const [s, e] of spans) { clean += text.slice(cursor, s); cursor = e; }
+  clean += text.slice(cursor);
+  clean = clean
+    .replace(/```(?:json|tool_call|tool_code)?\s*```/gi, " ")
+    .replace(/```(?:json|tool_call|tool_code)?\s*$/i, " ")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  return { clean, calls };
+}
+
 // ABBY must run on an orchestrator-grade model: Kimi K2.6 (fast NIM engine,
 // live-verified tool calling), NVIDIA Nemotron, Grok (x-ai/), or GLM-5.1
 // (z-ai/). Anything else is forced back to the default. NVIDIA NIM is the only
