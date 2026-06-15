@@ -52,35 +52,37 @@
 /* Calm, legible dark theme. One source of truth — both :root and .dark share it. */
 :root,
 .dark {
-  --background: 220 16% 94%;
-  --foreground: 220 26% 12%;
+  /* Cyber-Minimal Slate — Obsidian #09090b / Slate Mica #18181b / Zinc Core
+     #27272a / Indigo Neon #6366f1 / Emerald Neon #10b981 */
+  --background: 240 10% 4%;
+  --foreground: 240 6% 96%;
 
-  --card: 220 22% 99%;
-  --card-foreground: 220 26% 12%;
-  --card-border: 220 14% 84%;
+  --card: 240 6% 10%;
+  --card-foreground: 240 6% 96%;
+  --card-border: 240 4% 16%;
 
-  --popover: 0 0% 100%;
-  --popover-foreground: 220 26% 12%;
-  --popover-border: 220 14% 84%;
+  --popover: 240 7% 8%;
+  --popover-foreground: 240 6% 96%;
+  --popover-border: 240 4% 16%;
 
-  --primary: 212 88% 44%;
+  --primary: 239 84% 67%;
   --primary-foreground: 0 0% 100%;
 
-  --secondary: 220 16% 88%;
-  --secondary-foreground: 220 24% 16%;
+  --secondary: 240 4% 14%;
+  --secondary-foreground: 240 6% 92%;
 
-  --muted: 220 16% 87%;
-  --muted-foreground: 220 10% 34%;
+  --muted: 240 4% 14%;
+  --muted-foreground: 240 5% 65%;
 
-  --accent: 28 92% 48%;
+  --accent: 160 84% 39%;
   --accent-foreground: 0 0% 100%;
 
-  --destructive: 0 72% 48%;
+  --destructive: 350 80% 55%;
   --destructive-foreground: 0 0% 100%;
 
-  --border: 220 14% 83%;
-  --input: 220 16% 86%;
-  --ring: 212 88% 44%;
+  --border: 240 4% 16%;
+  --input: 240 4% 18%;
+  --ring: 239 84% 67%;
 
   --app-font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   --app-font-serif: 'Inter', Georgia, serif;
@@ -94,6 +96,17 @@
   --muted-border: hsl(var(--muted));
   --accent-border: hsl(var(--accent));
   --destructive-border: hsl(var(--destructive));
+}
+
+/* Breathing Edge Runtime Indicator — wraps an active/executing status so the
+   interface feels alive without a page reload. (Cyber-Minimal Slate spec §3.) */
+.status-glow-executing {
+  box-shadow: 0 0 16px 2px rgba(16, 185, 129, 0.25);
+  animation: breathing-glow 2.5s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+@keyframes breathing-glow {
+  0%, 100% { opacity: 0.85; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.03); }
 }
 
 @layer base {
