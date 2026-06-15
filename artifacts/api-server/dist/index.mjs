@@ -55061,7 +55061,7 @@ function integrationStatus() {
     { key: "inngest", name: "Inngest", category: "events", envVar: "INNGEST_EVENT_KEY", configured: has2("INNGEST_EVENT_KEY") },
     { key: "e2b", name: "E2B", category: "sandbox", envVar: "E2B_API_KEY", configured: has2("E2B_API_KEY") },
     { key: "composio", name: "Composio", category: "tools", envVar: "COMPOSIO_API_KEY", configured: has2("COMPOSIO_API_KEY") },
-    { key: "image-generation", name: "Image generation (image_generate)", category: "tools", envVar: "IMAGE_API_KEY", configured: has2("IMAGE_API_KEY") || has2("DEEPINFRA_API_KEY") || has2("OPENAI_API_KEY") || has2("HUGGINGFACE_API_KEY") || has2("HF_TOKEN") || has2("HF_API_KEY") || has2("BITDEER_API_KEY") },
+    { key: "image-generation", name: "Image generation (image_generate)", category: "tools", envVar: "IMAGE_API_KEY", configured: has2("IMAGE_API_KEY") || has2("DEEPINFRA_API_KEY") || has2("OPENAI_API_KEY") || has2("HUGGINGFACE_API_KEY") || has2("HF_TOKEN") || has2("HF_API_KEY") || has2("BITDEER_API_KEY") || has2("A2E_API_KEY") },
     { key: "video-generation", name: "Video generation (video_generate \xB7 A2E)", category: "tools", envVar: "A2E_API_KEY", configured: has2("A2E_API_KEY") }
   ];
 }
@@ -111879,6 +111879,8 @@ ${stored}` : stored);
           const hfKey = process.env["HUGGINGFACE_API_KEY"] || process.env["HF_TOKEN"] || process.env["HF_API_KEY"];
           const hfImageModel = process.env["HF_IMAGE_MODEL"] ?? "black-forest-labs/FLUX.1-schnell";
           const huggingface = { id: hfImageModel, label: `Hugging Face ${hfImageModel}`, base: hfBase, key: hfKey, tags: ["hf", "huggingface", "free", "flux", "schnell"], kind: "hf" };
+          const a2eKey = process.env["A2E_API_KEY"];
+          const a2e = { id: "a2e-text2image", label: "A2E text2image", base: A2E_BASE, key: a2eKey, tags: ["a2e", "free", "coins"], kind: "a2e" };
           let chain;
           const custom2 = (process.env["IMAGE_MODELS"] ?? "").split(",").map((s) => s.trim()).filter(Boolean);
           const single = process.env["IMAGE_MODEL"];
@@ -111898,7 +111900,10 @@ ${stored}` : stored);
               // Bitdeer (operator's own key) sits ahead of the OpenAI backstop so a
               // billing-blocked gpt-image-1 is never the ONLY reachable model.
               bitdeer,
-              gptImage
+              gptImage,
+              // A2E free-coin backend — the last resort when every other free/paid
+              // backend is exhausted or out of credit.
+              a2e
             ];
           }
           const prefer = String(args["model"] ?? "").toLowerCase().trim();
@@ -111909,15 +111914,54 @@ ${stored}` : stored);
             if (idx > 0) chain = [chain[idx], ...chain.slice(0, idx), ...chain.slice(idx + 1)];
             else if (idx < 0 && prefer.includes("/")) chain = [di(prefer, prefer, []), ...chain];
           }
-          const candidates = chain.filter((m) => !!m.key).slice(0, 5);
-          if (!candidates.length) return "error: image generation is not configured. Set a FREE Hugging Face token (HUGGINGFACE_API_KEY \u2014 huggingface.co token, no card) for zero-cost generation, or IMAGE_API_KEY (DeepInfra) / BITDEER_API_KEY / OPENAI_API_KEY.";
+          const candidates = chain.filter((m) => !!m.key).slice(0, 7);
+          if (!candidates.length) return "error: image generation is not configured. Set a FREE Hugging Face token (HUGGINGFACE_API_KEY \u2014 huggingface.co token, no card) or A2E_API_KEY (free coins) for zero-cost generation, or IMAGE_API_KEY (DeepInfra) / BITDEER_API_KEY / OPENAI_API_KEY.";
           const errors = [];
           for (const m of candidates) {
             const ctrl = new AbortController();
             const timer2 = setTimeout(() => ctrl.abort(), 6e4);
             try {
               let b64 = "";
-              if (m.kind === "hf") {
+              if (m.kind === "a2e") {
+                const a2eHeaders = { Authorization: `Bearer ${m.key}`, "Content-Type": "application/json" };
+                const sr = await fetch(`${m.base}/userText2Image/start`, { method: "POST", headers: a2eHeaders, body: JSON.stringify({ prompt, model_type: "a2e" }) });
+                const sj = await sr.json().catch(() => ({}));
+                if (!sr.ok || typeof sj?.code === "number" && sj.code !== 0) {
+                  errors.push(`${m.label}: ${sr.status} ${String(sj?.msg ?? "start failed").slice(0, 80)}`);
+                  continue;
+                }
+                const sdata = sj?.data;
+                const srec = Array.isArray(sdata) ? sdata[0] : sdata;
+                const taskId = srec?.["_id"] ?? srec?.["id"];
+                if (!taskId) {
+                  errors.push(`${m.label}: no task id`);
+                  continue;
+                }
+                let imgUrl = "";
+                const deadline = Date.now() + 9e4;
+                while (Date.now() < deadline) {
+                  await new Promise((res) => setTimeout(res, 6e3));
+                  const pr = await fetch(`${m.base}/userText2Image/${taskId}`, { headers: a2eHeaders });
+                  const pj = await pr.json().catch(() => ({}));
+                  const d = (Array.isArray(pj?.data) ? pj.data[0] : pj?.data) ?? {};
+                  const st = String(d["current_status"] ?? d["status"] ?? "").toLowerCase();
+                  if (st === "completed" || st === "success" || st === "succeeded") {
+                    imgUrl = d["image_urls"]?.[0] ?? d["url"] ?? "";
+                    break;
+                  }
+                  if (st === "failed" || st === "error") break;
+                }
+                if (!imgUrl) {
+                  errors.push(`${m.label}: no image returned (timeout/failed)`);
+                  continue;
+                }
+                const ir = await fetch(imgUrl);
+                b64 = Buffer.from(await ir.arrayBuffer()).toString("base64");
+                if (!b64) {
+                  errors.push(`${m.label}: empty image download`);
+                  continue;
+                }
+              } else if (m.kind === "hf") {
                 const r = await fetch(`${m.base}/${m.id}`, {
                   method: "POST",
                   headers: { Authorization: `Bearer ${m.key}`, "Content-Type": "application/json", Accept: "image/png" },

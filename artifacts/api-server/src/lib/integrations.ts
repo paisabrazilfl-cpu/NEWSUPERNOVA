@@ -1230,7 +1230,7 @@ export function integrationStatus(): IntegrationStatus[] {
     { key: "inngest", name: "Inngest", category: "events", envVar: "INNGEST_EVENT_KEY", configured: has("INNGEST_EVENT_KEY") },
     { key: "e2b", name: "E2B", category: "sandbox", envVar: "E2B_API_KEY", configured: has("E2B_API_KEY") },
     { key: "composio", name: "Composio", category: "tools", envVar: "COMPOSIO_API_KEY", configured: has("COMPOSIO_API_KEY") },
-    { key: "image-generation", name: "Image generation (image_generate)", category: "tools", envVar: "IMAGE_API_KEY", configured: has("IMAGE_API_KEY") || has("DEEPINFRA_API_KEY") || has("OPENAI_API_KEY") || has("HUGGINGFACE_API_KEY") || has("HF_TOKEN") || has("HF_API_KEY") || has("BITDEER_API_KEY") },
+    { key: "image-generation", name: "Image generation (image_generate)", category: "tools", envVar: "IMAGE_API_KEY", configured: has("IMAGE_API_KEY") || has("DEEPINFRA_API_KEY") || has("OPENAI_API_KEY") || has("HUGGINGFACE_API_KEY") || has("HF_TOKEN") || has("HF_API_KEY") || has("BITDEER_API_KEY") || has("A2E_API_KEY") },
     { key: "video-generation", name: "Video generation (video_generate · A2E)", category: "tools", envVar: "A2E_API_KEY", configured: has("A2E_API_KEY") },
   ];
 }
