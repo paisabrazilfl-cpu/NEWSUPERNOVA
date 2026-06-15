@@ -211,12 +211,17 @@ export function SwarmCanvas({ onAgentClick }: SwarmCanvasProps) {
     return () => ro.disconnect();
   }, []);
 
-  // Outer ring radius is sized so an orb (+half) never clips the container edge,
-  // even on a narrow phone. Inner ring keeps a guaranteed gap from the outer so
-  // the two rings stay visually distinct and never overlap.
+  // Outer ring radius is sized so the WHOLE graph fits the visible canvas without
+  // clipping — constrained by BOTH width and height. On a short phone panel the
+  // height is the binding limit; sizing on width alone reserved a ~530px tall graph
+  // inside a ~270px panel, which centered the cluster below the fold and clipped the
+  // orb. Inner ring keeps a guaranteed gap from the outer so the rings stay distinct.
   const radius = useMemo(() => {
     const w = size.w || 600;
-    return Math.max(92, Math.min(230, Math.round(w / 2) - 40));
+    const h = size.h || 400;
+    const byWidth = Math.round(w / 2) - 40;
+    const byHeight = Math.round(h / 2) - 55; // room for orb radius + outward label
+    return Math.max(70, Math.min(230, byWidth, byHeight));
   }, [size]);
   const innerRadius = useMemo(
     () => Math.max(46, Math.min(Math.round(radius * 0.5), radius - 58)),
