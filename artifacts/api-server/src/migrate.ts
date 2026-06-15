@@ -216,11 +216,24 @@ VALUES
   ('ABBY', 'Operator', 'Solo autonomous agent — holds every tool and does the work end to end', 'idle', '#00e5ff', 'AB', 'moonshotai/kimi-k2.6', ARRAY['code','execution','browser','scraping','research','memory','rag','api','integration','automation','social','images','files','scheduling'])
 `;
 
-// Idempotently remove the legacy CLAW sub-agents from any existing DB so the
-// swarm is ABBY-only. Safe: the agents table has no foreign-key dependents
-// (messages/tool-calls store agent_id as a plain value), so historical rows
-// keep their attribution. Runs every boot.
-const REMOVE_OTHER_AGENTS = `DELETE FROM agents WHERE name <> 'ABBY'`;
+// AVVY — image & video generation specialist (id 2). ABBY gives the orders; AVVY
+// works ONLY when ABBY assigns her an image/video directive, nothing more. Seeded
+// idempotently (by name) so she also lands on existing prod DBs where the
+// count-based SEED_AGENTS block is skipped. Explicit id=2 reuses the freed legacy
+// slot and matches AGENT_TOOLS[2] / AGENT_CAPABILITIES[2].
+const SEED_AVVY = `
+INSERT INTO agents (id, name, role, description, status, color, avatar_initials, model, capabilities)
+SELECT 2, 'AVVY', 'Image & Video Specialist',
+  'Image & video generation specialist — acts only when ABBY assigns the work. Free Hugging Face images (image_generate) + A2E video (video_generate).',
+  'idle', '#a855f7', 'AV', 'moonshotai/kimi-k2.6', ARRAY['images','video']
+WHERE NOT EXISTS (SELECT 1 FROM agents WHERE name = 'AVVY')
+`;
+
+// Idempotently remove the legacy CLAW sub-agents from any existing DB so the swarm
+// is just ABBY (orchestrator) + AVVY (image/video specialist). Safe: the agents
+// table has no foreign-key dependents (messages/tool-calls store agent_id as a
+// plain value), so historical rows keep their attribution. Runs every boot.
+const REMOVE_OTHER_AGENTS = `DELETE FROM agents WHERE name NOT IN ('ABBY', 'AVVY')`;
 
 // 2026-06-10 NVIDIA NIM migration: upgrade each agent's LEGACY default model to
 // its NIM replacement (live-verified on integrate.api.nvidia.com — completion,
@@ -260,6 +273,8 @@ const AGENT_CAPABILITIES: Record<number, string[]> = {
   // ABBY only — solo agent with the full toolset (display metadata; real tool
   // access is ALL_TOOLS via AGENT_TOOLS[1] in tools.ts).
   1: ["code_exec", "sandbox_exec", "web_search", "web_scrape", "web_screenshot", "http_request", "memory_search", "memory_write", "composio_action", "instagram_post", "image_generate", "pdf_generate", "save_artifact", "schedule_task"],
+  // AVVY — image + video ONLY (free HF image_generate + A2E video_generate).
+  2: ["image_generate", "video_generate"],
 };
 
 export async function runMigrations(): Promise<void> {
@@ -276,10 +291,15 @@ export async function runMigrations(): Promise<void> {
       logger.info("Default agents and channels seeded");
     }
 
-    // SOLO MODE: keep only ABBY (removes the legacy CLAW sub-agents from
-    // existing prod DBs). Idempotent — a no-op once only ABBY remains.
+    // Keep only ABBY + AVVY (removes the legacy CLAW sub-agents from existing prod
+    // DBs). Idempotent — a no-op once the roster is just ABBY + AVVY.
     const del = await client.query(REMOVE_OTHER_AGENTS);
-    if (del.rowCount) logger.info({ removed: del.rowCount }, "Removed legacy CLAW sub-agents — ABBY is solo");
+    if (del.rowCount) logger.info({ removed: del.rowCount }, "Removed legacy CLAW sub-agents — roster is ABBY + AVVY");
+
+    // Idempotently ensure AVVY (image/video specialist) exists, including on
+    // existing prod DBs where the count-based seed above is skipped.
+    const avvy = await client.query(SEED_AVVY);
+    if (avvy.rowCount) logger.info("Seeded AVVY — image & video generation specialist");
 
     // Idempotently sync each agent's real tool capabilities.
     for (const [id, caps] of Object.entries(AGENT_CAPABILITIES)) {
