@@ -80,7 +80,7 @@ function OperatorGate() {
           </div>
           <div>
             <h1 className="text-xl font-bold tracking-tight text-foreground">OPERATOR SIGN-IN</h1>
-            <p className="text-sm text-muted-foreground mt-1">BOS-AURA is restricted to authorized operators.</p>
+            <p className="text-sm text-muted-foreground mt-1">Abby AI is restricted to authorized operators.</p>
           </div>
         </div>
         <input

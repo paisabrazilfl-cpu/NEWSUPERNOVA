@@ -394,7 +394,7 @@ export default function ChatPage() {
           </button>
           <div className="flex items-center gap-2 min-w-0 flex-1">
             <Bot className="w-5 h-5 text-primary shrink-0" />
-            <h1 className="text-sm font-semibold truncate">{activeChannel?.name ?? "OpenClaw"}</h1>
+            <h1 className="text-sm font-semibold truncate">{activeChannel?.name ?? "Abby AI"}</h1>
           </div>
           <WorkingIndicator />
           <WhatsNewButton />
@@ -529,7 +529,7 @@ export default function ChatPage() {
               </button>
             </div>
             <p className="text-[11px] text-muted-foreground/60 text-center mt-2">
-              OpenClaw routes your message to ABBY, who orchestrates the agent swarm.
+              Abby AI routes your message to ABBY, who orchestrates the agent swarm.
             </p>
           </div>
         </div>
@@ -691,7 +691,7 @@ function EmptyState({ onNew }: { onNew: () => void }) {
         <Sparkles className="w-7 h-7 text-primary" />
       </div>
       <div>
-        <h2 className="text-lg font-semibold">Welcome to OpenClaw</h2>
+        <h2 className="text-lg font-semibold">Welcome to Abby AI</h2>
         <p className="text-sm text-muted-foreground mt-1 max-w-sm">Start a conversation and the AI agent swarm will research, browse, run code, generate images, build downloadable files, and report back. Attach files or use voice — tap <span className="text-primary font-medium">What's new</span> to see everything it can do.</p>
       </div>
       <button onClick={onNew} className="flex items-center gap-2 px-4 py-2 rounded-xl bg-primary/15 border border-primary/30 text-primary text-sm font-semibold hover:bg-primary/25 transition-colors">

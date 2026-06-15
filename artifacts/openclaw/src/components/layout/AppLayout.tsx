@@ -44,7 +44,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
             <div className="w-11 h-11 rounded-xl bg-primary/10 flex items-center justify-center border border-primary/20 shadow-[0_0_15px_rgba(217,119,87,0.15)] transition-transform group-hover:scale-105">
               <ShieldAlert className="w-6 h-6 text-primary" />
             </div>
-            <span className="text-[10px] font-bold tracking-[0.18em] text-foreground/80 leading-none">OPENCLAW</span>
+            <span className="text-[10px] font-bold tracking-[0.18em] text-foreground/80 leading-none">ABBY AI</span>
           </div>
         </Link>
 
