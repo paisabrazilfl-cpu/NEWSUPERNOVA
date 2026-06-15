@@ -96,7 +96,7 @@ function OperatorGate() {
         <button
           type="submit"
           disabled={login.isPending}
-          className="w-full flex items-center justify-center gap-2 bg-[#d97757]/10 hover:bg-[#d97757]/20 border border-[#d97757]/50 text-[#d97757] rounded-md px-4 py-2 text-sm font-semibold uppercase tracking-wider transition-colors disabled:opacity-50"
+          className="btn-3d w-full flex items-center justify-center gap-2 px-4 py-2.5 text-sm font-semibold uppercase tracking-wider"
         >
           <Lock className="w-4 h-4" />
           {login.isPending ? "Authenticating…" : "Sign In"}

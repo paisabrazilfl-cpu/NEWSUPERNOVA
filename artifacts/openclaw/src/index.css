@@ -109,6 +109,38 @@
   50% { opacity: 1; transform: scale(1.03); }
 }
 
+/* 3D brown button — a raised, tactile "ledge" you can press. Warm caramel-brown
+   face, darker-brown bottom edge for depth, top inner highlight; presses DOWN on
+   :active. Reusable: add `btn-3d` to any <button> (or it's the Button default). */
+.btn-3d {
+  background-color: #9a6a43;
+  color: #fff;
+  border: 0;
+  border-radius: 0.6rem;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    0 4px 0 0 #6b4527,
+    0 6px 10px rgba(74, 46, 20, 0.22);
+  transition: transform 0.08s ease, box-shadow 0.08s ease, background-color 0.15s ease, filter 0.15s ease;
+}
+.btn-3d:hover:not(:disabled) { background-color: #a8784f; }
+.btn-3d:active:not(:disabled) {
+  transform: translateY(3px);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    0 1px 0 0 #6b4527,
+    0 2px 4px rgba(74, 46, 20, 0.2);
+}
+.btn-3d:disabled { opacity: 0.55; }
+/* Subtler small variant for tight toolbars/icon buttons. */
+.btn-3d-sm {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.25),
+    0 3px 0 0 #6b4527,
+    0 4px 7px rgba(74, 46, 20, 0.2);
+}
+.btn-3d-sm:active:not(:disabled) { transform: translateY(2px); box-shadow: inset 0 1px 0 rgba(255,255,255,0.2), 0 1px 0 0 #6b4527; }
+
 @layer base {
   * {
     @apply border-border;
