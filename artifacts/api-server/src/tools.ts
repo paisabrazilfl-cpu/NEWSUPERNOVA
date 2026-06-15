@@ -973,16 +973,32 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
           return `error: github.com web pages are JavaScript-rendered and not scrapable. Use http_request (GET) against the GitHub REST API instead — it is auto-authenticated. Try: ${apiHint}`;
         }
       } catch { /* ignore; validated above */ }
-      let content: string;
+      // Primary: Steel (headless browser; renders JS, and steelScrape itself retries
+      // through a residential proxy when a page bot-walls a datacenter IP).
+      let content = "";
+      let steelErr: unknown = null;
       try {
         content = await steelScrape(url);
-      } catch (steelErr) {
-        // Steel unavailable — fall back to FreeCrawl (self-hosted, always on)
+      } catch (e) {
+        steelErr = e;
+      }
+      // Escalate to the keyless FreeCrawl engine when Steel THREW *or* came back with
+      // a bot-wall / empty shell (previously a still-blocked Steel result was returned
+      // as content — handing a CAPTCHA page to the model). Keep whichever read got
+      // through, or the longer of two blocked results.
+      if (!content || scrapeLooksBlocked(content)) {
         try {
-          content = await freecrawlScrape(url);
-        } catch {
-          return `error scraping ${url}: ${String(steelErr)}`;
+          const alt = await freecrawlScrape(url);
+          if (alt && (!content || !scrapeLooksBlocked(alt) || alt.trim().length > content.trim().length)) {
+            content = alt;
+          }
+        } catch (e) {
+          if (!content) return `error scraping ${url}: ${String(steelErr ?? e)}`;
         }
+      }
+      // Never return an anti-bot challenge / empty shell as if it were the page.
+      if (!content || scrapeLooksBlocked(content)) {
+        return `error: ${url} is bot-walled or returned no readable content (anti-bot challenge or JS-only shell). Tried the headless browser (Steel — direct + residential proxy) and the keyless fallback; none got through. Use a different source URL, or the site's API/RSS if it has one.`;
       }
       return clip(content, 8000);
     },

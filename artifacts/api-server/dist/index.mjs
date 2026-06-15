@@ -111231,15 +111231,25 @@ var init_tools = __esm({
             }
           } catch {
           }
-          let content;
+          let content = "";
+          let steelErr = null;
           try {
             content = await steelScrape(url2);
-          } catch (steelErr) {
+          } catch (e) {
+            steelErr = e;
+          }
+          if (!content || scrapeLooksBlocked(content)) {
             try {
-              content = await freecrawlScrape(url2);
-            } catch {
-              return `error scraping ${url2}: ${String(steelErr)}`;
+              const alt = await freecrawlScrape(url2);
+              if (alt && (!content || !scrapeLooksBlocked(alt) || alt.trim().length > content.trim().length)) {
+                content = alt;
+              }
+            } catch (e) {
+              if (!content) return `error scraping ${url2}: ${String(steelErr ?? e)}`;
             }
+          }
+          if (!content || scrapeLooksBlocked(content)) {
+            return `error: ${url2} is bot-walled or returned no readable content (anti-bot challenge or JS-only shell). Tried the headless browser (Steel \u2014 direct + residential proxy) and the keyless fallback; none got through. Use a different source URL, or the site's API/RSS if it has one.`;
           }
           return clip3(content, 8e3);
         }
