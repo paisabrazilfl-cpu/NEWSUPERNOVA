@@ -28105,7 +28105,7 @@ var require_pino = __commonJS({
     function pinoBundlerAbsolutePath(p) {
       try {
         const path3 = __require("path");
-        const outputDir = "/home/user/BOS-AURA/artifacts/api-server/dist";
+        const outputDir = "/home/claude/BOS-AURA/artifacts/api-server/dist";
         return path3.resolve(outputDir, p.replace(/^\.\//, ""));
       } catch (e) {
         const f = new Function("p", "return new URL(p, import.meta.url).pathname");
@@ -118075,12 +118075,21 @@ var BITDEER_FEATURED_MODELS = [
 ];
 router7.get("/ai/models", async (_req, res) => {
   const { openrouterConfigured: openrouterConfigured2, bitdeerConfigured: bitdeerConfigured2 } = await Promise.resolve().then(() => (init_integrations(), integrations_exports));
+  const tag = (m) => ({
+    ...m,
+    provider: m.id.startsWith("or:") ? "openrouter" : m.id.startsWith("bd:") ? "bitdeer" : "nim"
+  });
   const models = [
-    ...NIM_FEATURED_MODELS,
-    ...openrouterConfigured2() ? OPENROUTER_FEATURED_MODELS : [],
-    ...bitdeerConfigured2() ? BITDEER_FEATURED_MODELS : []
+    ...NIM_FEATURED_MODELS.map(tag),
+    ...openrouterConfigured2() ? OPENROUTER_FEATURED_MODELS.map(tag) : [],
+    ...bitdeerConfigured2() ? BITDEER_FEATURED_MODELS.map(tag) : []
   ];
-  res.json({ models });
+  const providers = [
+    { id: "nim", name: "NVIDIA NIM", active: true },
+    { id: "openrouter", name: "OpenRouter", active: openrouterConfigured2() },
+    { id: "bitdeer", name: "Bitdeer GPU", active: bitdeerConfigured2() }
+  ];
+  res.json({ models, providers });
 });
 router7.post("/ai/chat", async (req, res) => {
   const { message, agentId, channelId, model: overrideModel, attachmentIds } = req.body ?? {};
