@@ -1,0 +1,34 @@
+name: Keep Alive
+
+# Pings the live Render service every 10 minutes so the instance never
+# spins down to sleep (free/idle tiers stop after inactivity).
+# GitHub's scheduler enforces a 5-minute minimum and may delay runs under
+# load, but 10 minutes keeps the service warm in practice.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: keep-alive
+  cancel-in-progress: true
+
+jobs:
+  ping:
+    name: Ping live service
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ping healthz
+        run: |
+          set -euo pipefail
+          URL="https://bos-aura.onrender.com/healthz"
+          echo "Pinging $URL"
+          code=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 60 --retry 3 --retry-delay 5 "$URL" || echo "000")
+          echo "HTTP status: $code"
+          if [ "$code" -lt 200 ] || [ "$code" -ge 400 ]; then
+            echo "Keep-alive ping failed (status $code)"
+            exit 1
+          fi
+          echo "Service is awake."
