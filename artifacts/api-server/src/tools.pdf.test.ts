@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { renderPdf } from "./tools";
+import { renderPdf, renderImagePdf } from "./tools";
+
+// A minimal valid 1x1 PNG, for exercising image embedding without a network call.
+const TINY_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
+  "base64",
+);
 
 // The live incident: agents could not produce a PDF (the sandbox is a throwaway
 // VM where pip installs/files never persist), so ABBY fabricated GCS download
@@ -25,6 +31,26 @@ describe("renderPdf", () => {
     );
     expect(pdfHeader(bytes)).toBe("%PDF-");
     expect(bytes.length).toBeGreaterThan(500);
+  });
+});
+
+describe("renderImagePdf — assemble images into a PDF", () => {
+  it("embeds PNG images (one per page) into a real PDF with title + captions", async () => {
+    const bytes = await renderImagePdf(
+      [
+        { bytes: new Uint8Array(TINY_PNG), caption: "Scene 1" },
+        { bytes: new Uint8Array(TINY_PNG), caption: "Scene 2" },
+      ],
+      { title: "Image Set", subtitle: "Final Deliverable", footer: "Confidential" },
+    );
+    expect(pdfHeader(bytes)).toBe("%PDF-");
+    expect(bytes.length).toBeGreaterThan(800);
+  });
+
+  it("never throws on non-image / corrupt bytes — produces a valid PDF anyway", async () => {
+    const bytes = await renderImagePdf([{ bytes: new Uint8Array([1, 2, 3, 4]) }]);
+    expect(pdfHeader(bytes)).toBe("%PDF-");
+    expect(bytes.length).toBeGreaterThan(200);
   });
 
   it("paginates long content across pages without error", async () => {
