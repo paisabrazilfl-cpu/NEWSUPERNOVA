@@ -1745,7 +1745,7 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
       // ANY failure — exactly like web_search — so one model outage, a content
       // refusal, or an out-of-credit key never blocks the swarm. `model`
       // reorders the chain (routes the job) but keeps the rest as fallback.
-      type ImgModel = { id: string; label: string; base: string; key?: string; tags: string[]; kind?: "openai" | "hf" };
+      type ImgModel = { id: string; label: string; base: string; key?: string; tags: string[]; kind?: "openai" | "hf" | "a2e" };
       const diBase = (process.env["IMAGE_BASE_URL"] ?? "https://api.deepinfra.com/v1/openai").replace(/\/$/, "");
       const diKey = process.env["IMAGE_API_KEY"] || process.env["DEEPINFRA_API_KEY"];
       const oaBase = (process.env["OPENAI_BASE_URL"] ?? "https://api.openai.com/v1").replace(/\/$/, "");
@@ -1773,6 +1773,13 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
       const hfKey = process.env["HUGGINGFACE_API_KEY"] || process.env["HF_TOKEN"] || process.env["HF_API_KEY"];
       const hfImageModel = process.env["HF_IMAGE_MODEL"] ?? "black-forest-labs/FLUX.1-schnell";
       const huggingface: ImgModel = { id: hfImageModel, label: `Hugging Face ${hfImageModel}`, base: hfBase, key: hfKey, tags: ["hf", "huggingface", "free", "flux", "schnell"], kind: "hf" };
+      // A2E text-to-image — a SECOND free-tier backend (the operator's free A2E
+      // coins). Async start→poll (kind:"a2e"), verified live 2026-06-15. Sits last so
+      // it only spends coins when the free HF tier is exhausted/over quota and the
+      // other backends fail — chaining free tiers so image_generate keeps working
+      // longer before anything truly runs out.
+      const a2eKey = process.env["A2E_API_KEY"];
+      const a2e: ImgModel = { id: "a2e-text2image", label: "A2E text2image", base: A2E_BASE, key: a2eKey, tags: ["a2e", "free", "coins"], kind: "a2e" };
 
       let chain: ImgModel[];
       const custom = (process.env["IMAGE_MODELS"] ?? "").split(",").map((s) => s.trim()).filter(Boolean);
@@ -1798,6 +1805,9 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
           // billing-blocked gpt-image-1 is never the ONLY reachable model.
           bitdeer,
           gptImage,
+          // A2E free-coin backend — the last resort when every other free/paid
+          // backend is exhausted or out of credit.
+          a2e,
         ];
       }
 
@@ -1811,8 +1821,8 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
         else if (idx < 0 && prefer.includes("/")) chain = [di(prefer, prefer, []), ...chain]; // honor any explicit slug
       }
 
-      const candidates = chain.filter((m) => !!m.key).slice(0, 5); // try only key-backed models; cap fallbacks
-      if (!candidates.length) return "error: image generation is not configured. Set a FREE Hugging Face token (HUGGINGFACE_API_KEY — huggingface.co token, no card) for zero-cost generation, or IMAGE_API_KEY (DeepInfra) / BITDEER_API_KEY / OPENAI_API_KEY.";
+      const candidates = chain.filter((m) => !!m.key).slice(0, 7); // try only key-backed models; cap fallbacks (room for HF + A2E free tiers)
+      if (!candidates.length) return "error: image generation is not configured. Set a FREE Hugging Face token (HUGGINGFACE_API_KEY — huggingface.co token, no card) or A2E_API_KEY (free coins) for zero-cost generation, or IMAGE_API_KEY (DeepInfra) / BITDEER_API_KEY / OPENAI_API_KEY.";
 
       const errors: string[] = [];
       for (const m of candidates) {
@@ -1820,7 +1830,33 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
         const timer = setTimeout(() => ctrl.abort(), 60000);
         try {
           let b64 = "";
-          if (m.kind === "hf") {
+          if (m.kind === "a2e") {
+            // A2E text-to-image: async start→poll (verified contract — data is an
+            // array on /start, status=current_status, output=image_urls[]). Free coins.
+            const a2eHeaders = { Authorization: `Bearer ${m.key}`, "Content-Type": "application/json" };
+            const sr = await fetch(`${m.base}/userText2Image/start`, { method: "POST", headers: a2eHeaders, body: JSON.stringify({ prompt, model_type: "a2e" }) });
+            const sj = (await sr.json().catch(() => ({}))) as { code?: number; data?: unknown; msg?: string };
+            if (!sr.ok || (typeof sj?.code === "number" && sj.code !== 0)) { errors.push(`${m.label}: ${sr.status} ${String(sj?.msg ?? "start failed").slice(0, 80)}`); continue; }
+            const sdata = sj?.data;
+            const srec = (Array.isArray(sdata) ? sdata[0] : sdata) as Record<string, unknown> | undefined;
+            const taskId = (srec?.["_id"] as string) ?? (srec?.["id"] as string);
+            if (!taskId) { errors.push(`${m.label}: no task id`); continue; }
+            let imgUrl = "";
+            const deadline = Date.now() + 90_000;
+            while (Date.now() < deadline) {
+              await new Promise((res) => setTimeout(res, 6000));
+              const pr = await fetch(`${m.base}/userText2Image/${taskId}`, { headers: a2eHeaders });
+              const pj = (await pr.json().catch(() => ({}))) as { data?: unknown };
+              const d = ((Array.isArray(pj?.data) ? pj.data[0] : pj?.data) ?? {}) as Record<string, unknown>;
+              const st = String(d["current_status"] ?? d["status"] ?? "").toLowerCase();
+              if (st === "completed" || st === "success" || st === "succeeded") { imgUrl = (d["image_urls"] as string[] | undefined)?.[0] ?? (d["url"] as string) ?? ""; break; }
+              if (st === "failed" || st === "error") break;
+            }
+            if (!imgUrl) { errors.push(`${m.label}: no image returned (timeout/failed)`); continue; }
+            const ir = await fetch(imgUrl);
+            b64 = Buffer.from(await ir.arrayBuffer()).toString("base64");
+            if (!b64) { errors.push(`${m.label}: empty image download`); continue; }
+          } else if (m.kind === "hf") {
             // Hugging Face Inference: POST {inputs} → raw image bytes (or a JSON
             // error, e.g. 503 while the model cold-starts). Free-tier path.
             const r = await fetch(`${m.base}/${m.id}`, {
