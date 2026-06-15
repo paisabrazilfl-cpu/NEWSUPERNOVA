@@ -119733,9 +119733,7 @@ Write your final orchestrator briefing for the operator now \u2014 direct answer
         let researchRounds = 0;
         const MAX_RESEARCH_ROUNDS = 3;
         const gateStartTime = Date.now();
-        const crawlerAgent = claws.find(
-          (c) => /claw-?2|crawler|browser/i.test(c.name ?? "")
-        ) ?? claws[0];
+        const crawlerAgent = claws.find((c) => /scout|research|crawler|browser|web/i.test(`${c.name ?? ""} ${c.role ?? ""}`)) ?? claws.find((c) => c.id !== ABBY_ID) ?? claws[0];
         while (!isSwarmPaused()) {
           if (Date.now() - gateStartTime > MAX_SOLVE_RUNTIME_MS) {
             finalAnswer += `
@@ -119777,6 +119775,22 @@ _Note: the solution-gate verifier returned an unreadable verdict, so this answer
           }
           if (verdict.solved && !hasEvidence) {
             logger.warn({ gateChecks }, "solution gate: solved=true but no evidence \u2014 treating as unsolved");
+          }
+          const INFRA_BLOCKER_RE = /\b(402|429|432)\b|out of (searches|credits)|depleted|exceeded? (your )?(credits?|plan|usage)|exceeds? your plan|usage limit|insufficient credits|credit limit|quota|rate limit|too many requests|billing|hard limit|captcha|anti-bot/i;
+          if (!verdict.solved && (INFRA_BLOCKER_RE.test(verdict.reason) || INFRA_BLOCKER_RE.test(finalAnswer.slice(0, 6e3)))) {
+            await postMessage({
+              channelId,
+              agentId: ABBY_ID,
+              agentName: "ABBY",
+              agentColor: abby?.color ?? ABBY_COLOR,
+              content: `Solution gate: the remaining gap is an INFRASTRUCTURE/credit limit, not a research-fixable problem \u2014 delivering everything produced and reporting the blocker (no point looping). ${verdict.reason || ""}`.slice(0, 600),
+              messageType: "system"
+            });
+            finalAnswer += `
+
+---
+\u26A0\uFE0F DELIVERED WITH A BLOCKER: everything above was produced successfully; the remaining gap is an INFRASTRUCTURE/credit limit (e.g. image-generation or search credits depleted, billing/rate limit) that cannot be fixed by researching or retrying \u2014 ${verdict.reason || "a provider quota was exhausted"}. To finish the rest, top up / wait for the monthly reset on the affected provider.`;
+            break;
           }
           const proposed = parseDirectives(verdictRaw, claws).slice(0, 2);
           const fixes = proposed.filter((f) => directiveIsExecutable(f.directive));

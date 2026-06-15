@@ -1470,10 +1470,13 @@ Otherwise respond with ONLY a JSON array (no prose, no code fences) of up to 2 f
         const MAX_RESEARCH_ROUNDS = 3;
         const gateStartTime = Date.now();
 
-        // Find the browser/crawler agent for research injection
-        const crawlerAgent = claws.find((c) =>
-          /claw-?2|crawler|browser/i.test(c.name ?? ""),
-        ) ?? claws[0];
+        // Find the research agent for research injection — prefer the dedicated
+        // research/web specialist (SCOUT), then any browser/crawler, then any
+        // non-ABBY agent, then ABBY herself as the last resort.
+        const crawlerAgent =
+          claws.find((c) => /scout|research|crawler|browser|web/i.test(`${c.name ?? ""} ${c.role ?? ""}`)) ??
+          claws.find((c) => c.id !== ABBY_ID) ??
+          claws[0];
 
         while (!isSwarmPaused()) {
           // ── Hard time backstop ──────────────────────────────────────────
@@ -1521,6 +1524,27 @@ Available CLAWs: ${roster}.`;
           if (verdict.solved && !hasEvidence) {
             logger.warn({ gateChecks }, "solution gate: solved=true but no evidence — treating as unsolved");
             // Fall through to retry logic below as if solved=false
+          }
+
+          // ── Infrastructure-blocker short-circuit ─────────────────────────
+          // When the ONLY remaining gap is an infra/credit/quota/billing/CAPTCHA
+          // limit (e.g. image-gen credits depleted, search out of credits), neither
+          // researching nor retrying can fix it — restoring credits is the operator's
+          // job. Deliver everything that WAS produced and report the blocker plainly,
+          // instead of looping research injection on out-of-credit searches (the live
+          // "google how to fix 429 for 4 rounds" spiral). Stay task-oriented.
+          const INFRA_BLOCKER_RE = /\b(402|429|432)\b|out of (searches|credits)|depleted|exceeded? (your )?(credits?|plan|usage)|exceeds? your plan|usage limit|insufficient credits|credit limit|quota|rate limit|too many requests|billing|hard limit|captcha|anti-bot/i;
+          if (!verdict.solved && (INFRA_BLOCKER_RE.test(verdict.reason) || INFRA_BLOCKER_RE.test(finalAnswer.slice(0, 6000)))) {
+            await postMessage({
+              channelId,
+              agentId: ABBY_ID,
+              agentName: "ABBY",
+              agentColor: abby?.color ?? ABBY_COLOR,
+              content: `Solution gate: the remaining gap is an INFRASTRUCTURE/credit limit, not a research-fixable problem — delivering everything produced and reporting the blocker (no point looping). ${verdict.reason || ""}`.slice(0, 600),
+              messageType: "system",
+            });
+            finalAnswer += `\n\n---\n⚠️ DELIVERED WITH A BLOCKER: everything above was produced successfully; the remaining gap is an INFRASTRUCTURE/credit limit (e.g. image-generation or search credits depleted, billing/rate limit) that cannot be fixed by researching or retrying — ${verdict.reason || "a provider quota was exhausted"}. To finish the rest, top up / wait for the monthly reset on the affected provider.`;
+            break;
           }
 
           const proposed = parseDirectives(verdictRaw, claws).slice(0, 2);
