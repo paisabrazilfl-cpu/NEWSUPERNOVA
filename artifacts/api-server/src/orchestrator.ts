@@ -871,6 +871,10 @@ export async function executeAgentCommand(opts: {
       // be per-step, not the run-global failedTools (which would keep firing the
       // nudge for a tool that failed once and then succeeded).
       const stepFailed = new Set<string>();
+      // Set when a step failure is an infrastructure/credit/quota/auth limit — those
+      // are NOT research-fixable, so the self-learn nudge must not send the agent
+      // googling the error in a loop.
+      let stepInfraError = false;
       for (const { call, args: parsedArgs, truncated } of parsed) {
         const name = call.function?.name ?? "unknown";
 
@@ -946,7 +950,17 @@ export async function executeAgentCommand(opts: {
         });
 
         messages.push({ role: "tool", tool_call_id: call.id, name, content: toolResult.slice(0, 6000) });
-        if (!ok) { failedTools.add(name); stepFailed.add(name); }
+        if (!ok) {
+          failedTools.add(name);
+          stepFailed.add(name);
+          // An out-of-credits / quota / rate-limit / auth failure is an INFRASTRUCTURE
+          // limit — it cannot be fixed by researching it. Flag it so the self-learn
+          // nudge tells the agent to report the blocker instead of rabbit-holing
+          // (the live "loop researching how to fix HTTP 429" failure).
+          if (/\b(402|429|432)\b|out of (searches|credits)|exceeds? your plan|usage limit|insufficient credits|credit limit|quota|rate limit|too many requests|billing|hard limit|unauthorized|invalid (api )?key|forbidden/i.test(toolResult)) {
+            stepInfraError = true;
+          }
+        }
       }
 
       // Self-learning nudge: when a tool genuinely failed THIS step (and the same
@@ -957,13 +971,15 @@ export async function executeAgentCommand(opts: {
         const failedNames = [...stepFailed].join(", ");
         messages.push({
           role: "user",
-          content:
-            `[SELF-LEARN] ${failedNames} failed. Before retrying, follow the self-learning protocol: ` +
-            `(1) memory_search for a prior lesson about this error, ` +
-            `(2) if no lesson found, web_search for how to fix it, then web_scrape the best result, ` +
-            `(3) retry with the fix applied, ` +
-            `(4) if it works, memory_write the lesson as "PROBLEM → SOLUTION (evidence)" tagged "lesson,self-learned". ` +
-            `Do NOT repeat the exact same failing call without changing something.`,
+          content: stepInfraError
+            ? // Infrastructure/credit/quota/auth limit — NOT research-fixable. Do not loop.
+              `[BLOCKER] ${failedNames} failed with an INFRASTRUCTURE/credit/quota/auth limit (e.g. out of credits, 402/429, rate limit, bad key). This CANNOT be fixed by researching it online — do NOT web_search the error or retry the same call in a loop. Instead: (a) if another tool/provider can do the job, use it; (b) otherwise proceed with what you already have and finish the task as far as possible; (c) report the blocker plainly to the operator (which service/limit) and mark the affected part UNVERIFIED. Move on.`
+            : `[SELF-LEARN] ${failedNames} failed. Before retrying, follow the self-learning protocol: ` +
+              `(1) memory_search for a prior lesson about this error, ` +
+              `(2) if no lesson found, web_search for how to fix it, then web_scrape the best result, ` +
+              `(3) retry with the fix applied, ` +
+              `(4) if it works, memory_write the lesson as "PROBLEM → SOLUTION (evidence)" tagged "lesson,self-learned". ` +
+              `Do NOT repeat the exact same failing call without changing something.`,
         });
       }
 
