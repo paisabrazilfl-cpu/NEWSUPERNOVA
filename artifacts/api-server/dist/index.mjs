@@ -112600,8 +112600,8 @@ IN-PROGRESS TASKS (${pendingTasks.length}):`);
       // ABBY — full authority
       2: ["image_generate", "video_generate"],
       // AVVY — image + video generation ONLY (free HF images + A2E video); acts only when ABBY assigns it
-      3: ["web_scrape", "web_screenshot", "web_search", "tier1_sources", "site_crawl", "site_crawl_status", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "sandbox_exec", "browser_login", "save_artifact", "pdf_generate", "image_generate", "heartbeat_respond", "send_message"],
-      // CRAWLER — browser
+      3: ["composio_apps", "composio_tools", "composio_action", "instagram_post", "social_accounts", "social_api", "browser_login", "marketing_playbook", "render_card", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task"],
+      // BUZZ — social media + Composio ONLY; acts only when ABBY assigns it
       4: ["memory_write", "memory_search", "web_search", "tier1_sources", "web_scrape", "site_crawl", "site_crawl_status", "http_request", "calculator", "vault_list", "save_artifact", "pdf_generate", "image_generate", "heartbeat_respond", "send_message"],
       // VAULT — memory/RAG
       5: ["http_request", "web_scrape", "web_search", "tier1_sources", "site_crawl", "site_crawl_status", "marketing_playbook", "code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_tools", "composio_action", "instagram_post", "browser_login", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task", "save_artifact", "pdf_generate", "image_generate", "render_card", "heartbeat_respond", "send_message"],
@@ -117749,7 +117749,19 @@ HOW TO CHOOSE:
 - They asked for BOTH (e.g. "an image and a video of it") \u2192 image_generate FIRST, then video_generate with that exact image URL.
 
 RULES: Call the correct tool, then return the REAL URL the tool produced \u2014 never invent a URL, never claim success a tool didn't return. If a tool errors, report its exact error. One image is a PNG; one video is an MP4 \u2014 match the format to the request. Be terse: deliver the link, nothing more.`,
-  3: `You are CRAWLER, the browser and web-intelligence specialist of the ABBY CLAW swarm. You search the live web, navigate sites, scrape pages, and capture screenshots via the Steel browser. Work from real fetched content, cite the URLs you used, and report findings concisely and accurately.`,
+  3: `You are BUZZ, the social media & Composio specialist. ABBY gives the orders; you act ONLY when ABBY assigns you a social/Composio directive \u2014 nothing else.
+
+WHAT YOU DO: connect to and act on the operator's OWN accounts \u2014 social platforms (Instagram, Facebook, X/Twitter, LinkedIn, TikTok, YouTube, Threads) and SaaS apps (Gmail, Slack, Notion, Calendar, Sheets, \u2026) \u2014 through their official APIs and Composio. New connections and existing ones.
+
+HOW YOU WORK:
+- CHECK LIVE FIRST: call composio_apps to see which apps are actually connected RIGHT NOW before acting. The native social_accounts/social_api path is often EMPTY \u2014 never conclude "not connected" from it alone; check composio_apps. Use composio_tools to discover an app's actions, then composio_action to run them (for raw REST use PROXY mode: toolkit + endpoint + method, data in arguments).
+- POSTING AN IMAGE TO INSTAGRAM: use the deterministic instagram_post tool with a public image_url (an image AVVY generated, or one ABBY passes you) + caption \u2014 it does create\u2192publish\u2192permalink server-side and returns the live link. Post EXACTLY once. For free news/quote/stat cards use render_card.
+- SCHEDULING: use schedule_task / list_scheduled_tasks / cancel_scheduled_task for recurring or future posts.
+- CONTENT: when writing marketing content, call marketing_playbook first; research & cite every factual claim \u2014 never fabricate stats, studies, or testimonials.
+
+RULES: act on REAL account data and report what actually happened \u2014 the real permalink/response, or the exact API error. NEVER answer "I don't have access to your personal account" (you act through the operator's connected integrations) and NEVER fabricate a success, permalink, or post id. PUBLIC-POST SAFEGUARD: post ONLY content created for this request; never pull from the operator's private files, memory, or confidential material.
+
+${MARKETING_ENGINE_POINTER}`,
   4: `You are VAULT, the memory and RAG specialist of the ABBY CLAW swarm. You manage the swarm's Postgres-backed vector memory \u2014 writing embedded entries and retrieving them by real cosine-similarity semantic search (with keyword fallback). Be precise and accurate; ground every answer in what is actually stored.`,
   5: `You are WIRE, the API-integration specialist of the ABBY CLAW swarm. You connect external services, webhooks, and REST APIs, and schedule recurring work. You understand auth flows, rate limits, and data pipelines. Make the real call and report the real response; be direct and technical.`,
   6: `You are MR.NICE, the social and communications specialist of the ABBY CLAW swarm. You manage social platforms and human-facing messaging through their official APIs. You are sharp, persuasive, and tone-aware \u2014 but you act on real account data and report what actually happened.
@@ -118505,7 +118517,7 @@ PUBLIC-POST SAFEGUARD (critical): a public post must be built ONLY from content 
       const ackText = "**On it \u2014 dispatching the connected-account action.**\n\nThe tool-capable path must verify the connection, perform the requested action if allowed, and report the real response or exact API error.";
       sendEvent({ token: ackText });
       await finishWith(ackText, model, "abby-router");
-      orchestrateGoal({ goal, channelId, priority: "high", sourceContext: dispatchContext, forceAgentId: 5 }).catch(async (e) => {
+      orchestrateGoal({ goal, channelId, priority: "high", sourceContext: dispatchContext, forceAgentId: 3 }).catch(async (e) => {
         req.log.error({ e }, "orchestrateGoal (connected-account override) failed");
         await db.insert(messagesTable).values({
           channelId,
@@ -119498,8 +119510,11 @@ ${sourceContext ?? ""}`);
     const roster = claws.map((c) => `${c.id}=${c.name} (${c.role ?? "agent"})`).join(", ");
     const planSystem = (AGENT_PERSONAS[ABBY_ID] ?? "You are ABBY, the swarm orchestrator.") + buildLiveReachCard(ABBY_ID) + EXECUTION_DOCTRINE + OPERATOR_INTENT_FIDELITY + RESEARCH_PLAYBOOKS + TOOL_CALL_DISCIPLINE + SWARM_SAFETY_RULES + CODING_LIFECYCLE_DOCTRINE + ACCOUNT_POLICY_DOCTRINE + await buildVaultCard();
     const hasAvvy = claws.some((c) => c.name?.toUpperCase() === "AVVY");
+    const hasBuzz = claws.some((c) => c.name?.toUpperCase() === "BUZZ");
     const avvyHint = hasAvvy ? `
 IMAGE/VIDEO ROUTING: AVVY is your image & video specialist and works ONLY when you assign her a directive. Route EVERY part of the goal that produces an IMAGE (picture, logo, art, render, mockup) or a VIDEO (clip, animation, moving content) to AVVY \u2014 she uses image_generate for stills (free) and video_generate for clips (A2E). Do not assign image/video generation to any other CLAW, and do not do it yourself.` : "";
+    const buzzHint = hasBuzz ? `
+SOCIAL/COMPOSIO ROUTING: BUZZ is your social media & Composio specialist and works ONLY when you assign him a directive. Route EVERY part of the goal that posts to / reads from / acts on the operator's connected accounts (Instagram, Facebook, X, LinkedIn, TikTok, YouTube, Gmail, Slack, Notion, Calendar, Sheets, \u2026) or schedules social posts to BUZZ. If a social post needs an image or video, have AVVY create it first, then pass that URL to BUZZ to publish.` : "";
     const planUser = `Operator goal: "${goal}"
 ${sourceContext && sourceContext.trim() ? `
 The operator provided this source material to work from (decompose against THIS; the CLAWs will receive it too \u2014 do not tell them to search memory for it):
@@ -119507,7 +119522,7 @@ The operator provided this source material to work from (decompose against THIS;
 ${sourceContext.slice(0, 12e3)}
 """
 ` : ""}
-Available CLAWs you command: ${roster}.${avvyHint}
+Available CLAWs you command: ${roster}.${avvyHint}${buzzHint}
 
 Decompose this goal into precise, exhaustive, granular directives \u2014 ONE per CLAW that is genuinely relevant (skip CLAWs that add nothing). Together the directives must cover EVERY part of the goal; leave nothing implied. Each directive MUST be:
 - SELF-CONTAINED: state the exact objective, the concrete inputs/targets (specific https:// URLs, API endpoints, file names, or data), and the expected output and its format. Assume the CLAW sees ONLY this directive \u2014 no other context.
@@ -119869,7 +119884,7 @@ async function teachTwin(now = /* @__PURE__ */ new Date()) {
 init_world();
 init_cron();
 var ABBY_ID2 = 1;
-var COMPOSIO_AGENT_ID = 5;
+var COMPOSIO_AGENT_ID = 3;
 var DEFAULT_CHANNEL_ID = 1;
 var SCHEDULER_INTERVAL_MS = 3e4;
 async function runCronJob(job, channelId = DEFAULT_CHANNEL_ID) {
@@ -120751,7 +120766,7 @@ async function closeRelay(relayId, payload) {
 // src/routes/external.ts
 var router10 = (0, import_express10.Router)();
 var VAULT_AGENT_ID = 4;
-var COMPOSIO_AGENT_ID2 = 5;
+var COMPOSIO_AGENT_ID2 = 3;
 var DEFAULT_CHANNEL_ID3 = 1;
 var AGENT_NAME_MAP = {
   abby: 1,
@@ -122406,7 +122421,14 @@ SELECT 2, 'AVVY', 'Image & Video Specialist',
   'idle', '#a855f7', 'AV', 'moonshotai/kimi-k2.6', ARRAY['images','video']
 WHERE NOT EXISTS (SELECT 1 FROM agents WHERE name = 'AVVY')
 `;
-var REMOVE_OTHER_AGENTS = `DELETE FROM agents WHERE name NOT IN ('ABBY', 'AVVY')`;
+var SEED_BUZZ = `
+INSERT INTO agents (id, name, role, description, status, color, avatar_initials, model, capabilities)
+SELECT 3, 'BUZZ', 'Social & Composio Specialist',
+  'Social media & Composio specialist \u2014 acts only when ABBY assigns the work. Connects and acts on the operator''s accounts via Composio (new + existing) and the native social APIs; posts, schedules, and reports the real result.',
+  'idle', '#1d9bf0', 'BZ', 'moonshotai/kimi-k2.6', ARRAY['social','composio','api','automation','scheduling']
+WHERE NOT EXISTS (SELECT 1 FROM agents WHERE name = 'BUZZ')
+`;
+var REMOVE_OTHER_AGENTS = `DELETE FROM agents WHERE name NOT IN ('ABBY', 'AVVY', 'BUZZ')`;
 var AGENT_MODEL_UPGRADES = [
   ["x-ai/grok-4.3", "moonshotai/kimi-k2.6"],
   // 2026-06-10: nemotron-3-ultra-550b stalled live (45-60s, zero bytes) while
@@ -122435,7 +122457,9 @@ var AGENT_CAPABILITIES = {
   // access is ALL_TOOLS via AGENT_TOOLS[1] in tools.ts).
   1: ["code_exec", "sandbox_exec", "web_search", "web_scrape", "web_screenshot", "http_request", "memory_search", "memory_write", "composio_action", "instagram_post", "image_generate", "pdf_generate", "save_artifact", "schedule_task"],
   // AVVY — image + video ONLY (free HF image_generate + A2E video_generate).
-  2: ["image_generate", "video_generate"]
+  2: ["image_generate", "video_generate"],
+  // BUZZ — social media + Composio ONLY (connected accounts, posting, scheduling).
+  3: ["composio_apps", "composio_tools", "composio_action", "instagram_post", "social_accounts", "social_api", "browser_login", "marketing_playbook", "render_card", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task"]
 };
 async function runMigrations() {
   const client = await pool.connect();
@@ -122453,6 +122477,8 @@ async function runMigrations() {
     if (del.rowCount) logger.info({ removed: del.rowCount }, "Removed legacy CLAW sub-agents \u2014 roster is ABBY + AVVY");
     const avvy = await client.query(SEED_AVVY);
     if (avvy.rowCount) logger.info("Seeded AVVY \u2014 image & video generation specialist");
+    const buzz = await client.query(SEED_BUZZ);
+    if (buzz.rowCount) logger.info("Seeded BUZZ \u2014 social media & Composio specialist");
     for (const [id, caps] of Object.entries(AGENT_CAPABILITIES)) {
       await client.query("UPDATE agents SET capabilities = $1 WHERE id = $2", [caps, Number(id)]);
     }

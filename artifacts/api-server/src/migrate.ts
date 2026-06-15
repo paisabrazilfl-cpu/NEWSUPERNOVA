@@ -229,11 +229,24 @@ SELECT 2, 'AVVY', 'Image & Video Specialist',
 WHERE NOT EXISTS (SELECT 1 FROM agents WHERE name = 'AVVY')
 `;
 
+// BUZZ — social media & Composio specialist (id 3). ABBY gives the orders; BUZZ
+// works ONLY when assigned a social/Composio directive. Handles the operator's
+// connected accounts via Composio (new + existing) and the native social APIs.
+// Seeded idempotently (by name) so it lands on existing prod DBs too. Explicit
+// id=3 reuses a freed legacy slot and matches AGENT_TOOLS[3] / AGENT_CAPABILITIES[3].
+const SEED_BUZZ = `
+INSERT INTO agents (id, name, role, description, status, color, avatar_initials, model, capabilities)
+SELECT 3, 'BUZZ', 'Social & Composio Specialist',
+  'Social media & Composio specialist — acts only when ABBY assigns the work. Connects and acts on the operator''s accounts via Composio (new + existing) and the native social APIs; posts, schedules, and reports the real result.',
+  'idle', '#1d9bf0', 'BZ', 'moonshotai/kimi-k2.6', ARRAY['social','composio','api','automation','scheduling']
+WHERE NOT EXISTS (SELECT 1 FROM agents WHERE name = 'BUZZ')
+`;
+
 // Idempotently remove the legacy CLAW sub-agents from any existing DB so the swarm
-// is just ABBY (orchestrator) + AVVY (image/video specialist). Safe: the agents
-// table has no foreign-key dependents (messages/tool-calls store agent_id as a
-// plain value), so historical rows keep their attribution. Runs every boot.
-const REMOVE_OTHER_AGENTS = `DELETE FROM agents WHERE name NOT IN ('ABBY', 'AVVY')`;
+// is just ABBY (orchestrator) + AVVY (image/video) + BUZZ (social/Composio). Safe:
+// the agents table has no foreign-key dependents (messages/tool-calls store
+// agent_id as a plain value), so historical rows keep their attribution. Every boot.
+const REMOVE_OTHER_AGENTS = `DELETE FROM agents WHERE name NOT IN ('ABBY', 'AVVY', 'BUZZ')`;
 
 // 2026-06-10 NVIDIA NIM migration: upgrade each agent's LEGACY default model to
 // its NIM replacement (live-verified on integrate.api.nvidia.com — completion,
@@ -275,6 +288,8 @@ const AGENT_CAPABILITIES: Record<number, string[]> = {
   1: ["code_exec", "sandbox_exec", "web_search", "web_scrape", "web_screenshot", "http_request", "memory_search", "memory_write", "composio_action", "instagram_post", "image_generate", "pdf_generate", "save_artifact", "schedule_task"],
   // AVVY — image + video ONLY (free HF image_generate + A2E video_generate).
   2: ["image_generate", "video_generate"],
+  // BUZZ — social media + Composio ONLY (connected accounts, posting, scheduling).
+  3: ["composio_apps", "composio_tools", "composio_action", "instagram_post", "social_accounts", "social_api", "browser_login", "marketing_playbook", "render_card", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task"],
 };
 
 export async function runMigrations(): Promise<void> {
@@ -300,6 +315,10 @@ export async function runMigrations(): Promise<void> {
     // existing prod DBs where the count-based seed above is skipped.
     const avvy = await client.query(SEED_AVVY);
     if (avvy.rowCount) logger.info("Seeded AVVY — image & video generation specialist");
+
+    // Idempotently ensure BUZZ (social media & Composio specialist) exists.
+    const buzz = await client.query(SEED_BUZZ);
+    if (buzz.rowCount) logger.info("Seeded BUZZ — social media & Composio specialist");
 
     // Idempotently sync each agent's real tool capabilities.
     for (const [id, caps] of Object.entries(AGENT_CAPABILITIES)) {

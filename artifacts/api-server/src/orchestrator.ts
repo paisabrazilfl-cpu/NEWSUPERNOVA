@@ -1232,15 +1232,19 @@ export async function orchestrateGoal(opts: {
     // ABBY plans with LIVE REACH so directives only lean on integrations that
     // are actually online (e.g. don't direct a CLAW to Firecrawl if it's off).
     const planSystem = (AGENT_PERSONAS[ABBY_ID] ?? "You are ABBY, the swarm orchestrator.") + buildLiveReachCard(ABBY_ID) + EXECUTION_DOCTRINE + OPERATOR_INTENT_FIDELITY + RESEARCH_PLAYBOOKS + TOOL_CALL_DISCIPLINE + SWARM_SAFETY_RULES + CODING_LIFECYCLE_DOCTRINE + ACCOUNT_POLICY_DOCTRINE + (await buildVaultCard());
-    // AVVY is the image/video specialist: when she's in the roster, ABBY delegates
-    // every image/video sub-task to her (she only acts when ordered — nothing else).
+    // Specialist routing: AVVY (image/video) and BUZZ (social/Composio) act ONLY
+    // when ABBY assigns them a directive in their domain — nothing else.
     const hasAvvy = claws.some((c) => c.name?.toUpperCase() === "AVVY");
+    const hasBuzz = claws.some((c) => c.name?.toUpperCase() === "BUZZ");
     const avvyHint = hasAvvy
       ? `\nIMAGE/VIDEO ROUTING: AVVY is your image & video specialist and works ONLY when you assign her a directive. Route EVERY part of the goal that produces an IMAGE (picture, logo, art, render, mockup) or a VIDEO (clip, animation, moving content) to AVVY — she uses image_generate for stills (free) and video_generate for clips (A2E). Do not assign image/video generation to any other CLAW, and do not do it yourself.`
       : "";
+    const buzzHint = hasBuzz
+      ? `\nSOCIAL/COMPOSIO ROUTING: BUZZ is your social media & Composio specialist and works ONLY when you assign him a directive. Route EVERY part of the goal that posts to / reads from / acts on the operator's connected accounts (Instagram, Facebook, X, LinkedIn, TikTok, YouTube, Gmail, Slack, Notion, Calendar, Sheets, …) or schedules social posts to BUZZ. If a social post needs an image or video, have AVVY create it first, then pass that URL to BUZZ to publish.`
+      : "";
     const planUser = `Operator goal: "${goal}"
 ${sourceContext && sourceContext.trim() ? `\nThe operator provided this source material to work from (decompose against THIS; the CLAWs will receive it too — do not tell them to search memory for it):\n"""\n${sourceContext.slice(0, 12000)}\n"""\n` : ""}
-Available CLAWs you command: ${roster}.${avvyHint}
+Available CLAWs you command: ${roster}.${avvyHint}${buzzHint}
 
 Decompose this goal into precise, exhaustive, granular directives — ONE per CLAW that is genuinely relevant (skip CLAWs that add nothing). Together the directives must cover EVERY part of the goal; leave nothing implied. Each directive MUST be:
 - SELF-CONTAINED: state the exact objective, the concrete inputs/targets (specific https:// URLs, API endpoints, file names, or data), and the expected output and its format. Assume the CLAW sees ONLY this directive — no other context.

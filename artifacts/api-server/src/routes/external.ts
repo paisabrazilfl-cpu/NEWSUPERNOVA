@@ -36,7 +36,7 @@ const router = Router();
 const VAULT_AGENT_ID = 4;
 // WIRE — holds the Composio/connected-account tools; connected-account voice
 // tasks are forced onto it (same routing the chat path and scheduler use).
-const COMPOSIO_AGENT_ID = 5;
+const COMPOSIO_AGENT_ID = 3; // BUZZ — social & Composio specialist
 const DEFAULT_CHANNEL_ID = 1;
 
 const AGENT_NAME_MAP: Record<string, number> = {
