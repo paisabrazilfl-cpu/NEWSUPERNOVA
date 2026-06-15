@@ -2,6 +2,12 @@
 
 # compiled output
 dist
+# EXCEPTION: the two SERVED dist dirs are committed and shipped to Render (the
+# deploy model serves the prebuilt dist). They MUST be tracked, otherwise a new
+# entry-bundle hash (which changes on every app-code change) is silently dropped by
+# `git add` and production 404s the JS/CSS → blank page. Un-ignore them explicitly.
+!/artifacts/api-server/dist/
+!/artifacts/openclaw/dist/
 tmp
 out-tsc
 *.tsbuildinfo
