@@ -2,6 +2,7 @@ import express, { type Express } from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import pinoHttp from "pino-http";
+import helmet from "helmet";
 import router from "./routes";
 import { logger } from "./lib/logger";
 import path from "path";
@@ -9,6 +10,14 @@ import fs from "fs";
 import { fileURLToPath } from "url";
 
 const app: Express = express();
+
+// Install common security headers. Helmet enables a baseline set of
+// protections including X-DNS-Prefetch-Control, X-Frame-Options, Strict-
+// Transport-Security, X-Content-Type-Options, and a sensible Content-Security-
+// Policy. See https://expressjs.com/en/advanced/best-practice-security.html for
+// guidance. Specific CSP tuning may still be needed for inline scripts or
+// external assets.
+app.use(helmet());
 
 app.use(
   pinoHttp({
@@ -29,14 +38,21 @@ app.use(
     },
   }),
 );
-// CORS: the dashboard is served same-origin in production, so cross-origin
-// browser access isn't needed. When ALLOWED_ORIGINS is set (comma-separated),
-// lock to that allowlist with credentials so a stray site can't read the API in
-// a browser. Unset → permissive (dev / unconfigured deploys), unchanged behavior.
+// Configure Cross-Origin Resource Sharing. In production we fail closed: the
+// ALLOWED_ORIGINS env var must be set to a comma-separated list of allowed
+// origins. Without it, the server refuses to start to prevent a permissive
+// wildcard CORS policy. In development or CI, when NODE_ENV !== production,
+// the allowlist may be omitted and CORS will be fully open.
 const allowedOrigins = (process.env["ALLOWED_ORIGINS"] ?? "")
   .split(",").map((o) => o.trim()).filter(Boolean);
+const isProd = process.env["NODE_ENV"] === "production";
+if (isProd && allowedOrigins.length === 0) {
+  throw new Error(
+    "ALLOWED_ORIGINS is required in production for a safe CORS policy",
+  );
+}
 app.use(
-  allowedOrigins.length
+  allowedOrigins.length > 0
     ? cors({ origin: allowedOrigins, credentials: true })
     : cors(),
 );

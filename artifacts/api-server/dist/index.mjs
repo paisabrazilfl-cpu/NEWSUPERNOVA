@@ -15830,20 +15830,20 @@ var require_object_inspect = __commonJS({
     };
     module.exports = function inspect_(obj, options, depth, seen) {
       var opts = options || {};
-      if (has(opts, "quoteStyle") && !has(quotes, opts.quoteStyle)) {
+      if (has2(opts, "quoteStyle") && !has2(quotes, opts.quoteStyle)) {
         throw new TypeError('option "quoteStyle" must be "single" or "double"');
       }
-      if (has(opts, "maxStringLength") && (typeof opts.maxStringLength === "number" ? opts.maxStringLength < 0 && opts.maxStringLength !== Infinity : opts.maxStringLength !== null)) {
+      if (has2(opts, "maxStringLength") && (typeof opts.maxStringLength === "number" ? opts.maxStringLength < 0 && opts.maxStringLength !== Infinity : opts.maxStringLength !== null)) {
         throw new TypeError('option "maxStringLength", if provided, must be a positive integer, Infinity, or `null`');
       }
-      var customInspect = has(opts, "customInspect") ? opts.customInspect : true;
+      var customInspect = has2(opts, "customInspect") ? opts.customInspect : true;
       if (typeof customInspect !== "boolean" && customInspect !== "symbol") {
         throw new TypeError("option \"customInspect\", if provided, must be `true`, `false`, or `'symbol'`");
       }
-      if (has(opts, "indent") && opts.indent !== null && opts.indent !== "	" && !(parseInt(opts.indent, 10) === opts.indent && opts.indent > 0)) {
+      if (has2(opts, "indent") && opts.indent !== null && opts.indent !== "	" && !(parseInt(opts.indent, 10) === opts.indent && opts.indent > 0)) {
         throw new TypeError('option "indent" must be "\\t", an integer > 0, or `null`');
       }
-      if (has(opts, "numericSeparator") && typeof opts.numericSeparator !== "boolean") {
+      if (has2(opts, "numericSeparator") && typeof opts.numericSeparator !== "boolean") {
         throw new TypeError('option "numericSeparator", if provided, must be `true` or `false`');
       }
       var numericSeparator = opts.numericSeparator;
@@ -15892,7 +15892,7 @@ var require_object_inspect = __commonJS({
           var newOpts = {
             depth: opts.depth
           };
-          if (has(opts, "quoteStyle")) {
+          if (has2(opts, "quoteStyle")) {
             newOpts.quoteStyle = opts.quoteStyle;
           }
           return inspect_(value, newOpts, depth + 1, seen);
@@ -16073,7 +16073,7 @@ var require_object_inspect = __commonJS({
     var hasOwn = Object.prototype.hasOwnProperty || function(key) {
       return key in this;
     };
-    function has(obj, key) {
+    function has2(obj, key) {
       return hasOwn.call(obj, key);
     }
     function toStr(obj) {
@@ -16254,7 +16254,7 @@ var require_object_inspect = __commonJS({
       if (isArr) {
         xs.length = obj.length;
         for (var i = 0; i < obj.length; i++) {
-          xs[i] = has(obj, i) ? inspect(obj[i], obj) : "";
+          xs[i] = has2(obj, i) ? inspect(obj[i], obj) : "";
         }
       }
       var syms = typeof gOPS === "function" ? gOPS(obj) : [];
@@ -16266,7 +16266,7 @@ var require_object_inspect = __commonJS({
         }
       }
       for (var key in obj) {
-        if (!has(obj, key)) {
+        if (!has2(obj, key)) {
           continue;
         }
         if (isArr && String(Number(key)) === key && key < obj.length) {
@@ -17403,7 +17403,7 @@ var require_utils2 = __commonJS({
     "use strict";
     var formats = require_formats();
     var getSideChannel = require_side_channel();
-    var has = Object.prototype.hasOwnProperty;
+    var has2 = Object.prototype.hasOwnProperty;
     var isArray = Array.isArray;
     var overflowChannel = getSideChannel();
     var markOverflow = function markOverflow2(obj, maxIndex) {
@@ -17468,7 +17468,7 @@ var require_utils2 = __commonJS({
             setMaxIndex(target, newIndex);
           } else if (options && options.strictMerge) {
             return [target, source];
-          } else if (options && (options.plainObjects || options.allowPrototypes) || !has.call(Object.prototype, source)) {
+          } else if (options && (options.plainObjects || options.allowPrototypes) || !has2.call(Object.prototype, source)) {
             target[source] = true;
           }
         } else {
@@ -17498,7 +17498,7 @@ var require_utils2 = __commonJS({
       }
       if (isArray(target) && isArray(source)) {
         source.forEach(function(item, i) {
-          if (has.call(target, i)) {
+          if (has2.call(target, i)) {
             var targetItem = target[i];
             if (targetItem && typeof targetItem === "object" && item && typeof item === "object") {
               target[i] = merge3(targetItem, item, options);
@@ -17513,7 +17513,7 @@ var require_utils2 = __commonJS({
       }
       return Object.keys(source).reduce(function(acc, key) {
         var value = source[key];
-        if (has.call(acc, key)) {
+        if (has2.call(acc, key)) {
           acc[key] = merge3(acc[key], value, options);
         } else {
           acc[key] = value;
@@ -17668,7 +17668,7 @@ var require_stringify = __commonJS({
     var getSideChannel = require_side_channel();
     var utils = require_utils2();
     var formats = require_formats();
-    var has = Object.prototype.hasOwnProperty;
+    var has2 = Object.prototype.hasOwnProperty;
     var arrayPrefixGenerators = {
       brackets: function brackets(prefix) {
         return prefix + "[]";
@@ -17834,7 +17834,7 @@ var require_stringify = __commonJS({
       }
       var format = formats["default"];
       if (typeof opts.format !== "undefined") {
-        if (!has.call(formats.formatters, opts.format)) {
+        if (!has2.call(formats.formatters, opts.format)) {
           throw new TypeError("Unknown format option provided.");
         }
         format = opts.format;
@@ -17949,7 +17949,7 @@ var require_parse = __commonJS({
   "../../node_modules/.pnpm/qs@6.15.1/node_modules/qs/lib/parse.js"(exports, module) {
     "use strict";
     var utils = require_utils2();
-    var has = Object.prototype.hasOwnProperty;
+    var has2 = Object.prototype.hasOwnProperty;
     var isArray = Array.isArray;
     var defaults2 = {
       allowDots: false,
@@ -18059,7 +18059,7 @@ var require_parse = __commonJS({
           val = utils.combine([], val, options.arrayLimit, options.plainObjects);
         }
         if (key !== null) {
-          var existing = has.call(obj, key);
+          var existing = has2.call(obj, key);
           if (existing && (options.duplicates === "combine" || part.indexOf("[]=") > -1)) {
             obj[key] = utils.combine(
               obj[key],
@@ -18122,7 +18122,7 @@ var require_parse = __commonJS({
     var splitKeyIntoSegments = function splitKeyIntoSegments2(givenKey, options) {
       var key = options.allowDots ? givenKey.replace(/\.([^.[]+)/g, "[$1]") : givenKey;
       if (options.depth <= 0) {
-        if (!options.plainObjects && has.call(Object.prototype, key)) {
+        if (!options.plainObjects && has2.call(Object.prototype, key)) {
           if (!options.allowPrototypes) {
             return;
           }
@@ -18135,7 +18135,7 @@ var require_parse = __commonJS({
       var parent = segment ? key.slice(0, segment.index) : key;
       var keys = [];
       if (parent) {
-        if (!options.plainObjects && has.call(Object.prototype, parent)) {
+        if (!options.plainObjects && has2.call(Object.prototype, parent)) {
           if (!options.allowPrototypes) {
             return;
           }
@@ -18146,7 +18146,7 @@ var require_parse = __commonJS({
       while ((segment = child.exec(key)) !== null && i < options.depth) {
         i += 1;
         var segmentContent = segment[1].slice(1, -1);
-        if (!options.plainObjects && has.call(Object.prototype, segmentContent)) {
+        if (!options.plainObjects && has2.call(Object.prototype, segmentContent)) {
           if (!options.allowPrototypes) {
             return;
           }
@@ -55047,21 +55047,21 @@ async function composioDeleteConnection(connectionId) {
   await composioApi("DELETE", `/connected_accounts/${encodeURIComponent(connectionId)}`);
 }
 function integrationStatus() {
-  const has = (k) => !!process.env[k];
+  const has2 = (k) => !!process.env[k];
   return [
-    { key: "nvidia-nim", name: "NVIDIA NIM", category: "llm", envVar: "NVIDIA_API_KEY", configured: has("NVIDIA_API_KEY") },
-    { key: "helicone", name: "Helicone", category: "observability", envVar: "HELICONE_API_KEY", configured: has("HELICONE_API_KEY") },
+    { key: "nvidia-nim", name: "NVIDIA NIM", category: "llm", envVar: "NVIDIA_API_KEY", configured: has2("NVIDIA_API_KEY") },
+    { key: "helicone", name: "Helicone", category: "observability", envVar: "HELICONE_API_KEY", configured: has2("HELICONE_API_KEY") },
     { key: "langsmith", name: "LangSmith (LangChain)", category: "observability", envVar: "LANGSMITH_API_KEY", configured: langsmithEnabled() },
-    { key: "embeddings", name: "Embeddings (semantic memory)", category: "memory", envVar: "EMBEDDINGS_API_KEY", configured: has("EMBEDDINGS_API_KEY") },
-    { key: "pinecone", name: "Pinecone (vector memory)", category: "memory", envVar: "PINECONE_API_KEY", configured: has("PINECONE_API_KEY") && (has("PINECONE_INDEX_HOST") || has("PINECONE_INDEX_URL") || has("PINECONE_INDEX")) },
-    { key: "tavily", name: "Tavily", category: "search", envVar: "TAVILY_API_KEY", configured: has("TAVILY_API_KEY") },
-    { key: "exa", name: "Exa", category: "search", envVar: "EXA_API_KEY", configured: has("EXA_API_KEY") },
-    { key: "firecrawl", name: "Firecrawl", category: "search", envVar: "FIRECRAWL_API_KEY", configured: has("FIRECRAWL_API_KEY") },
-    { key: "steel", name: "Steel", category: "browser", envVar: "STEEL_API_KEY", configured: has("STEEL_API_KEY") },
-    { key: "inngest", name: "Inngest", category: "events", envVar: "INNGEST_EVENT_KEY", configured: has("INNGEST_EVENT_KEY") },
-    { key: "e2b", name: "E2B", category: "sandbox", envVar: "E2B_API_KEY", configured: has("E2B_API_KEY") },
-    { key: "composio", name: "Composio", category: "tools", envVar: "COMPOSIO_API_KEY", configured: has("COMPOSIO_API_KEY") },
-    { key: "image-generation", name: "Image generation (image_generate)", category: "tools", envVar: "IMAGE_API_KEY", configured: has("IMAGE_API_KEY") || has("DEEPINFRA_API_KEY") || has("OPENAI_API_KEY") }
+    { key: "embeddings", name: "Embeddings (semantic memory)", category: "memory", envVar: "EMBEDDINGS_API_KEY", configured: has2("EMBEDDINGS_API_KEY") },
+    { key: "pinecone", name: "Pinecone (vector memory)", category: "memory", envVar: "PINECONE_API_KEY", configured: has2("PINECONE_API_KEY") && (has2("PINECONE_INDEX_HOST") || has2("PINECONE_INDEX_URL") || has2("PINECONE_INDEX")) },
+    { key: "tavily", name: "Tavily", category: "search", envVar: "TAVILY_API_KEY", configured: has2("TAVILY_API_KEY") },
+    { key: "exa", name: "Exa", category: "search", envVar: "EXA_API_KEY", configured: has2("EXA_API_KEY") },
+    { key: "firecrawl", name: "Firecrawl", category: "search", envVar: "FIRECRAWL_API_KEY", configured: has2("FIRECRAWL_API_KEY") },
+    { key: "steel", name: "Steel", category: "browser", envVar: "STEEL_API_KEY", configured: has2("STEEL_API_KEY") },
+    { key: "inngest", name: "Inngest", category: "events", envVar: "INNGEST_EVENT_KEY", configured: has2("INNGEST_EVENT_KEY") },
+    { key: "e2b", name: "E2B", category: "sandbox", envVar: "E2B_API_KEY", configured: has2("E2B_API_KEY") },
+    { key: "composio", name: "Composio", category: "tools", envVar: "COMPOSIO_API_KEY", configured: has2("COMPOSIO_API_KEY") },
+    { key: "image-generation", name: "Image generation (image_generate)", category: "tools", envVar: "IMAGE_API_KEY", configured: has2("IMAGE_API_KEY") || has2("DEEPINFRA_API_KEY") || has2("OPENAI_API_KEY") }
   ];
 }
 var NVIDIA_NIM_BASE, HELICONE_GATEWAY, nimKeyIndex, NIM_AUTH_COOLDOWN_MS, nimDisabledUntil, nimDegradedUntil, MODEL_STALL_COOLDOWN_MS, modelStallUntil, NIM_PREFIXES, NIM_MODEL_FALLBACKS, NIM_GENERIC_FALLBACK, NIM_MODEL_BANS, BITDEER_BASE, OPENROUTER_BASE, OPENROUTER_FALLBACK_MODEL, OR_MODEL_MAP, NIM_FAST_MODEL, E2B_PKG, E2B_TIMEOUT_MS;
@@ -58651,11 +58651,11 @@ var require_reflect = __commonJS({
       }
       delete(key) {
         const k = mapKeyToLocal(key);
-        const has = Object.prototype.hasOwnProperty.call(this.obj, k);
-        if (has) {
+        const has2 = Object.prototype.hasOwnProperty.call(this.obj, k);
+        if (has2) {
           delete this.obj[k];
         }
-        return has;
+        return has2;
       }
       clear() {
         for (const key of Object.keys(this.obj)) {
@@ -112461,6 +112461,554 @@ var import_cors = __toESM(require_lib3(), 1);
 var import_cookie_parser = __toESM(require_cookie_parser(), 1);
 var import_pino_http = __toESM(require_logger(), 1);
 
+// ../../node_modules/.pnpm/helmet@7.2.0/node_modules/helmet/index.mjs
+var dangerouslyDisableDefaultSrc = /* @__PURE__ */ Symbol("dangerouslyDisableDefaultSrc");
+var DEFAULT_DIRECTIVES = {
+  "default-src": ["'self'"],
+  "base-uri": ["'self'"],
+  "font-src": ["'self'", "https:", "data:"],
+  "form-action": ["'self'"],
+  "frame-ancestors": ["'self'"],
+  "img-src": ["'self'", "data:"],
+  "object-src": ["'none'"],
+  "script-src": ["'self'"],
+  "script-src-attr": ["'none'"],
+  "style-src": ["'self'", "https:", "'unsafe-inline'"],
+  "upgrade-insecure-requests": []
+};
+var SHOULD_BE_QUOTED = /* @__PURE__ */ new Set(["none", "self", "strict-dynamic", "report-sample", "inline-speculation-rules", "unsafe-inline", "unsafe-eval", "unsafe-hashes", "wasm-unsafe-eval"]);
+var getDefaultDirectives = () => Object.assign({}, DEFAULT_DIRECTIVES);
+var dashify = (str) => str.replace(/[A-Z]/g, (capitalLetter) => "-" + capitalLetter.toLowerCase());
+var isDirectiveValueInvalid = (directiveValue) => /;|,/.test(directiveValue);
+var shouldDirectiveValueEntryBeQuoted = (directiveValueEntry) => SHOULD_BE_QUOTED.has(directiveValueEntry) || directiveValueEntry.startsWith("nonce-") || directiveValueEntry.startsWith("sha256-") || directiveValueEntry.startsWith("sha384-") || directiveValueEntry.startsWith("sha512-");
+var warnIfDirectiveValueEntryShouldBeQuoted = (value) => {
+  if (shouldDirectiveValueEntryBeQuoted(value)) {
+    console.warn(`Content-Security-Policy got directive value \`${value}\` which should be single-quoted and changed to \`'${value}'\`. This will be an error in future versions of Helmet.`);
+  }
+};
+var has = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
+function normalizeDirectives(options) {
+  const defaultDirectives = getDefaultDirectives();
+  const { useDefaults = true, directives: rawDirectives = defaultDirectives } = options;
+  const result = /* @__PURE__ */ new Map();
+  const directiveNamesSeen = /* @__PURE__ */ new Set();
+  const directivesExplicitlyDisabled = /* @__PURE__ */ new Set();
+  for (const rawDirectiveName in rawDirectives) {
+    if (!has(rawDirectives, rawDirectiveName)) {
+      continue;
+    }
+    if (rawDirectiveName.length === 0 || /[^a-zA-Z0-9-]/.test(rawDirectiveName)) {
+      throw new Error(`Content-Security-Policy received an invalid directive name ${JSON.stringify(rawDirectiveName)}`);
+    }
+    const directiveName = dashify(rawDirectiveName);
+    if (directiveNamesSeen.has(directiveName)) {
+      throw new Error(`Content-Security-Policy received a duplicate directive ${JSON.stringify(directiveName)}`);
+    }
+    directiveNamesSeen.add(directiveName);
+    const rawDirectiveValue = rawDirectives[rawDirectiveName];
+    let directiveValue;
+    if (rawDirectiveValue === null) {
+      if (directiveName === "default-src") {
+        throw new Error("Content-Security-Policy needs a default-src but it was set to `null`. If you really want to disable it, set it to `contentSecurityPolicy.dangerouslyDisableDefaultSrc`.");
+      }
+      directivesExplicitlyDisabled.add(directiveName);
+      continue;
+    } else if (typeof rawDirectiveValue === "string") {
+      directiveValue = [rawDirectiveValue];
+    } else if (!rawDirectiveValue) {
+      throw new Error(`Content-Security-Policy received an invalid directive value for ${JSON.stringify(directiveName)}`);
+    } else if (rawDirectiveValue === dangerouslyDisableDefaultSrc) {
+      if (directiveName === "default-src") {
+        directivesExplicitlyDisabled.add("default-src");
+        continue;
+      } else {
+        throw new Error(`Content-Security-Policy: tried to disable ${JSON.stringify(directiveName)} as if it were default-src; simply omit the key`);
+      }
+    } else {
+      directiveValue = rawDirectiveValue;
+    }
+    for (const element of directiveValue) {
+      if (typeof element === "string") {
+        if (isDirectiveValueInvalid(element)) {
+          throw new Error(`Content-Security-Policy received an invalid directive value for ${JSON.stringify(directiveName)}`);
+        }
+        warnIfDirectiveValueEntryShouldBeQuoted(element);
+      }
+    }
+    result.set(directiveName, directiveValue);
+  }
+  if (useDefaults) {
+    Object.entries(defaultDirectives).forEach(([defaultDirectiveName, defaultDirectiveValue]) => {
+      if (!result.has(defaultDirectiveName) && !directivesExplicitlyDisabled.has(defaultDirectiveName)) {
+        result.set(defaultDirectiveName, defaultDirectiveValue);
+      }
+    });
+  }
+  if (!result.size) {
+    throw new Error("Content-Security-Policy has no directives. Either set some or disable the header");
+  }
+  if (!result.has("default-src") && !directivesExplicitlyDisabled.has("default-src")) {
+    throw new Error("Content-Security-Policy needs a default-src but none was provided. If you really want to disable it, set it to `contentSecurityPolicy.dangerouslyDisableDefaultSrc`.");
+  }
+  return result;
+}
+function getHeaderValue(req, res, normalizedDirectives) {
+  let err;
+  const result = [];
+  normalizedDirectives.forEach((rawDirectiveValue, directiveName) => {
+    let directiveValue = "";
+    for (const element of rawDirectiveValue) {
+      if (typeof element === "function") {
+        const newElement = element(req, res);
+        warnIfDirectiveValueEntryShouldBeQuoted(newElement);
+        directiveValue += " " + newElement;
+      } else {
+        directiveValue += " " + element;
+      }
+    }
+    if (!directiveValue) {
+      result.push(directiveName);
+    } else if (isDirectiveValueInvalid(directiveValue)) {
+      err = new Error(`Content-Security-Policy received an invalid directive value for ${JSON.stringify(directiveName)}`);
+    } else {
+      result.push(`${directiveName}${directiveValue}`);
+    }
+  });
+  return err ? err : result.join(";");
+}
+var contentSecurityPolicy = function contentSecurityPolicy2(options = {}) {
+  const headerName = options.reportOnly ? "Content-Security-Policy-Report-Only" : "Content-Security-Policy";
+  const normalizedDirectives = normalizeDirectives(options);
+  return function contentSecurityPolicyMiddleware(req, res, next) {
+    const result = getHeaderValue(req, res, normalizedDirectives);
+    if (result instanceof Error) {
+      next(result);
+    } else {
+      res.setHeader(headerName, result);
+      next();
+    }
+  };
+};
+contentSecurityPolicy.getDefaultDirectives = getDefaultDirectives;
+contentSecurityPolicy.dangerouslyDisableDefaultSrc = dangerouslyDisableDefaultSrc;
+var ALLOWED_POLICIES$2 = /* @__PURE__ */ new Set(["require-corp", "credentialless", "unsafe-none"]);
+function getHeaderValueFromOptions$6({ policy = "require-corp" }) {
+  if (ALLOWED_POLICIES$2.has(policy)) {
+    return policy;
+  } else {
+    throw new Error(`Cross-Origin-Embedder-Policy does not support the ${JSON.stringify(policy)} policy`);
+  }
+}
+function crossOriginEmbedderPolicy(options = {}) {
+  const headerValue = getHeaderValueFromOptions$6(options);
+  return function crossOriginEmbedderPolicyMiddleware(_req, res, next) {
+    res.setHeader("Cross-Origin-Embedder-Policy", headerValue);
+    next();
+  };
+}
+var ALLOWED_POLICIES$1 = /* @__PURE__ */ new Set(["same-origin", "same-origin-allow-popups", "unsafe-none"]);
+function getHeaderValueFromOptions$5({ policy = "same-origin" }) {
+  if (ALLOWED_POLICIES$1.has(policy)) {
+    return policy;
+  } else {
+    throw new Error(`Cross-Origin-Opener-Policy does not support the ${JSON.stringify(policy)} policy`);
+  }
+}
+function crossOriginOpenerPolicy(options = {}) {
+  const headerValue = getHeaderValueFromOptions$5(options);
+  return function crossOriginOpenerPolicyMiddleware(_req, res, next) {
+    res.setHeader("Cross-Origin-Opener-Policy", headerValue);
+    next();
+  };
+}
+var ALLOWED_POLICIES = /* @__PURE__ */ new Set(["same-origin", "same-site", "cross-origin"]);
+function getHeaderValueFromOptions$4({ policy = "same-origin" }) {
+  if (ALLOWED_POLICIES.has(policy)) {
+    return policy;
+  } else {
+    throw new Error(`Cross-Origin-Resource-Policy does not support the ${JSON.stringify(policy)} policy`);
+  }
+}
+function crossOriginResourcePolicy(options = {}) {
+  const headerValue = getHeaderValueFromOptions$4(options);
+  return function crossOriginResourcePolicyMiddleware(_req, res, next) {
+    res.setHeader("Cross-Origin-Resource-Policy", headerValue);
+    next();
+  };
+}
+function originAgentCluster() {
+  return function originAgentClusterMiddleware(_req, res, next) {
+    res.setHeader("Origin-Agent-Cluster", "?1");
+    next();
+  };
+}
+var ALLOWED_TOKENS = /* @__PURE__ */ new Set(["no-referrer", "no-referrer-when-downgrade", "same-origin", "origin", "strict-origin", "origin-when-cross-origin", "strict-origin-when-cross-origin", "unsafe-url", ""]);
+function getHeaderValueFromOptions$3({ policy = ["no-referrer"] }) {
+  const tokens = typeof policy === "string" ? [policy] : policy;
+  if (tokens.length === 0) {
+    throw new Error("Referrer-Policy received no policy tokens");
+  }
+  const tokensSeen = /* @__PURE__ */ new Set();
+  tokens.forEach((token) => {
+    if (!ALLOWED_TOKENS.has(token)) {
+      throw new Error(`Referrer-Policy received an unexpected policy token ${JSON.stringify(token)}`);
+    } else if (tokensSeen.has(token)) {
+      throw new Error(`Referrer-Policy received a duplicate policy token ${JSON.stringify(token)}`);
+    }
+    tokensSeen.add(token);
+  });
+  return tokens.join(",");
+}
+function referrerPolicy(options = {}) {
+  const headerValue = getHeaderValueFromOptions$3(options);
+  return function referrerPolicyMiddleware(_req, res, next) {
+    res.setHeader("Referrer-Policy", headerValue);
+    next();
+  };
+}
+var DEFAULT_MAX_AGE = 180 * 24 * 60 * 60;
+function parseMaxAge(value = DEFAULT_MAX_AGE) {
+  if (value >= 0 && Number.isFinite(value)) {
+    return Math.floor(value);
+  } else {
+    throw new Error(`Strict-Transport-Security: ${JSON.stringify(value)} is not a valid value for maxAge. Please choose a positive integer.`);
+  }
+}
+function getHeaderValueFromOptions$2(options) {
+  if ("maxage" in options) {
+    throw new Error("Strict-Transport-Security received an unsupported property, `maxage`. Did you mean to pass `maxAge`?");
+  }
+  if ("includeSubdomains" in options) {
+    console.warn('Strict-Transport-Security middleware should use `includeSubDomains` instead of `includeSubdomains`. (The correct one has an uppercase "D".)');
+  }
+  const directives = [`max-age=${parseMaxAge(options.maxAge)}`];
+  if (options.includeSubDomains === void 0 || options.includeSubDomains) {
+    directives.push("includeSubDomains");
+  }
+  if (options.preload) {
+    directives.push("preload");
+  }
+  return directives.join("; ");
+}
+function strictTransportSecurity(options = {}) {
+  const headerValue = getHeaderValueFromOptions$2(options);
+  return function strictTransportSecurityMiddleware(_req, res, next) {
+    res.setHeader("Strict-Transport-Security", headerValue);
+    next();
+  };
+}
+function xContentTypeOptions() {
+  return function xContentTypeOptionsMiddleware(_req, res, next) {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    next();
+  };
+}
+function xDnsPrefetchControl(options = {}) {
+  const headerValue = options.allow ? "on" : "off";
+  return function xDnsPrefetchControlMiddleware(_req, res, next) {
+    res.setHeader("X-DNS-Prefetch-Control", headerValue);
+    next();
+  };
+}
+function xDownloadOptions() {
+  return function xDownloadOptionsMiddleware(_req, res, next) {
+    res.setHeader("X-Download-Options", "noopen");
+    next();
+  };
+}
+function getHeaderValueFromOptions$1({ action = "sameorigin" }) {
+  const normalizedAction = typeof action === "string" ? action.toUpperCase() : action;
+  switch (normalizedAction) {
+    case "SAME-ORIGIN":
+      return "SAMEORIGIN";
+    case "DENY":
+    case "SAMEORIGIN":
+      return normalizedAction;
+    default:
+      throw new Error(`X-Frame-Options received an invalid action ${JSON.stringify(action)}`);
+  }
+}
+function xFrameOptions(options = {}) {
+  const headerValue = getHeaderValueFromOptions$1(options);
+  return function xFrameOptionsMiddleware(_req, res, next) {
+    res.setHeader("X-Frame-Options", headerValue);
+    next();
+  };
+}
+var ALLOWED_PERMITTED_POLICIES = /* @__PURE__ */ new Set(["none", "master-only", "by-content-type", "all"]);
+function getHeaderValueFromOptions({ permittedPolicies = "none" }) {
+  if (ALLOWED_PERMITTED_POLICIES.has(permittedPolicies)) {
+    return permittedPolicies;
+  } else {
+    throw new Error(`X-Permitted-Cross-Domain-Policies does not support ${JSON.stringify(permittedPolicies)}`);
+  }
+}
+function xPermittedCrossDomainPolicies(options = {}) {
+  const headerValue = getHeaderValueFromOptions(options);
+  return function xPermittedCrossDomainPoliciesMiddleware(_req, res, next) {
+    res.setHeader("X-Permitted-Cross-Domain-Policies", headerValue);
+    next();
+  };
+}
+function xPoweredBy() {
+  return function xPoweredByMiddleware(_req, res, next) {
+    res.removeHeader("X-Powered-By");
+    next();
+  };
+}
+function xXssProtection() {
+  return function xXssProtectionMiddleware(_req, res, next) {
+    res.setHeader("X-XSS-Protection", "0");
+    next();
+  };
+}
+function getMiddlewareFunctionsFromOptions(options) {
+  var _a, _b, _c, _d, _e, _f, _g, _h;
+  const result = [];
+  switch (options.contentSecurityPolicy) {
+    case void 0:
+    case true:
+      result.push(contentSecurityPolicy());
+      break;
+    case false:
+      break;
+    default:
+      result.push(contentSecurityPolicy(options.contentSecurityPolicy));
+      break;
+  }
+  switch (options.crossOriginEmbedderPolicy) {
+    case void 0:
+    case false:
+      break;
+    case true:
+      result.push(crossOriginEmbedderPolicy());
+      break;
+    default:
+      result.push(crossOriginEmbedderPolicy(options.crossOriginEmbedderPolicy));
+      break;
+  }
+  switch (options.crossOriginOpenerPolicy) {
+    case void 0:
+    case true:
+      result.push(crossOriginOpenerPolicy());
+      break;
+    case false:
+      break;
+    default:
+      result.push(crossOriginOpenerPolicy(options.crossOriginOpenerPolicy));
+      break;
+  }
+  switch (options.crossOriginResourcePolicy) {
+    case void 0:
+    case true:
+      result.push(crossOriginResourcePolicy());
+      break;
+    case false:
+      break;
+    default:
+      result.push(crossOriginResourcePolicy(options.crossOriginResourcePolicy));
+      break;
+  }
+  switch (options.originAgentCluster) {
+    case void 0:
+    case true:
+      result.push(originAgentCluster());
+      break;
+    case false:
+      break;
+    default:
+      console.warn("Origin-Agent-Cluster does not take options. Remove the property to silence this warning.");
+      result.push(originAgentCluster());
+      break;
+  }
+  switch (options.referrerPolicy) {
+    case void 0:
+    case true:
+      result.push(referrerPolicy());
+      break;
+    case false:
+      break;
+    default:
+      result.push(referrerPolicy(options.referrerPolicy));
+      break;
+  }
+  if ("strictTransportSecurity" in options && "hsts" in options) {
+    throw new Error("Strict-Transport-Security option was specified twice. Remove `hsts` to silence this warning.");
+  }
+  const strictTransportSecurityOption = (_a = options.strictTransportSecurity) !== null && _a !== void 0 ? _a : options.hsts;
+  switch (strictTransportSecurityOption) {
+    case void 0:
+    case true:
+      result.push(strictTransportSecurity());
+      break;
+    case false:
+      break;
+    default:
+      result.push(strictTransportSecurity(strictTransportSecurityOption));
+      break;
+  }
+  if ("xContentTypeOptions" in options && "noSniff" in options) {
+    throw new Error("X-Content-Type-Options option was specified twice. Remove `noSniff` to silence this warning.");
+  }
+  const xContentTypeOptionsOption = (_b = options.xContentTypeOptions) !== null && _b !== void 0 ? _b : options.noSniff;
+  switch (xContentTypeOptionsOption) {
+    case void 0:
+    case true:
+      result.push(xContentTypeOptions());
+      break;
+    case false:
+      break;
+    default:
+      console.warn("X-Content-Type-Options does not take options. Remove the property to silence this warning.");
+      result.push(xContentTypeOptions());
+      break;
+  }
+  if ("xDnsPrefetchControl" in options && "dnsPrefetchControl" in options) {
+    throw new Error("X-DNS-Prefetch-Control option was specified twice. Remove `dnsPrefetchControl` to silence this warning.");
+  }
+  const xDnsPrefetchControlOption = (_c = options.xDnsPrefetchControl) !== null && _c !== void 0 ? _c : options.dnsPrefetchControl;
+  switch (xDnsPrefetchControlOption) {
+    case void 0:
+    case true:
+      result.push(xDnsPrefetchControl());
+      break;
+    case false:
+      break;
+    default:
+      result.push(xDnsPrefetchControl(xDnsPrefetchControlOption));
+      break;
+  }
+  if ("xDownloadOptions" in options && "ieNoOpen" in options) {
+    throw new Error("X-Download-Options option was specified twice. Remove `ieNoOpen` to silence this warning.");
+  }
+  const xDownloadOptionsOption = (_d = options.xDownloadOptions) !== null && _d !== void 0 ? _d : options.ieNoOpen;
+  switch (xDownloadOptionsOption) {
+    case void 0:
+    case true:
+      result.push(xDownloadOptions());
+      break;
+    case false:
+      break;
+    default:
+      console.warn("X-Download-Options does not take options. Remove the property to silence this warning.");
+      result.push(xDownloadOptions());
+      break;
+  }
+  if ("xFrameOptions" in options && "frameguard" in options) {
+    throw new Error("X-Frame-Options option was specified twice. Remove `frameguard` to silence this warning.");
+  }
+  const xFrameOptionsOption = (_e = options.xFrameOptions) !== null && _e !== void 0 ? _e : options.frameguard;
+  switch (xFrameOptionsOption) {
+    case void 0:
+    case true:
+      result.push(xFrameOptions());
+      break;
+    case false:
+      break;
+    default:
+      result.push(xFrameOptions(xFrameOptionsOption));
+      break;
+  }
+  if ("xPermittedCrossDomainPolicies" in options && "permittedCrossDomainPolicies" in options) {
+    throw new Error("X-Permitted-Cross-Domain-Policies option was specified twice. Remove `permittedCrossDomainPolicies` to silence this warning.");
+  }
+  const xPermittedCrossDomainPoliciesOption = (_f = options.xPermittedCrossDomainPolicies) !== null && _f !== void 0 ? _f : options.permittedCrossDomainPolicies;
+  switch (xPermittedCrossDomainPoliciesOption) {
+    case void 0:
+    case true:
+      result.push(xPermittedCrossDomainPolicies());
+      break;
+    case false:
+      break;
+    default:
+      result.push(xPermittedCrossDomainPolicies(xPermittedCrossDomainPoliciesOption));
+      break;
+  }
+  if ("xPoweredBy" in options && "hidePoweredBy" in options) {
+    throw new Error("X-Powered-By option was specified twice. Remove `hidePoweredBy` to silence this warning.");
+  }
+  const xPoweredByOption = (_g = options.xPoweredBy) !== null && _g !== void 0 ? _g : options.hidePoweredBy;
+  switch (xPoweredByOption) {
+    case void 0:
+    case true:
+      result.push(xPoweredBy());
+      break;
+    case false:
+      break;
+    default:
+      console.warn("X-Powered-By does not take options. Remove the property to silence this warning.");
+      result.push(xPoweredBy());
+      break;
+  }
+  if ("xXssProtection" in options && "xssFilter" in options) {
+    throw new Error("X-XSS-Protection option was specified twice. Remove `xssFilter` to silence this warning.");
+  }
+  const xXssProtectionOption = (_h = options.xXssProtection) !== null && _h !== void 0 ? _h : options.xssFilter;
+  switch (xXssProtectionOption) {
+    case void 0:
+    case true:
+      result.push(xXssProtection());
+      break;
+    case false:
+      break;
+    default:
+      console.warn("X-XSS-Protection does not take options. Remove the property to silence this warning.");
+      result.push(xXssProtection());
+      break;
+  }
+  return result;
+}
+var helmet = Object.assign(
+  function helmet2(options = {}) {
+    var _a;
+    if (((_a = options.constructor) === null || _a === void 0 ? void 0 : _a.name) === "IncomingMessage") {
+      throw new Error("It appears you have done something like `app.use(helmet)`, but it should be `app.use(helmet())`.");
+    }
+    const middlewareFunctions = getMiddlewareFunctionsFromOptions(options);
+    return function helmetMiddleware(req, res, next) {
+      let middlewareIndex = 0;
+      (function internalNext(err) {
+        if (err) {
+          next(err);
+          return;
+        }
+        const middlewareFunction = middlewareFunctions[middlewareIndex];
+        if (middlewareFunction) {
+          middlewareIndex++;
+          middlewareFunction(req, res, internalNext);
+        } else {
+          next();
+        }
+      })();
+    };
+  },
+  {
+    contentSecurityPolicy,
+    crossOriginEmbedderPolicy,
+    crossOriginOpenerPolicy,
+    crossOriginResourcePolicy,
+    originAgentCluster,
+    referrerPolicy,
+    strictTransportSecurity,
+    xContentTypeOptions,
+    xDnsPrefetchControl,
+    xDownloadOptions,
+    xFrameOptions,
+    xPermittedCrossDomainPolicies,
+    xPoweredBy,
+    xXssProtection,
+    // Legacy aliases
+    dnsPrefetchControl: xDnsPrefetchControl,
+    xssFilter: xXssProtection,
+    permittedCrossDomainPolicies: xPermittedCrossDomainPolicies,
+    ieNoOpen: xDownloadOptions,
+    noSniff: xContentTypeOptions,
+    frameguard: xFrameOptions,
+    hidePoweredBy: xPoweredBy,
+    hsts: strictTransportSecurity
+  }
+);
+
 // src/routes/index.ts
 var import_express19 = __toESM(require_express2(), 1);
 
@@ -121294,6 +121842,7 @@ import path2 from "path";
 import fs2 from "fs";
 import { fileURLToPath as fileURLToPath2 } from "url";
 var app = (0, import_express20.default)();
+app.use(helmet());
 app.use(
   (0, import_pino_http.default)({
     logger,
@@ -121314,8 +121863,14 @@ app.use(
   })
 );
 var allowedOrigins = (process.env["ALLOWED_ORIGINS"] ?? "").split(",").map((o) => o.trim()).filter(Boolean);
+var isProd = process.env["NODE_ENV"] === "production";
+if (isProd && allowedOrigins.length === 0) {
+  throw new Error(
+    "ALLOWED_ORIGINS is required in production for a safe CORS policy"
+  );
+}
 app.use(
-  allowedOrigins.length ? (0, import_cors.default)({ origin: allowedOrigins, credentials: true }) : (0, import_cors.default)()
+  allowedOrigins.length > 0 ? (0, import_cors.default)({ origin: allowedOrigins, credentials: true }) : (0, import_cors.default)()
 );
 app.use((0, import_cookie_parser.default)());
 app.use(import_express20.default.json({ limit: "30mb" }));

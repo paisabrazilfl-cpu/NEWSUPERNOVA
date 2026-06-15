@@ -7,6 +7,7 @@
     "hello": "tsx ./src/hello.ts",
     "render:set-env": "tsx ./src/render-set-env.ts",
     "ui-smoke": "tsx ./src/ui-smoke.ts",
+    "e2e": "tsx ./src/ui-smoke.ts",
     "responsive-check": "tsx ./src/responsive-check.ts",
     "visual-audit": "tsx ./src/visual-audit.ts",
     "vault:backup": "tsx ./src/vault-backup.ts backup",

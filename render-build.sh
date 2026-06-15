@@ -8,7 +8,8 @@ npm --version
 # Download pnpm via npx (avoids global install permission issues)
 export PNPM_HOME="$HOME/.local/share/pnpm"
 export PATH="$PNPM_HOME:$PATH"
-npx --yes pnpm@9 --version
+# Use pnpm v10 to align with the workspace's package manager requirement.
+npx --yes pnpm@10 --version
 
 # Strip Replit-specific fields from pnpm-workspace.yaml that pnpm 9 doesn't recognize.
 # These fields (minimumReleaseAge, minimumReleaseAgeExclude) are Replit-platform-only
@@ -39,13 +40,13 @@ print("pnpm-workspace.yaml cleaned successfully")
 PYEOF
 
 echo "=== Installing dependencies ==="
-npx --yes pnpm@9 install --frozen-lockfile
+npx --yes pnpm@10 install --frozen-lockfile
 
 echo "=== Building lib packages ==="
-npx --yes pnpm@9 run typecheck:libs
+npx --yes pnpm@10 run typecheck:libs
 
 echo "=== Building API server ==="
-npx --yes pnpm@9 --filter @workspace/api-server run build
+npx --yes pnpm@10 --filter @workspace/api-server run build
 
 echo "=== BUILD COMPLETE ==="
 ls -la artifacts/api-server/dist/
