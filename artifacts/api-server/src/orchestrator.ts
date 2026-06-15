@@ -30,6 +30,7 @@ import {
   resolveModel,
   SECONDARY_CHAT_MODEL,
   rescueRawToolCalls,
+  rescuePlainJsonToolCalls,
   stripToolTokenNoise,
   ANTI_HALLUCINATION_DIRECTIVE,
   TOOL_CALL_DISCIPLINE,
@@ -526,9 +527,13 @@ type ChatMessage =
  * into real tool_calls so the action still executes, and strip the markup so
  * it never reaches the operator's chat.
  */
-function normalizeAssistantMessage(msg: { content?: string | null; tool_calls?: ToolCallReq[] } | undefined): AssistantMessage {
+function normalizeAssistantMessage(
+  msg: { content?: string | null; tool_calls?: ToolCallReq[] } | undefined,
+  knownToolNames: string[] = [],
+): AssistantMessage {
   let content = msg?.content ?? null;
   let toolCalls = msg?.tool_calls;
+  // (a) Native <|tool_call|> markup leaked into content (Kimi-family).
   if ((!toolCalls || toolCalls.length === 0) && typeof content === "string" && content.includes("<|tool_call")) {
     const rescued = rescueRawToolCalls(content);
     if (rescued.calls.length) {
@@ -541,6 +546,21 @@ function normalizeAssistantMessage(msg: { content?: string | null; tool_calls?: 
     }
     content = rescued.clean || null;
   }
+  // (b) Bare-JSON tool call in content with NO structured tool_calls — the most
+  // common "can't tool call" failure: the model prints {"name":"...","parameters":{…}}
+  // as text and the action never executes. Recover it against the known tool set.
+  if ((!toolCalls || toolCalls.length === 0) && typeof content === "string" && content.includes("{") && knownToolNames.length) {
+    const rescued = rescuePlainJsonToolCalls(content, knownToolNames);
+    if (rescued.calls.length) {
+      toolCalls = rescued.calls.map((c, i) => ({
+        id: `rescued_json_${Date.now()}_${i}`,
+        type: "function" as const,
+        function: { name: c.name, arguments: c.arguments },
+      }));
+      logger.warn({ count: toolCalls.length }, "rescued plain-JSON tool calls the model emitted as text content");
+      content = rescued.clean || null;
+    }
+  }
   return { role: "assistant", content, tool_calls: toolCalls };
 }
 
@@ -550,6 +570,11 @@ async function completeChatTurn(
   tools: Array<Record<string, unknown>>,
 ): Promise<AssistantMessage> {
   const payload: Record<string, unknown> = { messages, stream: false, max_tokens: llmMaxTokens() };
+  // Tool names this turn can call — drives the plain-JSON tool-call rescue when a
+  // model emits a call as text content instead of a structured tool_call.
+  const knownToolNames = tools
+    .map((t) => ((t["function"] as { name?: unknown } | undefined)?.name))
+    .filter((n): n is string => typeof n === "string");
   if (tools.length) {
     payload["tools"] = tools;
     payload["tool_choice"] = "auto";
@@ -579,7 +604,7 @@ async function completeChatTurn(
           const m3 = d3?.choices?.[0]?.message;
           if (m3) {
             logger.info({ model, budget }, "tool turn recovered via 402 budget-fit retry");
-            return normalizeAssistantMessage(m3);
+            return normalizeAssistantMessage(m3, knownToolNames);
           }
         }
       } catch (e) {
@@ -603,7 +628,7 @@ async function completeChatTurn(
           const fmsg = fdata?.choices?.[0]?.message;
           if (fmsg) {
             logger.info({ from: llmReq.model, to: fb.model }, "tool turn recovered on secondary model after primary failure");
-            return normalizeAssistantMessage(fmsg);
+            return normalizeAssistantMessage(fmsg, knownToolNames);
           }
         }
       }
@@ -615,7 +640,7 @@ async function completeChatTurn(
   const data = (await r.json()) as {
     choices?: Array<{ message?: AssistantMessage }>;
   };
-  return normalizeAssistantMessage(data?.choices?.[0]?.message);
+  return normalizeAssistantMessage(data?.choices?.[0]?.message, knownToolNames);
 }
 
 function summarizeArgs(args: Record<string, unknown>): string {

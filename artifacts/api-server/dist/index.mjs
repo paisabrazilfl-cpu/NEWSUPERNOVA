@@ -28105,7 +28105,7 @@ var require_pino = __commonJS({
     function pinoBundlerAbsolutePath(p) {
       try {
         const path3 = __require("path");
-        const outputDir = "/home/claude/BOS-AURA/artifacts/api-server/dist";
+        const outputDir = "/home/user/BOS-AURA/artifacts/api-server/dist";
         return path3.resolve(outputDir, p.replace(/^\.\//, ""));
       } catch (e) {
         const f = new Function("p", "return new URL(p, import.meta.url).pathname");
@@ -111844,7 +111844,11 @@ ${stored}` : stored);
           const diKey = process.env["IMAGE_API_KEY"] || process.env["DEEPINFRA_API_KEY"];
           const oaBase = (process.env["OPENAI_BASE_URL"] ?? "https://api.openai.com/v1").replace(/\/$/, "");
           const oaKey = process.env["OPENAI_API_KEY"] || process.env["IMAGE_API_KEY"];
+          const bdBase = (process.env["BITDEER_IMAGE_BASE_URL"] ?? "https://api-inference.bitdeer.ai/v1").replace(/\/$/, "");
+          const bdKey = process.env["BITDEER_API_KEY"];
+          const bdImageModel = process.env["BITDEER_IMAGE_MODEL"] ?? "seedream-5.0-lite";
           const di = (id, label, tags) => ({ id, label, base: diBase, key: diKey, tags });
+          const bitdeer = { id: bdImageModel, label: `Bitdeer ${bdImageModel}`, base: bdBase, key: bdKey, tags: ["bitdeer", "bd", "seedream", "imagen"] };
           const gptImage = { id: "gpt-image-1", label: "gpt-image-1", base: oaBase, key: oaKey, tags: ["openai", "dalle", "gpt"] };
           let chain;
           const custom2 = (process.env["IMAGE_MODELS"] ?? "").split(",").map((s) => s.trim()).filter(Boolean);
@@ -111861,6 +111865,9 @@ ${stored}` : stored);
               di("byteplus/Seedream-5.0-Lite", "Seedream 5.0 Lite", ["seedream", "bilingual", "byteplus"]),
               di("black-forest-labs/FLUX-2-dev", "FLUX.2 dev", ["budget", "cheap", "dev", "draft"]),
               di("black-forest-labs/FLUX-2-max", "FLUX.2 max", ["max", "hero", "premium"]),
+              // Bitdeer (operator's own key) sits ahead of the OpenAI backstop so a
+              // billing-blocked gpt-image-1 is never the ONLY reachable model.
+              bitdeer,
               gptImage
             ];
           }
@@ -118029,6 +118036,84 @@ function rescueRawToolCalls(text2) {
   }
   return { clean: stripToolTokenNoise(text2), calls };
 }
+function rescuePlainJsonToolCalls(text2, knownNames) {
+  const calls = [];
+  if (!text2 || !text2.includes("{") || !knownNames.length) return { clean: text2, calls };
+  const known = new Set(knownNames);
+  const spans = [];
+  const tryParse = (s) => {
+    try {
+      return JSON.parse(s);
+    } catch {
+    }
+    for (let add = 1; add <= 2; add++) {
+      try {
+        return JSON.parse(s + "}".repeat(add));
+      } catch {
+      }
+    }
+    return void 0;
+  };
+  for (let i = 0; i < text2.length; i++) {
+    if (text2[i] !== "{") continue;
+    let depth = 0, inStr = false, esc2 = false, end = -1;
+    for (let j = i; j < text2.length; j++) {
+      const ch = text2[j];
+      if (inStr) {
+        if (esc2) esc2 = false;
+        else if (ch === "\\") esc2 = true;
+        else if (ch === '"') inStr = false;
+        continue;
+      }
+      if (ch === '"') inStr = true;
+      else if (ch === "{") depth++;
+      else if (ch === "}") {
+        depth--;
+        if (depth === 0) {
+          end = j;
+          break;
+        }
+      }
+    }
+    const slice = end >= 0 ? text2.slice(i, end + 1) : text2.slice(i);
+    const obj = tryParse(slice);
+    if (!obj || typeof obj !== "object" || Array.isArray(obj)) {
+      if (end < 0) break;
+      i = end;
+      continue;
+    }
+    const nameVal = obj["name"] ?? obj["tool"] ?? obj["tool_name"] ?? obj["function"];
+    const name = typeof nameVal === "string" ? nameVal.trim() : "";
+    if (!known.has(name)) {
+      if (end < 0) break;
+      i = end;
+      continue;
+    }
+    let rawArgs = obj["parameters"] ?? obj["arguments"] ?? obj["args"] ?? obj["input"] ?? {};
+    if (typeof rawArgs === "string") {
+      try {
+        rawArgs = JSON.parse(rawArgs);
+      } catch {
+        rawArgs = {};
+      }
+    }
+    const argsObj = rawArgs && typeof rawArgs === "object" && !Array.isArray(rawArgs) ? rawArgs : {};
+    calls.push({ name, arguments: JSON.stringify(argsObj) });
+    spans.push([i, end >= 0 ? end + 1 : text2.length]);
+    if (end < 0) break;
+    i = end;
+  }
+  if (!calls.length) return { clean: text2, calls };
+  let clean = "";
+  let cursor = 0;
+  for (const [s, e] of spans) {
+    clean += text2.slice(cursor, s);
+    cursor = e;
+  }
+  clean += text2.slice(cursor);
+  clean = clean.replace(/```(?:json|tool_call|tool_code)?\s*```/gi, " ").replace(/```(?:json|tool_call|tool_code)?\s*$/i, " ").replace(/[ \t]{2,}/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+  return { clean, calls };
+}
 function resolveModel(agentId, agentModel, override) {
   const candidate = typeof override === "string" && override.trim() ? override : agentModel ?? ABBY_DEFAULT_MODEL;
   if (agentId === ABBY_ID && !candidate.startsWith("x-ai/") && !candidate.startsWith("z-ai/") && !candidate.startsWith("openai/") && !candidate.startsWith("nvidia/nemotron") && !candidate.startsWith("moonshotai/") && !candidate.startsWith("deepseek-ai/") && !candidate.startsWith("qwen/") && !candidate.startsWith("mistralai/") && !candidate.startsWith("meta/") && !candidate.startsWith("or:") && // explicit OpenRouter selection
@@ -118793,7 +118878,7 @@ async function completeChat(model, system, user, maxTokens = llmMaxTokens()) {
   traceLlmRun({ name: "completeChat", model, input: { system, user }, output: out, startedAt });
   return out;
 }
-function normalizeAssistantMessage(msg) {
+function normalizeAssistantMessage(msg, knownToolNames = []) {
   let content = msg?.content ?? null;
   let toolCalls = msg?.tool_calls;
   if ((!toolCalls || toolCalls.length === 0) && typeof content === "string" && content.includes("<|tool_call")) {
@@ -118808,10 +118893,23 @@ function normalizeAssistantMessage(msg) {
     }
     content = rescued.clean || null;
   }
+  if ((!toolCalls || toolCalls.length === 0) && typeof content === "string" && content.includes("{") && knownToolNames.length) {
+    const rescued = rescuePlainJsonToolCalls(content, knownToolNames);
+    if (rescued.calls.length) {
+      toolCalls = rescued.calls.map((c, i) => ({
+        id: `rescued_json_${Date.now()}_${i}`,
+        type: "function",
+        function: { name: c.name, arguments: c.arguments }
+      }));
+      logger.warn({ count: toolCalls.length }, "rescued plain-JSON tool calls the model emitted as text content");
+      content = rescued.clean || null;
+    }
+  }
   return { role: "assistant", content, tool_calls: toolCalls };
 }
 async function completeChatTurn(model, messages, tools) {
   const payload = { messages, stream: false, max_tokens: llmMaxTokens() };
+  const knownToolNames = tools.map((t) => t["function"]?.name).filter((n) => typeof n === "string");
   if (tools.length) {
     payload["tools"] = tools;
     payload["tool_choice"] = "auto";
@@ -118835,7 +118933,7 @@ async function completeChatTurn(model, messages, tools) {
           const m3 = d3?.choices?.[0]?.message;
           if (m3) {
             logger.info({ model, budget }, "tool turn recovered via 402 budget-fit retry");
-            return normalizeAssistantMessage(m3);
+            return normalizeAssistantMessage(m3, knownToolNames);
           }
         }
       } catch (e) {
@@ -118856,7 +118954,7 @@ async function completeChatTurn(model, messages, tools) {
           const fmsg = fdata?.choices?.[0]?.message;
           if (fmsg) {
             logger.info({ from: llmReq.model, to: fb.model }, "tool turn recovered on secondary model after primary failure");
-            return normalizeAssistantMessage(fmsg);
+            return normalizeAssistantMessage(fmsg, knownToolNames);
           }
         }
       }
@@ -118866,7 +118964,7 @@ async function completeChatTurn(model, messages, tools) {
     throw new Error(`NVIDIA NIM ${r.status}: ${errText}`);
   }
   const data = await r.json();
-  return normalizeAssistantMessage(data?.choices?.[0]?.message);
+  return normalizeAssistantMessage(data?.choices?.[0]?.message, knownToolNames);
 }
 function summarizeArgs(args) {
   return Object.entries(args).map(([k, v]) => `${k}=${JSON.stringify(v).slice(0, 60)}`).join(" ").slice(0, 160);
