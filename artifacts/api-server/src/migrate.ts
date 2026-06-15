@@ -258,8 +258,8 @@ WHERE NOT EXISTS (SELECT 1 FROM agents WHERE name = 'SCOUT')
 const SEED_FORGE = `
 INSERT INTO agents (id, name, role, description, status, color, avatar_initials, model, capabilities)
 SELECT 5, 'FORGE', 'Code & Deploy Specialist',
-  'Code & deploy specialist — acts only when ABBY assigns engineering work. Writes, runs, and verifies code in the sandbox, opens repository PRs, and calls REST APIs; reports real run output, never guesses.',
-  'idle', '#f59e0b', 'FG', 'moonshotai/kimi-k2.6', ARRAY['code','execution','api','files']
+  'Code & deploy specialist — acts only when ABBY assigns engineering work. Writes, runs, and verifies code in the sandbox, opens repository PRs, and calls REST APIs. Researches docs/errors online (search + crawl) and self-learns when it hits something it does not know; reports real run output, never guesses.',
+  'idle', '#f59e0b', 'FG', 'moonshotai/kimi-k2.6', ARRAY['code','execution','api','files','research','self-learn']
 WHERE NOT EXISTS (SELECT 1 FROM agents WHERE name = 'FORGE')
 `;
 
@@ -323,8 +323,8 @@ const AGENT_CAPABILITIES: Record<number, string[]> = {
   3: ["composio_apps", "composio_tools", "composio_action", "instagram_post", "social_accounts", "social_api", "browser_login", "marketing_playbook", "render_card", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task"],
   // SCOUT — research & web intelligence ONLY.
   4: ["web_search", "web_scrape", "web_screenshot", "tier1_sources", "site_crawl", "site_crawl_status", "http_request", "memory_search", "memory_write"],
-  // FORGE — code & deploy ONLY.
-  5: ["code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "http_request", "save_artifact", "pdf_generate", "memory_search", "memory_write"],
+  // FORGE — code & deploy + research-when-stuck (search/crawl/self-learn).
+  5: ["code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "http_request", "web_search", "web_scrape", "web_screenshot", "tier1_sources", "site_crawl", "site_crawl_status", "save_artifact", "pdf_generate", "memory_search", "memory_write"],
   // QUILL — documents & artifacts ONLY.
   6: ["save_artifact", "pdf_generate", "memory_search"],
 };

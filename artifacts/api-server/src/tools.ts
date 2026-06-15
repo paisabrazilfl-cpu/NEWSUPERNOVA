@@ -2596,7 +2596,7 @@ export const AGENT_TOOLS: Record<number, string[]> = {
   2: ["image_generate", "video_generate"], // AVVY — image + video generation ONLY (free HF images + A2E video); acts only when ABBY assigns it
   3: ["composio_apps", "composio_tools", "composio_action", "instagram_post", "social_accounts", "social_api", "browser_login", "marketing_playbook", "render_card", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task"], // BUZZ — social media + Composio ONLY; acts only when ABBY assigns it
   4: ["web_search", "web_scrape", "web_screenshot", "tier1_sources", "site_crawl", "site_crawl_status", "http_request", "memory_search", "memory_write"], // SCOUT — research & web ONLY
-  5: ["code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "http_request", "save_artifact", "pdf_generate", "memory_search", "memory_write"], // FORGE — code & deploy ONLY
+  5: ["code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "http_request", "web_search", "web_scrape", "web_screenshot", "tier1_sources", "site_crawl", "site_crawl_status", "save_artifact", "pdf_generate", "memory_search", "memory_write"], // FORGE — code & deploy + research-when-stuck (search/crawl/self-learn)
   6: ["save_artifact", "pdf_generate", "memory_search"], // QUILL — documents & artifacts ONLY
 };
 

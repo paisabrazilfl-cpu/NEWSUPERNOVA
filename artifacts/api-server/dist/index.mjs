@@ -112613,8 +112613,8 @@ IN-PROGRESS TASKS (${pendingTasks.length}):`);
       // BUZZ — social media + Composio ONLY; acts only when ABBY assigns it
       4: ["web_search", "web_scrape", "web_screenshot", "tier1_sources", "site_crawl", "site_crawl_status", "http_request", "memory_search", "memory_write"],
       // SCOUT — research & web ONLY
-      5: ["code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "http_request", "save_artifact", "pdf_generate", "memory_search", "memory_write"],
-      // FORGE — code & deploy ONLY
+      5: ["code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "http_request", "web_search", "web_scrape", "web_screenshot", "tier1_sources", "site_crawl", "site_crawl_status", "save_artifact", "pdf_generate", "memory_search", "memory_write"],
+      // FORGE — code & deploy + research-when-stuck (search/crawl/self-learn)
       6: ["save_artifact", "pdf_generate", "memory_search"]
       // QUILL — documents & artifacts ONLY
     };
@@ -117776,11 +117776,18 @@ ${MARKETING_ENGINE_POINTER}`,
 WHAT YOU DO: find real, current information on the live web. Use web_search for queries, web_scrape/web_screenshot to read specific pages, site_crawl for whole sites, tier1_sources for authoritative starting points, and http_request for APIs. Store durable findings with memory_write; check memory_search first to avoid re-researching.
 
 RULES: work ONLY from content a tool actually returned this run, and CITE the real URLs you fetched. Cross-check key facts across at least two independent sources. NEVER fabricate a source, quote, statistic, or URL. If a search/scrape tool fails because a provider is OUT OF CREDITS, RATE-LIMITED (429/432), or BLOCKED \u2014 that is an infrastructure limit you CANNOT fix by researching it. Do NOT research the error or loop: report the blocker plainly (which providers are down) and deliver the best answer from whatever sources DID return, marking gaps as unverified.`,
-  5: `You are FORGE, the code & deploy specialist. ABBY gives the orders; you act ONLY when assigned engineering work \u2014 nothing else.
+  5: `You are FORGE, the code & deploy specialist \u2014 a senior engineer. ABBY gives the orders; you act ONLY when assigned engineering work \u2014 nothing else.
 
-WHAT YOU DO: write, run, and verify code in the sandbox (code_exec / sandbox_exec), open repository PRs (sandbox_repo_pr), call REST APIs (http_request), and save code/artifacts. Prefer working, verified solutions \u2014 RUN the code and report its real output rather than guessing.
+WHAT YOU DO: write, run, and verify code in the sandbox (code_exec / sandbox_exec), open repository PRs (sandbox_repo_pr), call REST APIs (http_request, auto-authenticated for GitHub), and save code/artifacts. Prefer working, VERIFIED solutions \u2014 RUN the code and report its real output rather than guessing.
 
-RULES: never claim success without evidence. Build a quick mental repo map, localize, patch surgically, then VERIFY by running. If the tools can't inspect or run something, say so and mark the result UNVERIFIED. Report exact errors; never invent output, file sizes, or "tested" claims.`,
+RESEARCH WHEN YOU DON'T KNOW (this is mandatory, not optional): you are NOT expected to already know every API, library, framework, version, or error. The moment you are unsure how something works, or you hit an error/exception/build failure you don't fully understand \u2014 STOP guessing and FIND OUT:
+- web_search the exact error message, library name, or "how to <X> in <lib/lang>"; pull the OFFICIAL docs with web_scrape (use tier1_sources / the project's real docs site, not random blogs); site_crawl a docs site when you need several pages.
+- Read the real docs/source, THEN write code grounded in what you found \u2014 cite where it matters.
+- Loop until it works: run \u2192 read the real error \u2192 research the fix \u2192 patch \u2192 re-run. Repeat as many times as needed; do not stop at the first failure and do not fabricate that it works.
+
+SELF-LEARN: before starting, memory_search for prior lessons on this stack/error. After you solve something non-obvious (a tricky fix, an API quirk, a working pattern), memory_write a concise PROBLEM \u2192 SOLUTION lesson with the source, so next time it's instant.
+
+DISCIPLINE: build a repo map \u2192 localize \u2192 patch surgically \u2192 VERIFY by running. Never claim success without evidence; if the tools can't inspect or run something, say so and mark it UNVERIFIED. Report exact errors and real run output \u2014 never invented output, file sizes, or "tested" claims.`,
   6: `You are QUILL, the documents & artifacts specialist. ABBY gives the orders; you act ONLY when assigned a deliverable file \u2014 nothing else.
 
 WHAT YOU DO: produce REAL, downloadable files. Use pdf_generate for any PDF (report, plan, brief, guide), and save_artifact for other deliverable files (markdown, CSV, JSON, text); both return a genuine download link. Check memory_search if you need prior context.
@@ -119292,6 +119299,7 @@ Execute the directive now. Use your tools for anything requiring real data or co
       await db.update(agentsTable).set({ status: "executing" }).where(eq(agentsTable.id, agent.id));
       let madeProgress = false;
       const stepFailed = /* @__PURE__ */ new Set();
+      let stepInfraError = false;
       for (const { call, args: parsedArgs, truncated } of parsed) {
         const name = call.function?.name ?? "unknown";
         const [tc] = await db.insert(toolCallsTable).values({ agentId: agent.id, toolName: name, args: JSON.stringify(parsedArgs).slice(0, 2e3), status: "running" }).returning();
@@ -119348,13 +119356,19 @@ ${toolResult.slice(0, 1400)}${toolResult.length > 1400 ? "\n\u2026" : ""}`,
         if (!ok) {
           failedTools.add(name);
           stepFailed.add(name);
+          if (/\b(402|429|432)\b|out of (searches|credits)|exceeds? your plan|usage limit|insufficient credits|credit limit|quota|rate limit|too many requests|billing|hard limit|unauthorized|invalid (api )?key|forbidden/i.test(toolResult)) {
+            stepInfraError = true;
+          }
         }
       }
       if (stepFailed.size > 0) {
         const failedNames = [...stepFailed].join(", ");
         messages.push({
           role: "user",
-          content: `[SELF-LEARN] ${failedNames} failed. Before retrying, follow the self-learning protocol: (1) memory_search for a prior lesson about this error, (2) if no lesson found, web_search for how to fix it, then web_scrape the best result, (3) retry with the fix applied, (4) if it works, memory_write the lesson as "PROBLEM \u2192 SOLUTION (evidence)" tagged "lesson,self-learned". Do NOT repeat the exact same failing call without changing something.`
+          content: stepInfraError ? (
+            // Infrastructure/credit/quota/auth limit — NOT research-fixable. Do not loop.
+            `[BLOCKER] ${failedNames} failed with an INFRASTRUCTURE/credit/quota/auth limit (e.g. out of credits, 402/429, rate limit, bad key). This CANNOT be fixed by researching it online \u2014 do NOT web_search the error or retry the same call in a loop. Instead: (a) if another tool/provider can do the job, use it; (b) otherwise proceed with what you already have and finish the task as far as possible; (c) report the blocker plainly to the operator (which service/limit) and mark the affected part UNVERIFIED. Move on.`
+          ) : `[SELF-LEARN] ${failedNames} failed. Before retrying, follow the self-learning protocol: (1) memory_search for a prior lesson about this error, (2) if no lesson found, web_search for how to fix it, then web_scrape the best result, (3) retry with the fix applied, (4) if it works, memory_write the lesson as "PROBLEM \u2192 SOLUTION (evidence)" tagged "lesson,self-learned". Do NOT repeat the exact same failing call without changing something.`
         });
       }
       if (taskId) {
@@ -122459,8 +122473,8 @@ WHERE NOT EXISTS (SELECT 1 FROM agents WHERE name = 'SCOUT')
 var SEED_FORGE = `
 INSERT INTO agents (id, name, role, description, status, color, avatar_initials, model, capabilities)
 SELECT 5, 'FORGE', 'Code & Deploy Specialist',
-  'Code & deploy specialist \u2014 acts only when ABBY assigns engineering work. Writes, runs, and verifies code in the sandbox, opens repository PRs, and calls REST APIs; reports real run output, never guesses.',
-  'idle', '#f59e0b', 'FG', 'moonshotai/kimi-k2.6', ARRAY['code','execution','api','files']
+  'Code & deploy specialist \u2014 acts only when ABBY assigns engineering work. Writes, runs, and verifies code in the sandbox, opens repository PRs, and calls REST APIs. Researches docs/errors online (search + crawl) and self-learns when it hits something it does not know; reports real run output, never guesses.',
+  'idle', '#f59e0b', 'FG', 'moonshotai/kimi-k2.6', ARRAY['code','execution','api','files','research','self-learn']
 WHERE NOT EXISTS (SELECT 1 FROM agents WHERE name = 'FORGE')
 `;
 var SEED_QUILL = `
@@ -122504,8 +122518,8 @@ var AGENT_CAPABILITIES = {
   3: ["composio_apps", "composio_tools", "composio_action", "instagram_post", "social_accounts", "social_api", "browser_login", "marketing_playbook", "render_card", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task"],
   // SCOUT — research & web intelligence ONLY.
   4: ["web_search", "web_scrape", "web_screenshot", "tier1_sources", "site_crawl", "site_crawl_status", "http_request", "memory_search", "memory_write"],
-  // FORGE — code & deploy ONLY.
-  5: ["code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "http_request", "save_artifact", "pdf_generate", "memory_search", "memory_write"],
+  // FORGE — code & deploy + research-when-stuck (search/crawl/self-learn).
+  5: ["code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "http_request", "web_search", "web_scrape", "web_screenshot", "tier1_sources", "site_crawl", "site_crawl_status", "save_artifact", "pdf_generate", "memory_search", "memory_write"],
   // QUILL — documents & artifacts ONLY.
   6: ["save_artifact", "pdf_generate", "memory_search"]
 };
