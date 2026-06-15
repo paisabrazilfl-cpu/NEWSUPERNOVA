@@ -21,7 +21,7 @@ export interface AgentStateView {
 
 const STATES: Record<string, AgentStateView> = {
   idle: { label: "Idle", color: "#8a8f98", icon: Circle, active: false, attention: false },
-  thinking: { label: "Planning", color: "#00e5ff", icon: Sparkles, active: true, attention: false },
+  thinking: { label: "Planning", color: "#d97757", icon: Sparkles, active: true, attention: false },
   executing: { label: "Working", color: "#22c55e", icon: Loader2, active: true, attention: false },
   waiting: { label: "Waiting", color: "#3b82f6", icon: Clock, active: false, attention: false },
   hitl: { label: "Needs you", color: "#f59e0b", icon: Hand, active: true, attention: true },

@@ -56,7 +56,7 @@ const components: Components = {
   ol: ({ children }) => <ol className="list-decimal pl-5 my-1.5 space-y-0.5">{children}</ol>,
   li: ({ children }) => <li className="leading-relaxed">{children}</li>,
   blockquote: ({ children }) => (
-    <blockquote className="border-l-2 border-[#00e5ff]/50 pl-3 my-2 text-muted-foreground italic">{children}</blockquote>
+    <blockquote className="border-l-2 border-[#d97757]/50 pl-3 my-2 text-muted-foreground italic">{children}</blockquote>
   ),
   hr: () => <hr className="my-3 border-card-border" />,
   table: ({ children }) => (
@@ -78,8 +78,8 @@ const components: Components = {
         {...(isDownload ? { download: "" } : {})}
         className={
           isDownload
-            ? "inline-flex items-center gap-1.5 my-1 rounded-md border border-[#00e5ff]/50 bg-[#00e5ff]/10 px-2.5 py-1 text-sm font-medium text-[#00e5ff] hover:bg-[#00e5ff]/20 transition-colors no-underline"
-            : "text-[#00e5ff] underline underline-offset-2 hover:text-[#00e5ff]/80 break-words"
+            ? "inline-flex items-center gap-1.5 my-1 rounded-md border border-[#d97757]/50 bg-[#d97757]/10 px-2.5 py-1 text-sm font-medium text-[#d97757] hover:bg-[#d97757]/20 transition-colors no-underline"
+            : "text-[#d97757] underline underline-offset-2 hover:text-[#d97757]/80 break-words"
         }
       >
         {isDownload ? <>⬇ {children}</> : children}

@@ -22,8 +22,8 @@ interface CronJob {
 }
 
 const AGENT_INFO: Record<number, { name: string; color: string; initials: string }> = {
-  1: { name: "ABBY",    color: "#00e5ff", initials: "AB" },
-  2: { name: "FORGE",   color: "#bf00ff", initials: "FG" },
+  1: { name: "ABBY",    color: "#d97757", initials: "AB" },
+  2: { name: "FORGE",   color: "#d97757", initials: "FG" },
   3: { name: "CRAWLER", color: "#0066ff", initials: "CR" },
   4: { name: "VAULT",   color: "#00cc88", initials: "VT" },
   5: { name: "WIRE",    color: "#ff6b00", initials: "WR" },
@@ -147,9 +147,9 @@ export default function CronPage() {
       {/* Stats */}
       <div className="grid grid-cols-3 gap-4">
         {[
-          { label: "Active", value: activeCount, color: "#00e5ff", icon: Activity },
+          { label: "Active", value: activeCount, color: "#d97757", icon: Activity },
           { label: "Paused", value: pausedCount, color: "#71717a", icon: Pause },
-          { label: "Total Runs", value: totalRuns, color: "#bf00ff", icon: CheckCircle },
+          { label: "Total Runs", value: totalRuns, color: "#d97757", icon: CheckCircle },
         ].map(({ label, value, color, icon: Icon }) => (
           <div key={label} className="bg-card border border-card-border rounded-xl p-4 flex items-center gap-3">
             <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ backgroundColor: `${color}15`, border: `1px solid ${color}30` }}>

@@ -76,7 +76,7 @@ function OperatorGate() {
       >
         <div className="flex flex-col items-center text-center gap-3">
           <div className="w-14 h-14 bg-muted rounded-lg flex items-center justify-center border border-muted-border">
-            <ShieldAlert className="w-7 h-7 text-[#bf00ff]" />
+            <ShieldAlert className="w-7 h-7 text-[#d97757]" />
           </div>
           <div>
             <h1 className="text-xl font-bold tracking-tight text-foreground">OPERATOR SIGN-IN</h1>
@@ -90,13 +90,13 @@ function OperatorGate() {
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           placeholder="••••••••••••••••"
-          className="w-full bg-background border border-muted-border rounded-md px-3 py-2 text-sm text-foreground font-mono focus:outline-none focus:border-[#bf00ff] transition-colors"
+          className="w-full bg-background border border-muted-border rounded-md px-3 py-2 text-sm text-foreground font-mono focus:outline-none focus:border-[#d97757] transition-colors"
         />
         {error && <p className="text-sm text-[#ff2d78]">{error}</p>}
         <button
           type="submit"
           disabled={login.isPending}
-          className="w-full flex items-center justify-center gap-2 bg-[#bf00ff]/10 hover:bg-[#bf00ff]/20 border border-[#bf00ff]/50 text-[#bf00ff] rounded-md px-4 py-2 text-sm font-semibold uppercase tracking-wider transition-colors disabled:opacity-50"
+          className="w-full flex items-center justify-center gap-2 bg-[#d97757]/10 hover:bg-[#d97757]/20 border border-[#d97757]/50 text-[#d97757] rounded-md px-4 py-2 text-sm font-semibold uppercase tracking-wider transition-colors disabled:opacity-50"
         >
           <Lock className="w-4 h-4" />
           {login.isPending ? "Authenticating…" : "Sign In"}

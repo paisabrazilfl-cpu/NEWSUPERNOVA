@@ -41,7 +41,7 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
       <div className="hidden md:flex w-[88px] flex-shrink-0 bg-card border-r border-card-border flex-col items-center py-4 z-20">
         <Link href="/" data-testid="link-home-logo">
           <div className="flex flex-col items-center gap-1.5 mb-5 cursor-pointer group">
-            <div className="w-11 h-11 rounded-xl bg-primary/10 flex items-center justify-center border border-primary/20 shadow-[0_0_15px_rgba(0,255,255,0.15)] transition-transform group-hover:scale-105">
+            <div className="w-11 h-11 rounded-xl bg-primary/10 flex items-center justify-center border border-primary/20 shadow-[0_0_15px_rgba(217,119,87,0.15)] transition-transform group-hover:scale-105">
               <ShieldAlert className="w-6 h-6 text-primary" />
             </div>
             <span className="text-[10px] font-bold tracking-[0.18em] text-foreground/80 leading-none">OPENCLAW</span>
