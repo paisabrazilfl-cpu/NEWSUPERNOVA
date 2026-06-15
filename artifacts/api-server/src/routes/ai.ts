@@ -769,12 +769,25 @@ const BITDEER_FEATURED_MODELS = [
 // List available models — NIM curated catalog + OpenRouter + Bitdeer when configured.
 router.get("/ai/models", async (_req, res) => {
   const { openrouterConfigured, bitdeerConfigured } = await import("../lib/integrations");
+  // Tag every model with the provider (GPU backend) that runs it, derived from
+  // the id prefix: "or:" → OpenRouter, "bd:" → Bitdeer, bare → NVIDIA NIM.
+  // The frontend uses this to power the provider/GPU dropdown filter.
+  const tag = (m: { id: string }) => ({
+    ...m,
+    provider: m.id.startsWith("or:") ? "openrouter" : m.id.startsWith("bd:") ? "bitdeer" : "nim",
+  });
   const models = [
-    ...NIM_FEATURED_MODELS,
-    ...(openrouterConfigured() ? OPENROUTER_FEATURED_MODELS : []),
-    ...(bitdeerConfigured() ? BITDEER_FEATURED_MODELS : []),
+    ...NIM_FEATURED_MODELS.map(tag),
+    ...(openrouterConfigured() ? OPENROUTER_FEATURED_MODELS.map(tag) : []),
+    ...(bitdeerConfigured() ? BITDEER_FEATURED_MODELS.map(tag) : []),
   ];
-  res.json({ models });
+  // List of which providers are currently active (have a key configured).
+  const providers = [
+    { id: "nim", name: "NVIDIA NIM", active: true },
+    { id: "openrouter", name: "OpenRouter", active: openrouterConfigured() },
+    { id: "bitdeer", name: "Bitdeer GPU", active: bitdeerConfigured() },
+  ];
+  res.json({ models, providers });
 });
 
 // SSE streaming AI chat — POST /api/ai/chat
