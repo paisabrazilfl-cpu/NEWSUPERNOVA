@@ -1691,7 +1691,7 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
       // ANY failure — exactly like web_search — so one model outage, a content
       // refusal, or an out-of-credit key never blocks the swarm. `model`
       // reorders the chain (routes the job) but keeps the rest as fallback.
-      type ImgModel = { id: string; label: string; base: string; key?: string; tags: string[] };
+      type ImgModel = { id: string; label: string; base: string; key?: string; tags: string[]; kind?: "openai" | "hf" };
       const diBase = (process.env["IMAGE_BASE_URL"] ?? "https://api.deepinfra.com/v1/openai").replace(/\/$/, "");
       const diKey = process.env["IMAGE_API_KEY"] || process.env["DEEPINFRA_API_KEY"];
       const oaBase = (process.env["OPENAI_BASE_URL"] ?? "https://api.openai.com/v1").replace(/\/$/, "");
@@ -1708,6 +1708,17 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
       const di = (id: string, label: string, tags: string[]): ImgModel => ({ id, label, base: diBase, key: diKey, tags });
       const bitdeer: ImgModel = { id: bdImageModel, label: `Bitdeer ${bdImageModel}`, base: bdBase, key: bdKey, tags: ["bitdeer", "bd", "seedream", "imagen"] };
       const gptImage: ImgModel = { id: "gpt-image-1", label: "gpt-image-1", base: oaBase, key: oaKey, tags: ["openai", "dalle", "gpt"] };
+      // Hugging Face Inference — the FREE backend. FLUX.1-schnell on the free tier
+      // (a no-credit-card HF access token). Different protocol from the rest: POST
+      // {inputs} → raw image BYTES (not OpenAI /images/generations JSON), so it has
+      // its own request branch below (kind:"hf"). Keyed off a free HUGGINGFACE_API_KEY
+      // so image_generate has a zero-cost path that can't hit a billing limit.
+      // Verified 2026-06-15: router.huggingface.co/hf-inference route is live (401
+      // without a token — i.e. real, just needs the free key).
+      const hfBase = (process.env["HF_IMAGE_BASE_URL"] ?? "https://router.huggingface.co/hf-inference/models").replace(/\/$/, "");
+      const hfKey = process.env["HUGGINGFACE_API_KEY"] || process.env["HF_TOKEN"] || process.env["HF_API_KEY"];
+      const hfImageModel = process.env["HF_IMAGE_MODEL"] ?? "black-forest-labs/FLUX.1-schnell";
+      const huggingface: ImgModel = { id: hfImageModel, label: `Hugging Face ${hfImageModel}`, base: hfBase, key: hfKey, tags: ["hf", "huggingface", "free", "flux", "schnell"], kind: "hf" };
 
       let chain: ImgModel[];
       const custom = (process.env["IMAGE_MODELS"] ?? "").split(",").map((s) => s.trim()).filter(Boolean);
@@ -1719,9 +1730,11 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
         const slug = single.includes("/");
         chain = [slug ? di(single, single, []) : { ...gptImage, id: single, label: single }];
       } else {
-        // Default combined router: best photoreal+text/cost first, cheapest last,
-        // then the OpenAI backstop (only reachable when a DeepInfra key is absent).
+        // Default combined router: FREE Hugging Face first (zero cost, no billing
+        // limit) when its key is set, then best photoreal/cost, cheapest, then the
+        // OpenAI backstop (only reachable when a DeepInfra key is absent).
         chain = [
+          huggingface,
           di("black-forest-labs/FLUX-2-pro", "FLUX.2 pro", ["photo", "flux", "default", "photoreal", "logo", "poster", "banner"]),
           di("google/flash-image-2.5", "Gemini Flash Image 2.5", ["text", "edit", "gemini", "flash", "instruction", "nano"]),
           di("byteplus/Seedream-5.0-Lite", "Seedream 5.0 Lite", ["seedream", "bilingual", "byteplus"]),
@@ -1745,27 +1758,46 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
       }
 
       const candidates = chain.filter((m) => !!m.key).slice(0, 5); // try only key-backed models; cap fallbacks
-      if (!candidates.length) return "error: image generation is not configured (set IMAGE_API_KEY for DeepInfra, or OPENAI_API_KEY).";
+      if (!candidates.length) return "error: image generation is not configured. Set a FREE Hugging Face token (HUGGINGFACE_API_KEY — huggingface.co token, no card) for zero-cost generation, or IMAGE_API_KEY (DeepInfra) / BITDEER_API_KEY / OPENAI_API_KEY.";
 
       const errors: string[] = [];
       for (const m of candidates) {
         const ctrl = new AbortController();
         const timer = setTimeout(() => ctrl.abort(), 60000);
         try {
-          const r = await fetch(`${m.base}/images/generations`, {
-            method: "POST",
-            headers: { Authorization: `Bearer ${m.key}`, "Content-Type": "application/json" },
-            body: JSON.stringify({ model: m.id, prompt, size, n: 1 }),
-            signal: ctrl.signal,
-          });
-          const data = (await r.json()) as { data?: Array<{ b64_json?: string; url?: string }>; error?: { message?: string } };
-          if (!r.ok) { errors.push(`${m.label}: ${r.status} ${data?.error?.message ?? "request failed"}`); continue; }
-          let b64 = data.data?.[0]?.b64_json ?? "";
-          if (!b64 && data.data?.[0]?.url) {
-            const img = await fetch(data.data[0].url);
-            b64 = Buffer.from(await img.arrayBuffer()).toString("base64");
+          let b64 = "";
+          if (m.kind === "hf") {
+            // Hugging Face Inference: POST {inputs} → raw image bytes (or a JSON
+            // error, e.g. 503 while the model cold-starts). Free-tier path.
+            const r = await fetch(`${m.base}/${m.id}`, {
+              method: "POST",
+              headers: { Authorization: `Bearer ${m.key}`, "Content-Type": "application/json", Accept: "image/png" },
+              body: JSON.stringify({ inputs: prompt }),
+              signal: ctrl.signal,
+            });
+            if (!r.ok) {
+              let detail = "request failed";
+              try { const j = (await r.json()) as { error?: string }; if (j?.error) detail = j.error; } catch { /* binary/empty body */ }
+              errors.push(`${m.label}: ${r.status} ${detail}`); continue;
+            }
+            b64 = Buffer.from(await r.arrayBuffer()).toString("base64");
+            if (!b64) { errors.push(`${m.label}: returned no image data`); continue; }
+          } else {
+            const r = await fetch(`${m.base}/images/generations`, {
+              method: "POST",
+              headers: { Authorization: `Bearer ${m.key}`, "Content-Type": "application/json" },
+              body: JSON.stringify({ model: m.id, prompt, size, n: 1 }),
+              signal: ctrl.signal,
+            });
+            const data = (await r.json()) as { data?: Array<{ b64_json?: string; url?: string }>; error?: { message?: string } };
+            if (!r.ok) { errors.push(`${m.label}: ${r.status} ${data?.error?.message ?? "request failed"}`); continue; }
+            b64 = data.data?.[0]?.b64_json ?? "";
+            if (!b64 && data.data?.[0]?.url) {
+              const img = await fetch(data.data[0].url);
+              b64 = Buffer.from(await img.arrayBuffer()).toString("base64");
+            }
+            if (!b64) { errors.push(`${m.label}: returned no image data`); continue; }
           }
-          if (!b64) { errors.push(`${m.label}: returned no image data`); continue; }
           const buf = Buffer.from(b64, "base64");
           const filename = (args["filename"] != null ? String(args["filename"]) : prompt.slice(0, 40).replace(/[^a-z0-9]+/gi, "_")).replace(/\.(png|jpg|jpeg)$/i, "") + ".png";
           const [row] = await db
