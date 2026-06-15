@@ -119353,8 +119353,9 @@ Decompose this goal into precise, exhaustive, granular directives \u2014 ONE per
 Respond with ONLY a JSON array (no prose, no code fences) of objects shaped: {"agentId": <number>, "directive": "<single, fully-specified instruction>"}. Maximum 5 directives.`;
     const model = resolveModel(ABBY_ID, abby?.model, void 0);
     let directives;
-    if (forceAgentId && claws.some((c) => c.id === forceAgentId)) {
-      directives = [{ agentId: forceAgentId, directive: goal }];
+    const forcedId = forceAgentId == null ? void 0 : claws.some((c) => c.id === forceAgentId) ? forceAgentId : claws.find((c) => c.id === ABBY_ID)?.id ?? claws[0]?.id;
+    if (forcedId != null) {
+      directives = [{ agentId: forcedId, directive: goal }];
     } else {
       const planRaw = await completeChat(model, planSystem, planUser);
       directives = parseDirectives(planRaw, claws);

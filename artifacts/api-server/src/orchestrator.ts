@@ -1245,11 +1245,23 @@ Respond with ONLY a JSON array (no prose, no code fences) of objects shaped: {"a
     const model = resolveModel(ABBY_ID, abby?.model, undefined);
 
     // Single-agent path: dispatch the whole goal as ONE directive to the forced
-    // agent (must be a real CLAW). Skips ABBY's multi-directive planning entirely
-    // so the action runs exactly once on a capable agent.
+    // agent. Skips ABBY's multi-directive planning entirely so the action runs
+    // exactly once on a capable agent. In SOLO mode the legacy CLAW ids (e.g. the
+    // connected-account path forces #5/WIRE) no longer exist, so a forced id that
+    // isn't present collapses onto ABBY — who now holds every tool herself. This
+    // keeps single-shot actions (Instagram post, connected-account calls) running
+    // exactly once instead of silently falling through to multi-directive planning
+    // (which can loop or double-post). `forceAgentId` stays truthy, so the
+    // recovery/follow-up loops downstream remain correctly skipped.
     let directives: Directive[];
-    if (forceAgentId && claws.some((c) => c.id === forceAgentId)) {
-      directives = [{ agentId: forceAgentId, directive: goal }];
+    const forcedId =
+      forceAgentId == null
+        ? undefined
+        : claws.some((c) => c.id === forceAgentId)
+          ? forceAgentId
+          : (claws.find((c) => c.id === ABBY_ID)?.id ?? claws[0]?.id);
+    if (forcedId != null) {
+      directives = [{ agentId: forcedId, directive: goal }];
     } else {
       const planRaw = await completeChat(model, planSystem, planUser);
       directives = parseDirectives(planRaw, claws);
