@@ -242,11 +242,42 @@ SELECT 3, 'BUZZ', 'Social & Composio Specialist',
 WHERE NOT EXISTS (SELECT 1 FROM agents WHERE name = 'BUZZ')
 `;
 
+// SCOUT — research & web-intelligence specialist (id 4). Web search, scraping,
+// screenshots, crawling, Tier-1 sources, and the shared memory. Acts only when
+// ABBY assigns research.
+const SEED_SCOUT = `
+INSERT INTO agents (id, name, role, description, status, color, avatar_initials, model, capabilities)
+SELECT 4, 'SCOUT', 'Research & Web Specialist',
+  'Research & web-intelligence specialist — acts only when ABBY assigns research. Searches the live web, scrapes pages, captures screenshots, crawls sites, and works from Tier-1 sources; cites the real URLs it used.',
+  'idle', '#10b981', 'SC', 'moonshotai/kimi-k2.6', ARRAY['research','web','scraping','memory']
+WHERE NOT EXISTS (SELECT 1 FROM agents WHERE name = 'SCOUT')
+`;
+
+// FORGE — code & deploy specialist (id 5). Writes, runs, and verifies code in the
+// sandbox; opens repo PRs; calls APIs. Acts only when ABBY assigns engineering work.
+const SEED_FORGE = `
+INSERT INTO agents (id, name, role, description, status, color, avatar_initials, model, capabilities)
+SELECT 5, 'FORGE', 'Code & Deploy Specialist',
+  'Code & deploy specialist — acts only when ABBY assigns engineering work. Writes, runs, and verifies code in the sandbox, opens repository PRs, and calls REST APIs; reports real run output, never guesses.',
+  'idle', '#f59e0b', 'FG', 'moonshotai/kimi-k2.6', ARRAY['code','execution','api','files']
+WHERE NOT EXISTS (SELECT 1 FROM agents WHERE name = 'FORGE')
+`;
+
+// QUILL — documents & artifacts specialist (id 6). Produces real downloadable
+// files (PDF, saved artifacts). Acts only when ABBY assigns document/file output.
+const SEED_QUILL = `
+INSERT INTO agents (id, name, role, description, status, color, avatar_initials, model, capabilities)
+SELECT 6, 'QUILL', 'Documents & Artifacts Specialist',
+  'Documents & artifacts specialist — acts only when ABBY assigns a deliverable file. Produces real, downloadable documents (PDF) and saves artifacts, returning the genuine download link; never fabricates a URL.',
+  'idle', '#f43f5e', 'QL', 'moonshotai/kimi-k2.6', ARRAY['files','documents','pdf','memory']
+WHERE NOT EXISTS (SELECT 1 FROM agents WHERE name = 'QUILL')
+`;
+
 // Idempotently remove the legacy CLAW sub-agents from any existing DB so the swarm
 // is just ABBY (orchestrator) + AVVY (image/video) + BUZZ (social/Composio). Safe:
 // the agents table has no foreign-key dependents (messages/tool-calls store
 // agent_id as a plain value), so historical rows keep their attribution. Every boot.
-const REMOVE_OTHER_AGENTS = `DELETE FROM agents WHERE name NOT IN ('ABBY', 'AVVY', 'BUZZ')`;
+const REMOVE_OTHER_AGENTS = `DELETE FROM agents WHERE name NOT IN ('ABBY', 'AVVY', 'BUZZ', 'SCOUT', 'FORGE', 'QUILL')`;
 
 // 2026-06-10 NVIDIA NIM migration: upgrade each agent's LEGACY default model to
 // its NIM replacement (live-verified on integrate.api.nvidia.com — completion,
@@ -290,6 +321,12 @@ const AGENT_CAPABILITIES: Record<number, string[]> = {
   2: ["image_generate", "video_generate"],
   // BUZZ — social media + Composio ONLY (connected accounts, posting, scheduling).
   3: ["composio_apps", "composio_tools", "composio_action", "instagram_post", "social_accounts", "social_api", "browser_login", "marketing_playbook", "render_card", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task"],
+  // SCOUT — research & web intelligence ONLY.
+  4: ["web_search", "web_scrape", "web_screenshot", "tier1_sources", "site_crawl", "site_crawl_status", "http_request", "memory_search", "memory_write"],
+  // FORGE — code & deploy ONLY.
+  5: ["code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "http_request", "save_artifact", "pdf_generate", "memory_search", "memory_write"],
+  // QUILL — documents & artifacts ONLY.
+  6: ["save_artifact", "pdf_generate", "memory_search"],
 };
 
 export async function runMigrations(): Promise<void> {
@@ -319,6 +356,12 @@ export async function runMigrations(): Promise<void> {
     // Idempotently ensure BUZZ (social media & Composio specialist) exists.
     const buzz = await client.query(SEED_BUZZ);
     if (buzz.rowCount) logger.info("Seeded BUZZ — social media & Composio specialist");
+
+    // Idempotently ensure the task specialists exist (research / code / documents).
+    for (const [seed, label] of [[SEED_SCOUT, "SCOUT — research & web"], [SEED_FORGE, "FORGE — code & deploy"], [SEED_QUILL, "QUILL — documents & artifacts"]] as const) {
+      const r = await client.query(seed);
+      if (r.rowCount) logger.info(`Seeded ${label} specialist`);
+    }
 
     // Idempotently sync each agent's real tool capabilities.
     for (const [id, caps] of Object.entries(AGENT_CAPABILITIES)) {

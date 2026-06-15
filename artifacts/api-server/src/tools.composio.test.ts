@@ -11,8 +11,7 @@ vi.mock("@workspace/db", async (importOriginal) => {
 import { TOOL_REGISTRY, getToolNamesForAgent, isToolAllowed, buildCapabilityCard } from "./tools";
 
 const ABBY = 1;
-const WIRE = 5;
-const MR_NICE = 6;
+const BUZZ = 3; // social media & Composio specialist (was split across WIRE/MR.NICE)
 
 describe("Composio: agents know which apps are LIVE", () => {
   it("registers a composio_apps discovery tool", () => {
@@ -20,8 +19,8 @@ describe("Composio: agents know which apps are LIVE", () => {
     expect(TOOL_REGISTRY["composio_apps"]!.description.toLowerCase()).toContain("live");
   });
 
-  it("wires composio to ABBY, WIRE (API), and MR.NICE (social)", () => {
-    for (const id of [ABBY, WIRE, MR_NICE]) {
+  it("wires composio to ABBY and BUZZ (social/Composio specialist)", () => {
+    for (const id of [ABBY, BUZZ]) {
       expect(isToolAllowed(id, "composio_apps"), `agent #${id} should have composio_apps`).toBe(true);
       expect(isToolAllowed(id, "composio_action"), `agent #${id} should have composio_action`).toBe(true);
     }
@@ -34,19 +33,19 @@ describe("Composio: agents know which apps are LIVE", () => {
   it("provides a deterministic instagram_post tool wired to the social/API agents", () => {
     expect(TOOL_REGISTRY["instagram_post"]).toBeTruthy();
     expect(TOOL_REGISTRY["instagram_post"]!.description.toLowerCase()).toContain("permalink");
-    for (const id of [ABBY, WIRE, MR_NICE]) {
+    for (const id of [ABBY, BUZZ]) {
       expect(isToolAllowed(id, "instagram_post"), `agent #${id} should have instagram_post`).toBe(true);
     }
   });
 
-  it("WIRE's capability card instructs checking live Composio apps before acting", () => {
-    const card = buildCapabilityCard(WIRE);
+  it("BUZZ's capability card instructs checking live Composio apps before acting", () => {
+    const card = buildCapabilityCard(BUZZ);
     expect(card).toContain("composio_apps");
     expect(card.toLowerCase()).toContain("connect apps");
   });
 
-  it("getToolNamesForAgent lists composio_apps before composio_action for WIRE", () => {
-    const names = getToolNamesForAgent(WIRE);
+  it("getToolNamesForAgent lists composio_apps before composio_action for BUZZ", () => {
+    const names = getToolNamesForAgent(BUZZ);
     expect(names.indexOf("composio_apps")).toBeGreaterThanOrEqual(0);
     expect(names.indexOf("composio_apps")).toBeLessThan(names.indexOf("composio_action"));
   });

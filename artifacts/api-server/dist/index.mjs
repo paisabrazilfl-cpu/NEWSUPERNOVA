@@ -110775,20 +110775,26 @@ ${list}${md && !looksBlocked ? `
 ${clip3(md, 1500)}` : ""}`;
 }
 async function webSearch(query, limit) {
-  const providers = [
+  const now = Date.now();
+  const paidFirst = process.env["SEARCH_PAID_FIRST"] === "1";
+  const free = { name: "freecrawl", enabled: true, run: () => freecrawlSearch(query, limit) };
+  const paid = [
     { name: "serpapi", enabled: !!(process.env["SERP_API_KEY"] || process.env["SERP_AI_API_KEY"]), run: () => serpapiSearch(query, limit) },
     { name: "tavily", enabled: !!process.env["TAVILY_API_KEY"], run: () => tavilySearch(query, limit) },
     { name: "exa", enabled: !!process.env["EXA_API_KEY"], run: () => exaSearch(query, limit) },
-    { name: "firecrawl", enabled: !!process.env["FIRECRAWL_API_KEY"], run: () => firecrawlSearch(query, limit) },
-    // Always-on keyless backstop — keeps search working when the paid keys fail.
-    { name: "freecrawl", enabled: true, run: () => freecrawlSearch(query, limit) }
-  ].filter((p) => p.enabled);
+    { name: "firecrawl", enabled: !!process.env["FIRECRAWL_API_KEY"], run: () => firecrawlSearch(query, limit) }
+  ];
+  const providers = (paidFirst ? [...paid, free] : [free, ...paid]).filter((p) => p.enabled && !((PROVIDER_DRY_UNTIL.get(p.name) ?? 0) > now));
   const errors = [];
   for (const provider of providers) {
     try {
       return await provider.run();
     } catch (e) {
-      errors.push(`${provider.name}: ${String(e instanceof Error ? e.message : e).slice(0, 120)}`);
+      const msg = String(e instanceof Error ? e.message : e).slice(0, 160);
+      if (provider.name !== "freecrawl" && isQuotaError(msg)) {
+        PROVIDER_DRY_UNTIL.set(provider.name, now + PROVIDER_DRY_COOLDOWN_MS);
+      }
+      errors.push(`${provider.name}: ${msg.slice(0, 120)}`);
     }
   }
   return `error: all web search providers failed \u2014 ${errors.join("; ")}`;
@@ -111142,7 +111148,7 @@ async function runTool(toolName, args, ctx) {
   }
   return sanitizeForStorage(await def.run(args, ctx));
 }
-var import_pdf_lib, STEEL_BASE, FIRECRAWL_BASE, A2E_BASE, FREECRAWL_BASE, PDF_FOLD, artifactChunks, ARTIFACT_CHUNK_TTL_MS, ARTIFACT_CHUNK_MAX_CHARS, MEMORY_CANDIDATE_LIMIT, INTERNAL_META_RE, CODE_TIMEOUT_MS, CODE_OUTPUT_CAP, sandboxMode, TOOL_REGISTRY, ALL_TOOLS, AGENT_TOOLS;
+var import_pdf_lib, STEEL_BASE, FIRECRAWL_BASE, A2E_BASE, FREECRAWL_BASE, PDF_FOLD, artifactChunks, ARTIFACT_CHUNK_TTL_MS, ARTIFACT_CHUNK_MAX_CHARS, PROVIDER_DRY_UNTIL, PROVIDER_DRY_COOLDOWN_MS, isQuotaError, MEMORY_CANDIDATE_LIMIT, INTERNAL_META_RE, CODE_TIMEOUT_MS, CODE_OUTPUT_CAP, sandboxMode, TOOL_REGISTRY, ALL_TOOLS, AGENT_TOOLS;
 var init_tools = __esm({
   "src/tools.ts"() {
     "use strict";
@@ -111205,6 +111211,9 @@ var init_tools = __esm({
     artifactChunks = /* @__PURE__ */ new Map();
     ARTIFACT_CHUNK_TTL_MS = 15 * 6e4;
     ARTIFACT_CHUNK_MAX_CHARS = 30 * 1024 * 1024;
+    PROVIDER_DRY_UNTIL = /* @__PURE__ */ new Map();
+    PROVIDER_DRY_COOLDOWN_MS = 30 * 6e4;
+    isQuotaError = (msg) => /\b(402|429|432)\b|out of (searches|credits)|exceeds? your plan|usage limit|insufficient credits|credit limit|quota|rate limit|too many requests/i.test(msg);
     MEMORY_CANDIDATE_LIMIT = 1e3;
     INTERNAL_META_RE = /(vault[-\s]?(full[-\s]?state|state[-\s]?dump|rag|audit|targeted|secret)|swarm[-\s]?architecture|architecture[-\s]?(consolidated|definitions)|memory[-\s]?(audit|store[-\s]?audit)|rag[-\s]?(sweep|requery|response)|system topology|substrate audit|bundle matrix|sentinel|six[_\s]?zips|_directive_|self[-\s]?audit|abby[-\s]?claw[-\s]?memory)/i;
     CODE_TIMEOUT_MS = 8e3;
@@ -112602,12 +112611,12 @@ IN-PROGRESS TASKS (${pendingTasks.length}):`);
       // AVVY — image + video generation ONLY (free HF images + A2E video); acts only when ABBY assigns it
       3: ["composio_apps", "composio_tools", "composio_action", "instagram_post", "social_accounts", "social_api", "browser_login", "marketing_playbook", "render_card", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task"],
       // BUZZ — social media + Composio ONLY; acts only when ABBY assigns it
-      4: ["memory_write", "memory_search", "web_search", "tier1_sources", "web_scrape", "site_crawl", "site_crawl_status", "http_request", "calculator", "vault_list", "save_artifact", "pdf_generate", "image_generate", "heartbeat_respond", "send_message"],
-      // VAULT — memory/RAG
-      5: ["http_request", "web_scrape", "web_search", "tier1_sources", "site_crawl", "site_crawl_status", "marketing_playbook", "code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_tools", "composio_action", "instagram_post", "browser_login", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task", "save_artifact", "pdf_generate", "image_generate", "render_card", "heartbeat_respond", "send_message"],
-      // WIRE — APIs + scheduling
-      6: ["web_scrape", "web_search", "tier1_sources", "marketing_playbook", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_tools", "composio_action", "instagram_post", "browser_login", "save_artifact", "pdf_generate", "image_generate", "render_card", "heartbeat_respond", "send_message"]
-      // MR.NICE — social
+      4: ["web_search", "web_scrape", "web_screenshot", "tier1_sources", "site_crawl", "site_crawl_status", "http_request", "memory_search", "memory_write"],
+      // SCOUT — research & web ONLY
+      5: ["code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "http_request", "save_artifact", "pdf_generate", "memory_search", "memory_write"],
+      // FORGE — code & deploy ONLY
+      6: ["save_artifact", "pdf_generate", "memory_search"]
+      // QUILL — documents & artifacts ONLY
     };
   }
 });
@@ -117762,11 +117771,21 @@ HOW YOU WORK:
 RULES: act on REAL account data and report what actually happened \u2014 the real permalink/response, or the exact API error. NEVER answer "I don't have access to your personal account" (you act through the operator's connected integrations) and NEVER fabricate a success, permalink, or post id. PUBLIC-POST SAFEGUARD: post ONLY content created for this request; never pull from the operator's private files, memory, or confidential material.
 
 ${MARKETING_ENGINE_POINTER}`,
-  4: `You are VAULT, the memory and RAG specialist of the ABBY CLAW swarm. You manage the swarm's Postgres-backed vector memory \u2014 writing embedded entries and retrieving them by real cosine-similarity semantic search (with keyword fallback). Be precise and accurate; ground every answer in what is actually stored.`,
-  5: `You are WIRE, the API-integration specialist of the ABBY CLAW swarm. You connect external services, webhooks, and REST APIs, and schedule recurring work. You understand auth flows, rate limits, and data pipelines. Make the real call and report the real response; be direct and technical.`,
-  6: `You are MR.NICE, the social and communications specialist of the ABBY CLAW swarm. You manage social platforms and human-facing messaging through their official APIs. You are sharp, persuasive, and tone-aware \u2014 but you act on real account data and report what actually happened.
+  4: `You are SCOUT, the research & web-intelligence specialist. ABBY gives the orders; you act ONLY when assigned a research directive \u2014 nothing else.
 
-${MARKETING_ENGINE_POINTER}`
+WHAT YOU DO: find real, current information on the live web. Use web_search for queries, web_scrape/web_screenshot to read specific pages, site_crawl for whole sites, tier1_sources for authoritative starting points, and http_request for APIs. Store durable findings with memory_write; check memory_search first to avoid re-researching.
+
+RULES: work ONLY from content a tool actually returned this run, and CITE the real URLs you fetched. Cross-check key facts across at least two independent sources. NEVER fabricate a source, quote, statistic, or URL. If a search/scrape tool fails because a provider is OUT OF CREDITS, RATE-LIMITED (429/432), or BLOCKED \u2014 that is an infrastructure limit you CANNOT fix by researching it. Do NOT research the error or loop: report the blocker plainly (which providers are down) and deliver the best answer from whatever sources DID return, marking gaps as unverified.`,
+  5: `You are FORGE, the code & deploy specialist. ABBY gives the orders; you act ONLY when assigned engineering work \u2014 nothing else.
+
+WHAT YOU DO: write, run, and verify code in the sandbox (code_exec / sandbox_exec), open repository PRs (sandbox_repo_pr), call REST APIs (http_request), and save code/artifacts. Prefer working, verified solutions \u2014 RUN the code and report its real output rather than guessing.
+
+RULES: never claim success without evidence. Build a quick mental repo map, localize, patch surgically, then VERIFY by running. If the tools can't inspect or run something, say so and mark the result UNVERIFIED. Report exact errors; never invent output, file sizes, or "tested" claims.`,
+  6: `You are QUILL, the documents & artifacts specialist. ABBY gives the orders; you act ONLY when assigned a deliverable file \u2014 nothing else.
+
+WHAT YOU DO: produce REAL, downloadable files. Use pdf_generate for any PDF (report, plan, brief, guide), and save_artifact for other deliverable files (markdown, CSV, JSON, text); both return a genuine download link. Check memory_search if you need prior context.
+
+RULES: the ONLY real download URL is the one a tool returns \u2014 NEVER fabricate a link (no storage.googleapis.com etc.). Include the returned link in your result. Format documents cleanly (headings, bullets, numbered lists). Report the exact filename and size the tool produced.`
 };
 var CHAT_MODE_DIRECTIVE = `
 
@@ -119515,6 +119534,8 @@ ${sourceContext ?? ""}`);
 IMAGE/VIDEO ROUTING: AVVY is your image & video specialist and works ONLY when you assign her a directive. Route EVERY part of the goal that produces an IMAGE (picture, logo, art, render, mockup) or a VIDEO (clip, animation, moving content) to AVVY \u2014 she uses image_generate for stills (free) and video_generate for clips (A2E). Do not assign image/video generation to any other CLAW, and do not do it yourself.` : "";
     const buzzHint = hasBuzz ? `
 SOCIAL/COMPOSIO ROUTING: BUZZ is your social media & Composio specialist and works ONLY when you assign him a directive. Route EVERY part of the goal that posts to / reads from / acts on the operator's connected accounts (Instagram, Facebook, X, LinkedIn, TikTok, YouTube, Gmail, Slack, Notion, Calendar, Sheets, \u2026) or schedules social posts to BUZZ. If a social post needs an image or video, have AVVY create it first, then pass that URL to BUZZ to publish.` : "";
+    const delegateHint = claws.length > 1 ? `
+YOU ORCHESTRATE \u2014 DELEGATE: assign each sub-task to the SPECIALIST whose role fits it (research\u2192SCOUT, code/deploy\u2192FORGE, documents/PDF\u2192QUILL, image/video\u2192AVVY, social/accounts\u2192BUZZ). Each specialist acts only when you assign it. Keep work for yourself only when no specialist fits. Pick the RIGHT specialist per directive.` : "";
     const planUser = `Operator goal: "${goal}"
 ${sourceContext && sourceContext.trim() ? `
 The operator provided this source material to work from (decompose against THIS; the CLAWs will receive it too \u2014 do not tell them to search memory for it):
@@ -119522,7 +119543,7 @@ The operator provided this source material to work from (decompose against THIS;
 ${sourceContext.slice(0, 12e3)}
 """
 ` : ""}
-Available CLAWs you command: ${roster}.${avvyHint}${buzzHint}
+Available CLAWs you command: ${roster}.${delegateHint}${avvyHint}${buzzHint}
 
 Decompose this goal into precise, exhaustive, granular directives \u2014 ONE per CLAW that is genuinely relevant (skip CLAWs that add nothing). Together the directives must cover EVERY part of the goal; leave nothing implied. Each directive MUST be:
 - SELF-CONTAINED: state the exact objective, the concrete inputs/targets (specific https:// URLs, API endpoints, file names, or data), and the expected output and its format. Assume the CLAW sees ONLY this directive \u2014 no other context.
@@ -122428,7 +122449,28 @@ SELECT 3, 'BUZZ', 'Social & Composio Specialist',
   'idle', '#1d9bf0', 'BZ', 'moonshotai/kimi-k2.6', ARRAY['social','composio','api','automation','scheduling']
 WHERE NOT EXISTS (SELECT 1 FROM agents WHERE name = 'BUZZ')
 `;
-var REMOVE_OTHER_AGENTS = `DELETE FROM agents WHERE name NOT IN ('ABBY', 'AVVY', 'BUZZ')`;
+var SEED_SCOUT = `
+INSERT INTO agents (id, name, role, description, status, color, avatar_initials, model, capabilities)
+SELECT 4, 'SCOUT', 'Research & Web Specialist',
+  'Research & web-intelligence specialist \u2014 acts only when ABBY assigns research. Searches the live web, scrapes pages, captures screenshots, crawls sites, and works from Tier-1 sources; cites the real URLs it used.',
+  'idle', '#10b981', 'SC', 'moonshotai/kimi-k2.6', ARRAY['research','web','scraping','memory']
+WHERE NOT EXISTS (SELECT 1 FROM agents WHERE name = 'SCOUT')
+`;
+var SEED_FORGE = `
+INSERT INTO agents (id, name, role, description, status, color, avatar_initials, model, capabilities)
+SELECT 5, 'FORGE', 'Code & Deploy Specialist',
+  'Code & deploy specialist \u2014 acts only when ABBY assigns engineering work. Writes, runs, and verifies code in the sandbox, opens repository PRs, and calls REST APIs; reports real run output, never guesses.',
+  'idle', '#f59e0b', 'FG', 'moonshotai/kimi-k2.6', ARRAY['code','execution','api','files']
+WHERE NOT EXISTS (SELECT 1 FROM agents WHERE name = 'FORGE')
+`;
+var SEED_QUILL = `
+INSERT INTO agents (id, name, role, description, status, color, avatar_initials, model, capabilities)
+SELECT 6, 'QUILL', 'Documents & Artifacts Specialist',
+  'Documents & artifacts specialist \u2014 acts only when ABBY assigns a deliverable file. Produces real, downloadable documents (PDF) and saves artifacts, returning the genuine download link; never fabricates a URL.',
+  'idle', '#f43f5e', 'QL', 'moonshotai/kimi-k2.6', ARRAY['files','documents','pdf','memory']
+WHERE NOT EXISTS (SELECT 1 FROM agents WHERE name = 'QUILL')
+`;
+var REMOVE_OTHER_AGENTS = `DELETE FROM agents WHERE name NOT IN ('ABBY', 'AVVY', 'BUZZ', 'SCOUT', 'FORGE', 'QUILL')`;
 var AGENT_MODEL_UPGRADES = [
   ["x-ai/grok-4.3", "moonshotai/kimi-k2.6"],
   // 2026-06-10: nemotron-3-ultra-550b stalled live (45-60s, zero bytes) while
@@ -122459,7 +122501,13 @@ var AGENT_CAPABILITIES = {
   // AVVY — image + video ONLY (free HF image_generate + A2E video_generate).
   2: ["image_generate", "video_generate"],
   // BUZZ — social media + Composio ONLY (connected accounts, posting, scheduling).
-  3: ["composio_apps", "composio_tools", "composio_action", "instagram_post", "social_accounts", "social_api", "browser_login", "marketing_playbook", "render_card", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task"]
+  3: ["composio_apps", "composio_tools", "composio_action", "instagram_post", "social_accounts", "social_api", "browser_login", "marketing_playbook", "render_card", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task"],
+  // SCOUT — research & web intelligence ONLY.
+  4: ["web_search", "web_scrape", "web_screenshot", "tier1_sources", "site_crawl", "site_crawl_status", "http_request", "memory_search", "memory_write"],
+  // FORGE — code & deploy ONLY.
+  5: ["code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "http_request", "save_artifact", "pdf_generate", "memory_search", "memory_write"],
+  // QUILL — documents & artifacts ONLY.
+  6: ["save_artifact", "pdf_generate", "memory_search"]
 };
 async function runMigrations() {
   const client = await pool.connect();
@@ -122479,6 +122527,10 @@ async function runMigrations() {
     if (avvy.rowCount) logger.info("Seeded AVVY \u2014 image & video generation specialist");
     const buzz = await client.query(SEED_BUZZ);
     if (buzz.rowCount) logger.info("Seeded BUZZ \u2014 social media & Composio specialist");
+    for (const [seed, label] of [[SEED_SCOUT, "SCOUT \u2014 research & web"], [SEED_FORGE, "FORGE \u2014 code & deploy"], [SEED_QUILL, "QUILL \u2014 documents & artifacts"]]) {
+      const r = await client.query(seed);
+      if (r.rowCount) logger.info(`Seeded ${label} specialist`);
+    }
     for (const [id, caps] of Object.entries(AGENT_CAPABILITIES)) {
       await client.query("UPDATE agents SET capabilities = $1 WHERE id = $2", [caps, Number(id)]);
     }
