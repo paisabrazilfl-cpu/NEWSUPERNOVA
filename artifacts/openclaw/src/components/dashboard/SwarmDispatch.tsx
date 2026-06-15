@@ -68,7 +68,7 @@ export function SwarmDispatch({
             onClick={send}
             disabled={!value.trim() || sending}
             aria-label="Dispatch goal to the swarm"
-            className="p-2 rounded-lg bg-primary text-primary-foreground disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 transition-opacity shrink-0"
+            className="btn-3d btn-3d-sm p-2.5 disabled:cursor-not-allowed shrink-0"
           >
             {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : sent ? <Check className="w-4 h-4" /> : <Send className="w-4 h-4" />}
           </button>
