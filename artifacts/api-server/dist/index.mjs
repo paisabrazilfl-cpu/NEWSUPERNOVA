@@ -55061,7 +55061,8 @@ function integrationStatus() {
     { key: "inngest", name: "Inngest", category: "events", envVar: "INNGEST_EVENT_KEY", configured: has2("INNGEST_EVENT_KEY") },
     { key: "e2b", name: "E2B", category: "sandbox", envVar: "E2B_API_KEY", configured: has2("E2B_API_KEY") },
     { key: "composio", name: "Composio", category: "tools", envVar: "COMPOSIO_API_KEY", configured: has2("COMPOSIO_API_KEY") },
-    { key: "image-generation", name: "Image generation (image_generate)", category: "tools", envVar: "IMAGE_API_KEY", configured: has2("IMAGE_API_KEY") || has2("DEEPINFRA_API_KEY") || has2("OPENAI_API_KEY") || has2("HUGGINGFACE_API_KEY") || has2("HF_TOKEN") || has2("HF_API_KEY") || has2("BITDEER_API_KEY") }
+    { key: "image-generation", name: "Image generation (image_generate)", category: "tools", envVar: "IMAGE_API_KEY", configured: has2("IMAGE_API_KEY") || has2("DEEPINFRA_API_KEY") || has2("OPENAI_API_KEY") || has2("HUGGINGFACE_API_KEY") || has2("HF_TOKEN") || has2("HF_API_KEY") || has2("BITDEER_API_KEY") },
+    { key: "video-generation", name: "Video generation (video_generate \xB7 A2E)", category: "tools", envVar: "A2E_API_KEY", configured: has2("A2E_API_KEY") }
   ];
 }
 var NVIDIA_NIM_BASE, HELICONE_GATEWAY, nimKeyIndex, NIM_AUTH_COOLDOWN_MS, nimDisabledUntil, nimDegradedUntil, MODEL_STALL_COOLDOWN_MS, modelStallUntil, NIM_PREFIXES, NIM_MODEL_FALLBACKS, NIM_GENERIC_FALLBACK, NIM_MODEL_BANS, BITDEER_BASE, OPENROUTER_BASE, OPENROUTER_FALLBACK_MODEL, OR_MODEL_MAP, NIM_FAST_MODEL, E2B_PKG, E2B_TIMEOUT_MS;
@@ -111141,7 +111142,7 @@ async function runTool(toolName, args, ctx) {
   }
   return sanitizeForStorage(await def.run(args, ctx));
 }
-var import_pdf_lib, STEEL_BASE, FIRECRAWL_BASE, FREECRAWL_BASE, PDF_FOLD, artifactChunks, ARTIFACT_CHUNK_TTL_MS, ARTIFACT_CHUNK_MAX_CHARS, MEMORY_CANDIDATE_LIMIT, INTERNAL_META_RE, CODE_TIMEOUT_MS, CODE_OUTPUT_CAP, sandboxMode, TOOL_REGISTRY, ALL_TOOLS, AGENT_TOOLS;
+var import_pdf_lib, STEEL_BASE, FIRECRAWL_BASE, A2E_BASE, FREECRAWL_BASE, PDF_FOLD, artifactChunks, ARTIFACT_CHUNK_TTL_MS, ARTIFACT_CHUNK_MAX_CHARS, MEMORY_CANDIDATE_LIMIT, INTERNAL_META_RE, CODE_TIMEOUT_MS, CODE_OUTPUT_CAP, sandboxMode, TOOL_REGISTRY, ALL_TOOLS, AGENT_TOOLS;
 var init_tools = __esm({
   "src/tools.ts"() {
     "use strict";
@@ -111164,6 +111165,7 @@ var init_tools = __esm({
     import_pdf_lib = __toESM(require_cjs4(), 1);
     STEEL_BASE = "https://api.steel.dev/v1";
     FIRECRAWL_BASE = "https://api.firecrawl.dev/v1";
+    A2E_BASE = "https://video.a2e.ai/api/v1";
     FREECRAWL_BASE = process.env["FREECRAWL_URL"] ?? "https://freecrawl-api.onrender.com";
     PDF_FOLD = {
       "\u201C": '"',
@@ -111968,6 +111970,87 @@ Show it in your answer:
             }
           }
           return `error: all image models failed \u2014 ${errors.join("; ")}`;
+        }
+      },
+      video_generate: {
+        name: "video_generate",
+        description: "Generate a short VIDEO clip via A2E. Two modes: (1) ANIMATE an existing image \u2014 pass `image_url` (an ABSOLUTE public https URL, e.g. exactly the URL image_generate returns); (2) TEXT-TO-VIDEO \u2014 pass `prompt` only and it first generates a source image, then animates it. Returns a public video URL + a watch/download link. Use this whenever the operator wants a video, clip, animation, or moving/animated version of an image. Needs A2E_API_KEY (an A2E sk_ token; new accounts get free credits). Generation is asynchronous and can take 1\u20134 minutes.",
+        parameters: {
+          type: "object",
+          properties: {
+            prompt: { type: "string", description: "What the video should show. Used to generate the source image when no image_url is given." },
+            image_url: { type: "string", description: "Optional ABSOLUTE public https URL of an image to animate (e.g. the URL image_generate returns). If omitted, an image is generated from `prompt` first." },
+            duration: { type: "number", description: "Optional clip length in seconds." }
+          }
+        },
+        run: async (args) => {
+          const key = process.env["A2E_API_KEY"];
+          if (!key) return "error: video generation is not configured \u2014 set A2E_API_KEY (an A2E sk_ token from video.a2e.ai \u2192 Account > API Token; new accounts get free credits).";
+          const prompt = String(args["prompt"] ?? "").trim();
+          let imageUrl = String(args["image_url"] ?? "").trim();
+          const duration3 = Number(args["duration"]);
+          if (!imageUrl && !prompt) return "error: provide either image_url (an image to animate) or prompt (to generate a source image, then animate it).";
+          if (imageUrl && !/^https?:\/\//i.test(imageUrl)) return "error: image_url must be an absolute http(s) URL (use the URL image_generate returns).";
+          const headers = { Authorization: `Bearer ${key}`, "Content-Type": "application/json" };
+          const wait = (ms) => new Promise((res) => setTimeout(res, ms));
+          const a2eStart = async (path3, body) => {
+            const r = await fetch(`${A2E_BASE}${path3}`, { method: "POST", headers, body: JSON.stringify(body) });
+            const j = await r.json().catch(() => ({}));
+            if (!r.ok || j?.success === false) throw new Error(`A2E ${path3} ${r.status}: ${String(j?.message ?? j?.error ?? JSON.stringify(j)).slice(0, 200)}`);
+            const id = j?.data?.["_id"] ?? j?.data?.["id"] ?? j?._id;
+            if (!id) throw new Error(`A2E ${path3}: no task id in response ${JSON.stringify(j).slice(0, 200)}`);
+            return id;
+          };
+          const a2ePoll = async (path3, id, pick2, timeoutMs) => {
+            const deadline = Date.now() + timeoutMs;
+            let last = "";
+            while (Date.now() < deadline) {
+              await wait(6e3);
+              const r = await fetch(`${A2E_BASE}${path3}/${id}`, { headers });
+              const j = await r.json().catch(() => ({}));
+              const d = j?.data ?? {};
+              last = String(d["status"] ?? "").toLowerCase();
+              if (last === "completed" || last === "success" || last === "succeeded") {
+                const u = pick2(d);
+                if (u) return u;
+                throw new Error("A2E task completed but returned no output URL");
+              }
+              if (last === "failed" || last === "error") throw new Error(`A2E task failed: ${JSON.stringify(d).slice(0, 200)}`);
+            }
+            throw new Error(`A2E task still ${last || "processing"} after ${Math.round(timeoutMs / 1e3)}s \u2014 it may finish later; try again or check video.a2e.ai`);
+          };
+          try {
+            if (!imageUrl) {
+              const imgId = await a2eStart("/userText2Image/start", { prompt, model_type: "a2e" });
+              imageUrl = await a2ePoll(
+                "/userText2Image",
+                imgId,
+                (d) => {
+                  const imgs = d["images"];
+                  return imgs?.[0]?.url ?? d["url"] ?? d["image_url"];
+                },
+                12e4
+              );
+            }
+            const body = { image_url: imageUrl };
+            if (Number.isFinite(duration3) && duration3 > 0) body["duration"] = duration3;
+            if (prompt) body["name"] = prompt.slice(0, 60);
+            const vidId = await a2eStart("/userImage2Video/start", body);
+            const videoUrl = await a2ePoll(
+              "/userImage2Video",
+              vidId,
+              (d) => d["video_url"] ?? d["videoUrl"] ?? d["url"],
+              24e4
+            );
+            const cap = prompt ? prompt.slice(0, 80) : "video";
+            return `generated video via A2E. Its PUBLIC video URL:
+${videoUrl}
+
+Show it in your answer:
+[\u25B6 Watch / download "${cap}"](${videoUrl})`;
+          } catch (e) {
+            return `error generating video: ${String(e instanceof Error ? e.message : e).slice(0, 300)}`;
+          }
         }
       },
       pdf_generate: {

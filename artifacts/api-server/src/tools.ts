@@ -57,6 +57,10 @@ import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 
 const STEEL_BASE = "https://api.steel.dev/v1";
 const FIRECRAWL_BASE = "https://api.firecrawl.dev/v1";
+// A2E (video.a2e.ai) — hosted image + video generation, OpenAPI at /dev/openapi-spec.
+// Async: POST .../start → {data:{_id,status}}, then poll GET .../{_id} until
+// status=completed. Activated by A2E_API_KEY (an sk_ token; free credits on signup).
+const A2E_BASE = "https://video.a2e.ai/api/v1";
 const FREECRAWL_BASE = process.env["FREECRAWL_URL"] ?? "https://freecrawl-api.onrender.com";
 
 // ─── Real, server-side PDF rendering (powers the pdf_generate tool) ──────────
@@ -1841,6 +1845,91 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
         }
       }
       return `error: all image models failed — ${errors.join("; ")}`;
+    },
+  },
+
+  video_generate: {
+    name: "video_generate",
+    description:
+      "Generate a short VIDEO clip via A2E. Two modes: (1) ANIMATE an existing image — pass `image_url` (an ABSOLUTE public https URL, e.g. exactly the URL image_generate returns); (2) TEXT-TO-VIDEO — pass `prompt` only and it first generates a source image, then animates it. Returns a public video URL + a watch/download link. Use this whenever the operator wants a video, clip, animation, or moving/animated version of an image. Needs A2E_API_KEY (an A2E sk_ token; new accounts get free credits). Generation is asynchronous and can take 1–4 minutes.",
+    parameters: {
+      type: "object",
+      properties: {
+        prompt: { type: "string", description: "What the video should show. Used to generate the source image when no image_url is given." },
+        image_url: { type: "string", description: "Optional ABSOLUTE public https URL of an image to animate (e.g. the URL image_generate returns). If omitted, an image is generated from `prompt` first." },
+        duration: { type: "number", description: "Optional clip length in seconds." },
+      },
+    },
+    run: async (args) => {
+      const key = process.env["A2E_API_KEY"];
+      if (!key) return "error: video generation is not configured — set A2E_API_KEY (an A2E sk_ token from video.a2e.ai → Account > API Token; new accounts get free credits).";
+      const prompt = String(args["prompt"] ?? "").trim();
+      let imageUrl = String(args["image_url"] ?? "").trim();
+      const duration = Number(args["duration"]);
+      if (!imageUrl && !prompt) return "error: provide either image_url (an image to animate) or prompt (to generate a source image, then animate it).";
+      if (imageUrl && !/^https?:\/\//i.test(imageUrl)) return "error: image_url must be an absolute http(s) URL (use the URL image_generate returns).";
+
+      const headers = { Authorization: `Bearer ${key}`, "Content-Type": "application/json" };
+      const wait = (ms: number) => new Promise<void>((res) => setTimeout(res, ms));
+      type A2EData = Record<string, unknown>;
+
+      const a2eStart = async (path: string, body: Record<string, unknown>): Promise<string> => {
+        const r = await fetch(`${A2E_BASE}${path}`, { method: "POST", headers, body: JSON.stringify(body) });
+        const j = (await r.json().catch(() => ({}))) as { success?: boolean; data?: A2EData; message?: string; error?: string; _id?: string };
+        if (!r.ok || j?.success === false) throw new Error(`A2E ${path} ${r.status}: ${String(j?.message ?? j?.error ?? JSON.stringify(j)).slice(0, 200)}`);
+        const id = (j?.data?.["_id"] as string) ?? (j?.data?.["id"] as string) ?? j?._id;
+        if (!id) throw new Error(`A2E ${path}: no task id in response ${JSON.stringify(j).slice(0, 200)}`);
+        return id;
+      };
+      const a2ePoll = async (path: string, id: string, pick: (d: A2EData) => string | undefined, timeoutMs: number): Promise<string> => {
+        const deadline = Date.now() + timeoutMs;
+        let last = "";
+        while (Date.now() < deadline) {
+          await wait(6000);
+          const r = await fetch(`${A2E_BASE}${path}/${id}`, { headers });
+          const j = (await r.json().catch(() => ({}))) as { data?: A2EData };
+          const d = (j?.data ?? {}) as A2EData;
+          last = String(d["status"] ?? "").toLowerCase();
+          if (last === "completed" || last === "success" || last === "succeeded") {
+            const u = pick(d);
+            if (u) return u;
+            throw new Error("A2E task completed but returned no output URL");
+          }
+          if (last === "failed" || last === "error") throw new Error(`A2E task failed: ${JSON.stringify(d).slice(0, 200)}`);
+        }
+        throw new Error(`A2E task still ${last || "processing"} after ${Math.round(timeoutMs / 1000)}s — it may finish later; try again or check video.a2e.ai`);
+      };
+
+      try {
+        // Step 1 — ensure a source image (text-to-video → generate one first).
+        if (!imageUrl) {
+          const imgId = await a2eStart("/userText2Image/start", { prompt, model_type: "a2e" });
+          imageUrl = await a2ePoll(
+            "/userText2Image",
+            imgId,
+            (d) => {
+              const imgs = d["images"] as Array<{ url?: string }> | undefined;
+              return imgs?.[0]?.url ?? (d["url"] as string) ?? (d["image_url"] as string);
+            },
+            120_000,
+          );
+        }
+        // Step 2 — animate the image into a video.
+        const body: Record<string, unknown> = { image_url: imageUrl };
+        if (Number.isFinite(duration) && duration > 0) body["duration"] = duration;
+        if (prompt) body["name"] = prompt.slice(0, 60);
+        const vidId = await a2eStart("/userImage2Video/start", body);
+        const videoUrl = await a2ePoll(
+          "/userImage2Video",
+          vidId,
+          (d) => (d["video_url"] as string) ?? (d["videoUrl"] as string) ?? (d["url"] as string),
+          240_000,
+        );
+        const cap = prompt ? prompt.slice(0, 80) : "video";
+        return `generated video via A2E. Its PUBLIC video URL:\n${videoUrl}\n\nShow it in your answer:\n[▶ Watch / download "${cap}"](${videoUrl})`;
+      } catch (e) {
+        return `error generating video: ${String(e instanceof Error ? e.message : e).slice(0, 300)}`;
+      }
     },
   },
 
