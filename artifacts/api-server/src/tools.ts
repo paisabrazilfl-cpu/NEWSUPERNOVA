@@ -523,28 +523,51 @@ async function freecrawlSearch(query: string, limit: number): Promise<string> {
 }
 
 // ─── Multi-provider web search ───────────────────────────────────────────────
-// Tries the configured search providers in order of preference: Tavily (broad,
-// fast) → Exa (neural/semantic) → Firecrawl → FreeCrawl/DuckDuckGo (keyless,
-// always on). Falls through to the next provider on any error so a single
-// provider outage — or all paid providers being out of credit — never blinds
-// the swarm.
+// FREE FIRST (default): FreeCrawl/DuckDuckGo (keyless) is the PRIMARY provider, then
+// the paid services (SerpAPI → Tavily → Exa → Firecrawl) as BACKUP — so no paid
+// credits are spent unless the free path fails (CAPTCHA / no results). Falls through
+// on any error, skips providers parked on a quota cooldown, and never blinds the
+// swarm. Set SEARCH_PAID_FIRST=1 for the legacy paid-first order.
+
+// When a paid provider reports it is OUT OF CREDITS / over quota / rate-limited, it
+// will keep failing for a while — so re-hitting it on every search just wastes a
+// round-trip before falling through to FreeCrawl. Remember a "dry" provider and
+// skip it (jump straight to the next live one / FreeCrawl) until the cooldown ends.
+const PROVIDER_DRY_UNTIL = new Map<string, number>();
+const PROVIDER_DRY_COOLDOWN_MS = 30 * 60_000; // 30 min
+const isQuotaError = (msg: string): boolean =>
+  /\b(402|429|432)\b|out of (searches|credits)|exceeds? your plan|usage limit|insufficient credits|credit limit|quota|rate limit|too many requests/i.test(msg);
 
 async function webSearch(query: string, limit: number): Promise<string> {
-  const providers: Array<{ name: string; enabled: boolean; run: () => Promise<string> }> = [
+  const now = Date.now();
+  // FREE FIRST: FreeCrawl (keyless DuckDuckGo) is the PRIMARY provider so no paid
+  // credits are spent unless it fails. When FreeCrawl returns nothing usable or hits
+  // an anti-bot/CAPTCHA wall (it throws — see freecrawlSearch), search falls through
+  // to the paid providers as backup. Operators can force the legacy paid-first order
+  // with SEARCH_PAID_FIRST=1.
+  const paidFirst = process.env["SEARCH_PAID_FIRST"] === "1";
+  const free = { name: "freecrawl", enabled: true, run: () => freecrawlSearch(query, limit) };
+  const paid: Array<{ name: string; enabled: boolean; run: () => Promise<string> }> = [
     { name: "serpapi", enabled: !!(process.env["SERP_API_KEY"] || process.env["SERP_AI_API_KEY"]), run: () => serpapiSearch(query, limit) },
     { name: "tavily", enabled: !!process.env["TAVILY_API_KEY"], run: () => tavilySearch(query, limit) },
     { name: "exa", enabled: !!process.env["EXA_API_KEY"], run: () => exaSearch(query, limit) },
     { name: "firecrawl", enabled: !!process.env["FIRECRAWL_API_KEY"], run: () => firecrawlSearch(query, limit) },
-    // Always-on keyless backstop — keeps search working when the paid keys fail.
-    { name: "freecrawl", enabled: true, run: () => freecrawlSearch(query, limit) },
-  ].filter((p) => p.enabled);
+  ];
+  const providers = (paidFirst ? [...paid, free] : [free, ...paid])
+    .filter((p) => p.enabled && !((PROVIDER_DRY_UNTIL.get(p.name) ?? 0) > now)); // skip providers on quota cooldown
 
   const errors: string[] = [];
   for (const provider of providers) {
     try {
       return await provider.run();
     } catch (e) {
-      errors.push(`${provider.name}: ${String(e instanceof Error ? e.message : e).slice(0, 120)}`);
+      const msg = String(e instanceof Error ? e.message : e).slice(0, 160);
+      // Mark a credit/quota/rate-limited paid provider as dry so the NEXT search
+      // skips it and switches to FreeCrawl immediately instead of re-failing.
+      if (provider.name !== "freecrawl" && isQuotaError(msg)) {
+        PROVIDER_DRY_UNTIL.set(provider.name, now + PROVIDER_DRY_COOLDOWN_MS);
+      }
+      errors.push(`${provider.name}: ${msg.slice(0, 120)}`);
     }
   }
   return `error: all web search providers failed — ${errors.join("; ")}`;
@@ -2572,9 +2595,9 @@ export const AGENT_TOOLS: Record<number, string[]> = {
   1: ALL_TOOLS, // ABBY — full authority
   2: ["image_generate", "video_generate"], // AVVY — image + video generation ONLY (free HF images + A2E video); acts only when ABBY assigns it
   3: ["composio_apps", "composio_tools", "composio_action", "instagram_post", "social_accounts", "social_api", "browser_login", "marketing_playbook", "render_card", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task"], // BUZZ — social media + Composio ONLY; acts only when ABBY assigns it
-  4: ["memory_write", "memory_search", "web_search", "tier1_sources", "web_scrape", "site_crawl", "site_crawl_status", "http_request", "calculator", "vault_list", "save_artifact", "pdf_generate", "image_generate", "heartbeat_respond", "send_message"], // VAULT — memory/RAG
-  5: ["http_request", "web_scrape", "web_search", "tier1_sources", "site_crawl", "site_crawl_status", "marketing_playbook", "code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_tools", "composio_action", "instagram_post", "browser_login", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task", "save_artifact", "pdf_generate", "image_generate", "render_card", "heartbeat_respond", "send_message"], // WIRE — APIs + scheduling
-  6: ["web_scrape", "web_search", "tier1_sources", "marketing_playbook", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_tools", "composio_action", "instagram_post", "browser_login", "save_artifact", "pdf_generate", "image_generate", "render_card", "heartbeat_respond", "send_message"], // MR.NICE — social
+  4: ["web_search", "web_scrape", "web_screenshot", "tier1_sources", "site_crawl", "site_crawl_status", "http_request", "memory_search", "memory_write"], // SCOUT — research & web ONLY
+  5: ["code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "http_request", "save_artifact", "pdf_generate", "memory_search", "memory_write"], // FORGE — code & deploy ONLY
+  6: ["save_artifact", "pdf_generate", "memory_search"], // QUILL — documents & artifacts ONLY
 };
 
 export function getToolNamesForAgent(agentId: number): string[] {

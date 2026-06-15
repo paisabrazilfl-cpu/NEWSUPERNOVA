@@ -1242,9 +1242,12 @@ export async function orchestrateGoal(opts: {
     const buzzHint = hasBuzz
       ? `\nSOCIAL/COMPOSIO ROUTING: BUZZ is your social media & Composio specialist and works ONLY when you assign him a directive. Route EVERY part of the goal that posts to / reads from / acts on the operator's connected accounts (Instagram, Facebook, X, LinkedIn, TikTok, YouTube, Gmail, Slack, Notion, Calendar, Sheets, …) or schedules social posts to BUZZ. If a social post needs an image or video, have AVVY create it first, then pass that URL to BUZZ to publish.`
       : "";
+    const delegateHint = claws.length > 1
+      ? `\nYOU ORCHESTRATE — DELEGATE: assign each sub-task to the SPECIALIST whose role fits it (research→SCOUT, code/deploy→FORGE, documents/PDF→QUILL, image/video→AVVY, social/accounts→BUZZ). Each specialist acts only when you assign it. Keep work for yourself only when no specialist fits. Pick the RIGHT specialist per directive.`
+      : "";
     const planUser = `Operator goal: "${goal}"
 ${sourceContext && sourceContext.trim() ? `\nThe operator provided this source material to work from (decompose against THIS; the CLAWs will receive it too — do not tell them to search memory for it):\n"""\n${sourceContext.slice(0, 12000)}\n"""\n` : ""}
-Available CLAWs you command: ${roster}.${avvyHint}${buzzHint}
+Available CLAWs you command: ${roster}.${delegateHint}${avvyHint}${buzzHint}
 
 Decompose this goal into precise, exhaustive, granular directives — ONE per CLAW that is genuinely relevant (skip CLAWs that add nothing). Together the directives must cover EVERY part of the goal; leave nothing implied. Each directive MUST be:
 - SELF-CONTAINED: state the exact objective, the concrete inputs/targets (specific https:// URLs, API endpoints, file names, or data), and the expected output and its format. Assume the CLAW sees ONLY this directive — no other context.
