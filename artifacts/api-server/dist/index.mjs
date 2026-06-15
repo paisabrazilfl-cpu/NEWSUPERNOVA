@@ -111993,11 +111993,18 @@ Show it in your answer:
           if (imageUrl && !/^https?:\/\//i.test(imageUrl)) return "error: image_url must be an absolute http(s) URL (use the URL image_generate returns).";
           const headers = { Authorization: `Bearer ${key}`, "Content-Type": "application/json" };
           const wait = (ms) => new Promise((res) => setTimeout(res, ms));
+          const recOf = (j) => {
+            const d = j?.data;
+            return (Array.isArray(d) ? d[0] : d) ?? {};
+          };
           const a2eStart = async (path3, body) => {
             const r = await fetch(`${A2E_BASE}${path3}`, { method: "POST", headers, body: JSON.stringify(body) });
             const j = await r.json().catch(() => ({}));
-            if (!r.ok || j?.success === false) throw new Error(`A2E ${path3} ${r.status}: ${String(j?.message ?? j?.error ?? JSON.stringify(j)).slice(0, 200)}`);
-            const id = j?.data?.["_id"] ?? j?.data?.["id"] ?? j?._id;
+            if (!r.ok || typeof j?.code === "number" && j.code !== 0 || j?.success === false) {
+              throw new Error(`A2E ${path3} ${r.status}: ${String(j?.msg ?? j?.message ?? j?.error ?? JSON.stringify(j)).slice(0, 200)}`);
+            }
+            const rec = recOf(j);
+            const id = rec["_id"] ?? rec["id"];
             if (!id) throw new Error(`A2E ${path3}: no task id in response ${JSON.stringify(j).slice(0, 200)}`);
             return id;
           };
@@ -112008,16 +112015,36 @@ Show it in your answer:
               await wait(6e3);
               const r = await fetch(`${A2E_BASE}${path3}/${id}`, { headers });
               const j = await r.json().catch(() => ({}));
-              const d = j?.data ?? {};
-              last = String(d["status"] ?? "").toLowerCase();
-              if (last === "completed" || last === "success" || last === "succeeded") {
+              const d = recOf(j);
+              last = String(d["current_status"] ?? d["status"] ?? "").toLowerCase();
+              if (["completed", "success", "succeeded", "finished", "done"].includes(last)) {
                 const u = pick2(d);
                 if (u) return u;
-                throw new Error("A2E task completed but returned no output URL");
+                throw new Error(`A2E task completed but returned no output URL: ${JSON.stringify(d).slice(0, 200)}`);
               }
-              if (last === "failed" || last === "error") throw new Error(`A2E task failed: ${JSON.stringify(d).slice(0, 200)}`);
+              if (["failed", "error", "fail"].includes(last)) {
+                throw new Error(`A2E task failed: ${String(d["failed_message"] ?? d["failed_code"] ?? JSON.stringify(d)).slice(0, 200)}`);
+              }
             }
             throw new Error(`A2E task still ${last || "processing"} after ${Math.round(timeoutMs / 1e3)}s \u2014 it may finish later; try again or check video.a2e.ai`);
+          };
+          const firstUrl = (...vals) => {
+            for (const v of vals) {
+              if (typeof v === "string" && /^https?:\/\//i.test(v)) return v;
+              if (Array.isArray(v) && typeof v[0] === "string" && /^https?:\/\//i.test(v[0])) return v[0];
+            }
+            return void 0;
+          };
+          const pickVideo = (d) => {
+            const direct = firstUrl(d["video_url"], d["videoUrl"], d["result_url"], d["url"], d["video_urls"], d["result_urls"]);
+            if (direct) return direct;
+            for (const v of Object.values(d)) {
+              if (typeof v === "string" && /^https?:\/\/\S+\.(mp4|mov|webm|m3u8)/i.test(v)) return v;
+              if (Array.isArray(v)) {
+                for (const x of v) if (typeof x === "string" && /^https?:\/\/\S+\.(mp4|mov|webm|m3u8)/i.test(x)) return x;
+              }
+            }
+            return void 0;
           };
           try {
             if (!imageUrl) {
@@ -112025,23 +112052,19 @@ Show it in your answer:
               imageUrl = await a2ePoll(
                 "/userText2Image",
                 imgId,
-                (d) => {
-                  const imgs = d["images"];
-                  return imgs?.[0]?.url ?? d["url"] ?? d["image_url"];
-                },
+                (d) => firstUrl(d["image_urls"], d["url"], d["image_url"], d["images"]?.[0]?.url),
                 12e4
               );
             }
-            const body = { image_url: imageUrl };
+            const body = {
+              image_url: imageUrl,
+              prompt: prompt || "natural subtle motion, gentle ambient movement, soft camera push-in, cinematic",
+              negative_prompt: "blurry, distorted, warped, flickering, extra limbs, glitch artifacts"
+            };
             if (Number.isFinite(duration3) && duration3 > 0) body["duration"] = duration3;
             if (prompt) body["name"] = prompt.slice(0, 60);
             const vidId = await a2eStart("/userImage2Video/start", body);
-            const videoUrl = await a2ePoll(
-              "/userImage2Video",
-              vidId,
-              (d) => d["video_url"] ?? d["videoUrl"] ?? d["url"],
-              24e4
-            );
+            const videoUrl = await a2ePoll("/userImage2Video", vidId, pickVideo, 24e4);
             const cap = prompt ? prompt.slice(0, 80) : "video";
             return `generated video via A2E. Its PUBLIC video URL:
 ${videoUrl}
@@ -112575,8 +112598,8 @@ IN-PROGRESS TASKS (${pendingTasks.length}):`);
     AGENT_TOOLS = {
       1: ALL_TOOLS,
       // ABBY — full authority
-      2: ["code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "http_request", "web_scrape", "web_search", "tier1_sources", "site_crawl", "site_crawl_status", "memory_search", "memory_write", "vault_list", "save_artifact", "pdf_generate", "image_generate", "heartbeat_respond", "send_message"],
-      // FORGE — code
+      2: ["image_generate", "video_generate"],
+      // AVVY — image + video generation ONLY (free HF images + A2E video); acts only when ABBY assigns it
       3: ["web_scrape", "web_screenshot", "web_search", "tier1_sources", "site_crawl", "site_crawl_status", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "sandbox_exec", "browser_login", "save_artifact", "pdf_generate", "image_generate", "heartbeat_respond", "send_message"],
       // CRAWLER — browser
       4: ["memory_write", "memory_search", "web_search", "tier1_sources", "web_scrape", "site_crawl", "site_crawl_status", "http_request", "calculator", "vault_list", "save_artifact", "pdf_generate", "image_generate", "heartbeat_respond", "send_message"],
@@ -117714,7 +117737,18 @@ HOW YOU WORK:
 CODING GENIUS RULE: For coding work, never answer from vibes. First build a repo map, then localize the issue, then patch surgically, then verify. If the tools cannot inspect or run the repo, say so and mark the result UNVERIFIED. A senior engineer does not claim success without evidence.
 
 VOICE: terse, high signal density, results-first, zero filler. When useful, close by offering the next concrete step (e.g. Build / Test / Refine).`,
-  2: `You are FORGE, the code execution specialist of the ABBY CLAW swarm. You write, execute, and debug code in any language using your sandbox tools. Prefer efficient, working solutions; run the code rather than guessing at its output. Respond with working code first, a brief explanation second.`,
+  2: `You are AVVY, the image & video generation specialist. ABBY gives the orders; you act ONLY when ABBY assigns you an image or video directive \u2014 nothing else, no commentary, no other work.
+
+YOUR TWO TOOLS \u2014 and they are DISTINCT FORMATS, never interchangeable:
+- image_generate \u2192 makes a STILL IMAGE (a PNG). Free, via Hugging Face FLUX. Use for any picture, photo, logo, icon, illustration, art, poster, mockup, or render. Returns a public image URL.
+- video_generate \u2192 makes a VIDEO (an MP4 clip). Via A2E. Use for any clip, animation, moving/animated content, or "make it move". It can take a text prompt (it generates the source image, then animates it) OR an existing image_url to animate. Returns a public video URL.
+
+HOW TO CHOOSE:
+- The operator/ABBY asked for a PICTURE/IMAGE/STILL \u2192 image_generate. Stop there. Do NOT make a video.
+- They asked for a VIDEO/CLIP/ANIMATION \u2192 video_generate.
+- They asked for BOTH (e.g. "an image and a video of it") \u2192 image_generate FIRST, then video_generate with that exact image URL.
+
+RULES: Call the correct tool, then return the REAL URL the tool produced \u2014 never invent a URL, never claim success a tool didn't return. If a tool errors, report its exact error. One image is a PNG; one video is an MP4 \u2014 match the format to the request. Be terse: deliver the link, nothing more.`,
   3: `You are CRAWLER, the browser and web-intelligence specialist of the ABBY CLAW swarm. You search the live web, navigate sites, scrape pages, and capture screenshots via the Steel browser. Work from real fetched content, cite the URLs you used, and report findings concisely and accurately.`,
   4: `You are VAULT, the memory and RAG specialist of the ABBY CLAW swarm. You manage the swarm's Postgres-backed vector memory \u2014 writing embedded entries and retrieving them by real cosine-similarity semantic search (with keyword fallback). Be precise and accurate; ground every answer in what is actually stored.`,
   5: `You are WIRE, the API-integration specialist of the ABBY CLAW swarm. You connect external services, webhooks, and REST APIs, and schedule recurring work. You understand auth flows, rate limits, and data pipelines. Make the real call and report the real response; be direct and technical.`,
@@ -119448,7 +119482,7 @@ ${sourceContext ?? ""}`);
     const agents = await db.select().from(agentsTable);
     const abby = agents.find((a) => a.id === ABBY_ID) ?? null;
     const others = agents.filter((a) => a.id !== ABBY_ID);
-    const claws = others.length > 0 ? others : abby ? [abby] : [];
+    const claws = abby ? [abby, ...others] : others;
     if (isSwarmPaused()) {
       await postMessage({
         channelId,
@@ -119463,6 +119497,9 @@ ${sourceContext ?? ""}`);
     await db.update(agentsTable).set({ status: "thinking" }).where(eq(agentsTable.id, ABBY_ID));
     const roster = claws.map((c) => `${c.id}=${c.name} (${c.role ?? "agent"})`).join(", ");
     const planSystem = (AGENT_PERSONAS[ABBY_ID] ?? "You are ABBY, the swarm orchestrator.") + buildLiveReachCard(ABBY_ID) + EXECUTION_DOCTRINE + OPERATOR_INTENT_FIDELITY + RESEARCH_PLAYBOOKS + TOOL_CALL_DISCIPLINE + SWARM_SAFETY_RULES + CODING_LIFECYCLE_DOCTRINE + ACCOUNT_POLICY_DOCTRINE + await buildVaultCard();
+    const hasAvvy = claws.some((c) => c.name?.toUpperCase() === "AVVY");
+    const avvyHint = hasAvvy ? `
+IMAGE/VIDEO ROUTING: AVVY is your image & video specialist and works ONLY when you assign her a directive. Route EVERY part of the goal that produces an IMAGE (picture, logo, art, render, mockup) or a VIDEO (clip, animation, moving content) to AVVY \u2014 she uses image_generate for stills (free) and video_generate for clips (A2E). Do not assign image/video generation to any other CLAW, and do not do it yourself.` : "";
     const planUser = `Operator goal: "${goal}"
 ${sourceContext && sourceContext.trim() ? `
 The operator provided this source material to work from (decompose against THIS; the CLAWs will receive it too \u2014 do not tell them to search memory for it):
@@ -119470,7 +119507,7 @@ The operator provided this source material to work from (decompose against THIS;
 ${sourceContext.slice(0, 12e3)}
 """
 ` : ""}
-Available CLAWs you command: ${roster}.
+Available CLAWs you command: ${roster}.${avvyHint}
 
 Decompose this goal into precise, exhaustive, granular directives \u2014 ONE per CLAW that is genuinely relevant (skip CLAWs that add nothing). Together the directives must cover EVERY part of the goal; leave nothing implied. Each directive MUST be:
 - SELF-CONTAINED: state the exact objective, the concrete inputs/targets (specific https:// URLs, API endpoints, file names, or data), and the expected output and its format. Assume the CLAW sees ONLY this directive \u2014 no other context.
@@ -122362,7 +122399,14 @@ INSERT INTO agents (name, role, description, status, color, avatar_initials, mod
 VALUES
   ('ABBY', 'Operator', 'Solo autonomous agent \u2014 holds every tool and does the work end to end', 'idle', '#00e5ff', 'AB', 'moonshotai/kimi-k2.6', ARRAY['code','execution','browser','scraping','research','memory','rag','api','integration','automation','social','images','files','scheduling'])
 `;
-var REMOVE_OTHER_AGENTS = `DELETE FROM agents WHERE name <> 'ABBY'`;
+var SEED_AVVY = `
+INSERT INTO agents (id, name, role, description, status, color, avatar_initials, model, capabilities)
+SELECT 2, 'AVVY', 'Image & Video Specialist',
+  'Image & video generation specialist \u2014 acts only when ABBY assigns the work. Free Hugging Face images (image_generate) + A2E video (video_generate).',
+  'idle', '#a855f7', 'AV', 'moonshotai/kimi-k2.6', ARRAY['images','video']
+WHERE NOT EXISTS (SELECT 1 FROM agents WHERE name = 'AVVY')
+`;
+var REMOVE_OTHER_AGENTS = `DELETE FROM agents WHERE name NOT IN ('ABBY', 'AVVY')`;
 var AGENT_MODEL_UPGRADES = [
   ["x-ai/grok-4.3", "moonshotai/kimi-k2.6"],
   // 2026-06-10: nemotron-3-ultra-550b stalled live (45-60s, zero bytes) while
@@ -122389,7 +122433,9 @@ VALUES
 var AGENT_CAPABILITIES = {
   // ABBY only — solo agent with the full toolset (display metadata; real tool
   // access is ALL_TOOLS via AGENT_TOOLS[1] in tools.ts).
-  1: ["code_exec", "sandbox_exec", "web_search", "web_scrape", "web_screenshot", "http_request", "memory_search", "memory_write", "composio_action", "instagram_post", "image_generate", "pdf_generate", "save_artifact", "schedule_task"]
+  1: ["code_exec", "sandbox_exec", "web_search", "web_scrape", "web_screenshot", "http_request", "memory_search", "memory_write", "composio_action", "instagram_post", "image_generate", "pdf_generate", "save_artifact", "schedule_task"],
+  // AVVY — image + video ONLY (free HF image_generate + A2E video_generate).
+  2: ["image_generate", "video_generate"]
 };
 async function runMigrations() {
   const client = await pool.connect();
@@ -122404,7 +122450,9 @@ async function runMigrations() {
       logger.info("Default agents and channels seeded");
     }
     const del = await client.query(REMOVE_OTHER_AGENTS);
-    if (del.rowCount) logger.info({ removed: del.rowCount }, "Removed legacy CLAW sub-agents \u2014 ABBY is solo");
+    if (del.rowCount) logger.info({ removed: del.rowCount }, "Removed legacy CLAW sub-agents \u2014 roster is ABBY + AVVY");
+    const avvy = await client.query(SEED_AVVY);
+    if (avvy.rowCount) logger.info("Seeded AVVY \u2014 image & video generation specialist");
     for (const [id, caps] of Object.entries(AGENT_CAPABILITIES)) {
       await client.query("UPDATE agents SET capabilities = $1 WHERE id = $2", [caps, Number(id)]);
     }

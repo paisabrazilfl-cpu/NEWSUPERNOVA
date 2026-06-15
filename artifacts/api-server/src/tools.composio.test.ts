@@ -51,14 +51,22 @@ describe("Composio: agents know which apps are LIVE", () => {
     expect(names.indexOf("composio_apps")).toBeLessThan(names.indexOf("composio_action"));
   });
 
-  it("self-learning is ON: EVERY agent (1-6) can read AND write long-term memory", () => {
-    // The self-learn loop (search memory → research → retry → store the lesson)
-    // is only real if every agent actually holds both memory tools, not just is
-    // told to use them. ABBY (1) gets ALL_TOOLS; CLAWs 2-6 are explicit lists.
-    for (const id of [1, 2, 3, 4, 5, 6]) {
-      const names = getToolNamesForAgent(id);
-      expect(names, `agent ${id} must be able to recall lessons`).toContain("memory_search");
-      expect(names, `agent ${id} must be able to store lessons`).toContain("memory_write");
-    }
+  it("self-learning is ON: ABBY can read AND write long-term memory", () => {
+    // The self-learn loop (search memory → research → retry → store the lesson) is
+    // only real if the generalist agent actually holds both memory tools. ABBY (1)
+    // gets ALL_TOOLS, so she always has them.
+    const names = getToolNamesForAgent(ABBY);
+    expect(names, "ABBY must be able to recall lessons").toContain("memory_search");
+    expect(names, "ABBY must be able to store lessons").toContain("memory_write");
+  });
+
+  it("AVVY (2) is deliberately scoped to image + video generation ONLY", () => {
+    // AVVY is a specialist: ABBY orders, AVVY only makes images/videos — nothing
+    // else. So she intentionally does NOT carry the general toolset.
+    const names = getToolNamesForAgent(2);
+    expect(names).toContain("image_generate");
+    expect(names).toContain("video_generate");
+    expect(names).not.toContain("composio_action");
+    expect(names).not.toContain("code_exec");
   });
 });

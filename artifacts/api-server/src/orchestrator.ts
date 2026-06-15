@@ -1204,11 +1204,12 @@ export async function orchestrateGoal(opts: {
   try {
     const agents = await db.select().from(agentsTable);
     const abby = agents.find((a) => a.id === ABBY_ID) ?? null;
-    // SOLO MODE: the CLAW sub-agents were removed, so ABBY is her own worker —
-    // she holds every tool and executes directives herself. (Falls back to the
-    // legacy multi-CLAW set if any sub-agents still exist.)
+    // ABBY is the generalist lead and holds every tool. Any OTHER agents (e.g. the
+    // AVVY image/video specialist) join as specialists ABBY can delegate to — so
+    // ABBY is ALWAYS in the roster (she's never replaced by a specialist), and the
+    // planner can route a directive to whichever fits. Falls back to ABBY-only.
     const others = agents.filter((a) => a.id !== ABBY_ID);
-    const claws = others.length > 0 ? others : (abby ? [abby] : []);
+    const claws = abby ? [abby, ...others] : others;
 
     if (isSwarmPaused()) {
       await postMessage({
@@ -1231,9 +1232,15 @@ export async function orchestrateGoal(opts: {
     // ABBY plans with LIVE REACH so directives only lean on integrations that
     // are actually online (e.g. don't direct a CLAW to Firecrawl if it's off).
     const planSystem = (AGENT_PERSONAS[ABBY_ID] ?? "You are ABBY, the swarm orchestrator.") + buildLiveReachCard(ABBY_ID) + EXECUTION_DOCTRINE + OPERATOR_INTENT_FIDELITY + RESEARCH_PLAYBOOKS + TOOL_CALL_DISCIPLINE + SWARM_SAFETY_RULES + CODING_LIFECYCLE_DOCTRINE + ACCOUNT_POLICY_DOCTRINE + (await buildVaultCard());
+    // AVVY is the image/video specialist: when she's in the roster, ABBY delegates
+    // every image/video sub-task to her (she only acts when ordered — nothing else).
+    const hasAvvy = claws.some((c) => c.name?.toUpperCase() === "AVVY");
+    const avvyHint = hasAvvy
+      ? `\nIMAGE/VIDEO ROUTING: AVVY is your image & video specialist and works ONLY when you assign her a directive. Route EVERY part of the goal that produces an IMAGE (picture, logo, art, render, mockup) or a VIDEO (clip, animation, moving content) to AVVY — she uses image_generate for stills (free) and video_generate for clips (A2E). Do not assign image/video generation to any other CLAW, and do not do it yourself.`
+      : "";
     const planUser = `Operator goal: "${goal}"
 ${sourceContext && sourceContext.trim() ? `\nThe operator provided this source material to work from (decompose against THIS; the CLAWs will receive it too — do not tell them to search memory for it):\n"""\n${sourceContext.slice(0, 12000)}\n"""\n` : ""}
-Available CLAWs you command: ${roster}.
+Available CLAWs you command: ${roster}.${avvyHint}
 
 Decompose this goal into precise, exhaustive, granular directives — ONE per CLAW that is genuinely relevant (skip CLAWs that add nothing). Together the directives must cover EVERY part of the goal; leave nothing implied. Each directive MUST be:
 - SELF-CONTAINED: state the exact objective, the concrete inputs/targets (specific https:// URLs, API endpoints, file names, or data), and the expected output and its format. Assume the CLAW sees ONLY this directive — no other context.

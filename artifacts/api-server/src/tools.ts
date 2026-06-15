@@ -1873,11 +1873,22 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
       const wait = (ms: number) => new Promise<void>((res) => setTimeout(res, ms));
       type A2EData = Record<string, unknown>;
 
+      // A2E's real contract (verified live 2026-06-15, differs from the published
+      // doc): success is `code:0`; `data` is an ARRAY on /start, an OBJECT on the
+      // detail GET; the status field is `current_status`
+      // (initialized→processing→completed/failed); images come back in `image_urls`.
+      const recOf = (j: { data?: unknown }): A2EData => {
+        const d = j?.data;
+        return (Array.isArray(d) ? (d[0] as A2EData) : (d as A2EData)) ?? {};
+      };
       const a2eStart = async (path: string, body: Record<string, unknown>): Promise<string> => {
         const r = await fetch(`${A2E_BASE}${path}`, { method: "POST", headers, body: JSON.stringify(body) });
-        const j = (await r.json().catch(() => ({}))) as { success?: boolean; data?: A2EData; message?: string; error?: string; _id?: string };
-        if (!r.ok || j?.success === false) throw new Error(`A2E ${path} ${r.status}: ${String(j?.message ?? j?.error ?? JSON.stringify(j)).slice(0, 200)}`);
-        const id = (j?.data?.["_id"] as string) ?? (j?.data?.["id"] as string) ?? j?._id;
+        const j = (await r.json().catch(() => ({}))) as { code?: number; success?: boolean; data?: unknown; msg?: string; message?: string; error?: string };
+        if (!r.ok || (typeof j?.code === "number" && j.code !== 0) || j?.success === false) {
+          throw new Error(`A2E ${path} ${r.status}: ${String(j?.msg ?? j?.message ?? j?.error ?? JSON.stringify(j)).slice(0, 200)}`);
+        }
+        const rec = recOf(j);
+        const id = (rec["_id"] as string) ?? (rec["id"] as string);
         if (!id) throw new Error(`A2E ${path}: no task id in response ${JSON.stringify(j).slice(0, 200)}`);
         return id;
       };
@@ -1887,17 +1898,37 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
         while (Date.now() < deadline) {
           await wait(6000);
           const r = await fetch(`${A2E_BASE}${path}/${id}`, { headers });
-          const j = (await r.json().catch(() => ({}))) as { data?: A2EData };
-          const d = (j?.data ?? {}) as A2EData;
-          last = String(d["status"] ?? "").toLowerCase();
-          if (last === "completed" || last === "success" || last === "succeeded") {
+          const j = (await r.json().catch(() => ({}))) as { data?: unknown };
+          const d = recOf(j);
+          last = String(d["current_status"] ?? d["status"] ?? "").toLowerCase();
+          if (["completed", "success", "succeeded", "finished", "done"].includes(last)) {
             const u = pick(d);
             if (u) return u;
-            throw new Error("A2E task completed but returned no output URL");
+            throw new Error(`A2E task completed but returned no output URL: ${JSON.stringify(d).slice(0, 200)}`);
           }
-          if (last === "failed" || last === "error") throw new Error(`A2E task failed: ${JSON.stringify(d).slice(0, 200)}`);
+          if (["failed", "error", "fail"].includes(last)) {
+            throw new Error(`A2E task failed: ${String(d["failed_message"] ?? d["failed_code"] ?? JSON.stringify(d)).slice(0, 200)}`);
+          }
         }
         throw new Error(`A2E task still ${last || "processing"} after ${Math.round(timeoutMs / 1000)}s — it may finish later; try again or check video.a2e.ai`);
+      };
+      // Find a media URL in a result record across A2E's varying field shapes.
+      const firstUrl = (...vals: unknown[]): string | undefined => {
+        for (const v of vals) {
+          if (typeof v === "string" && /^https?:\/\//i.test(v)) return v;
+          if (Array.isArray(v) && typeof v[0] === "string" && /^https?:\/\//i.test(v[0])) return v[0];
+        }
+        return undefined;
+      };
+      const pickVideo = (d: A2EData): string | undefined => {
+        const direct = firstUrl(d["video_url"], d["videoUrl"], d["result_url"], d["url"], d["video_urls"], d["result_urls"]);
+        if (direct) return direct;
+        // Last resort: scan every string/array value for a video URL.
+        for (const v of Object.values(d)) {
+          if (typeof v === "string" && /^https?:\/\/\S+\.(mp4|mov|webm|m3u8)/i.test(v)) return v;
+          if (Array.isArray(v)) for (const x of v) if (typeof x === "string" && /^https?:\/\/\S+\.(mp4|mov|webm|m3u8)/i.test(x)) return x;
+        }
+        return undefined;
       };
 
       try {
@@ -1907,24 +1938,22 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
           imageUrl = await a2ePoll(
             "/userText2Image",
             imgId,
-            (d) => {
-              const imgs = d["images"] as Array<{ url?: string }> | undefined;
-              return imgs?.[0]?.url ?? (d["url"] as string) ?? (d["image_url"] as string);
-            },
+            (d) => firstUrl(d["image_urls"], d["url"], d["image_url"], (d["images"] as Array<{ url?: string }> | undefined)?.[0]?.url),
             120_000,
           );
         }
-        // Step 2 — animate the image into a video.
-        const body: Record<string, unknown> = { image_url: imageUrl };
+        // Step 2 — animate the image into a video. A2E's image-to-video REQUIRES a
+        // motion `prompt` + `negative_prompt` (verified live: 400 "prompt and
+        // negative_prompt must required when lora is not set" without them).
+        const body: Record<string, unknown> = {
+          image_url: imageUrl,
+          prompt: prompt || "natural subtle motion, gentle ambient movement, soft camera push-in, cinematic",
+          negative_prompt: "blurry, distorted, warped, flickering, extra limbs, glitch artifacts",
+        };
         if (Number.isFinite(duration) && duration > 0) body["duration"] = duration;
         if (prompt) body["name"] = prompt.slice(0, 60);
         const vidId = await a2eStart("/userImage2Video/start", body);
-        const videoUrl = await a2ePoll(
-          "/userImage2Video",
-          vidId,
-          (d) => (d["video_url"] as string) ?? (d["videoUrl"] as string) ?? (d["url"] as string),
-          240_000,
-        );
+        const videoUrl = await a2ePoll("/userImage2Video", vidId, pickVideo, 240_000);
         const cap = prompt ? prompt.slice(0, 80) : "video";
         return `generated video via A2E. Its PUBLIC video URL:\n${videoUrl}\n\nShow it in your answer:\n[▶ Watch / download "${cap}"](${videoUrl})`;
       } catch (e) {
@@ -2541,7 +2570,7 @@ const ALL_TOOLS = Object.keys(TOOL_REGISTRY);
 
 export const AGENT_TOOLS: Record<number, string[]> = {
   1: ALL_TOOLS, // ABBY — full authority
-  2: ["code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "http_request", "web_scrape", "web_search", "tier1_sources", "site_crawl", "site_crawl_status", "memory_search", "memory_write", "vault_list", "save_artifact", "pdf_generate", "image_generate", "heartbeat_respond", "send_message"], // FORGE — code
+  2: ["image_generate", "video_generate"], // AVVY — image + video generation ONLY (free HF images + A2E video); acts only when ABBY assigns it
   3: ["web_scrape", "web_screenshot", "web_search", "tier1_sources", "site_crawl", "site_crawl_status", "http_request", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "sandbox_exec", "browser_login", "save_artifact", "pdf_generate", "image_generate", "heartbeat_respond", "send_message"], // CRAWLER — browser
   4: ["memory_write", "memory_search", "web_search", "tier1_sources", "web_scrape", "site_crawl", "site_crawl_status", "http_request", "calculator", "vault_list", "save_artifact", "pdf_generate", "image_generate", "heartbeat_respond", "send_message"], // VAULT — memory/RAG
   5: ["http_request", "web_scrape", "web_search", "tier1_sources", "site_crawl", "site_crawl_status", "marketing_playbook", "code_exec", "cloud_code_exec", "sandbox_exec", "sandbox_repo_pr", "calculator", "memory_search", "memory_write", "vault_list", "social_accounts", "social_api", "composio_apps", "composio_tools", "composio_action", "instagram_post", "browser_login", "schedule_task", "list_scheduled_tasks", "cancel_scheduled_task", "save_artifact", "pdf_generate", "image_generate", "render_card", "heartbeat_respond", "send_message"], // WIRE — APIs + scheduling

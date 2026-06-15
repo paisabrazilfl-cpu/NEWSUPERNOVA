@@ -36,9 +36,12 @@ describe("renderPdf", () => {
   it("is exposed to the swarm as the pdf_generate tool", async () => {
     const { TOOL_REGISTRY, AGENT_TOOLS } = await import("./tools");
     expect(TOOL_REGISTRY["pdf_generate"]).toBeTruthy();
-    // every CLAW that can save_artifact can also make a PDF
-    for (const id of [2, 3, 4, 5, 6]) {
-      expect(AGENT_TOOLS[id]).toContain("pdf_generate");
+    // Invariant: any agent that can save_artifact can also make a PDF. (Roster-
+    // agnostic — AVVY is image/video-only and carries neither, so it's exempt.)
+    for (const [id, names] of Object.entries(AGENT_TOOLS)) {
+      if (names.includes("save_artifact")) {
+        expect(names, `agent ${id} has save_artifact so must also have pdf_generate`).toContain("pdf_generate");
+      }
     }
   });
 });
