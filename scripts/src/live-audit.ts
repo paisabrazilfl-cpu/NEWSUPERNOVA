@@ -11,7 +11,8 @@ mkdirSync(OUT, { recursive: true });
 
 interface ViewportSpec { name: string; width: number; height: number; isMobile: boolean }
 const VIEWPORTS: ViewportSpec[] = [
-  { name: "desktop", width: 1280, height: 800, isMobile: false },
+  { name: "desktop", width: 1440, height: 900, isMobile: false },
+  { name: "tablet", width: 768, height: 1024, isMobile: false },
   { name: "mobile", width: 390, height: 844, isMobile: true },
 ];
 
@@ -45,6 +46,7 @@ async function run() {
     let bodyLen = 0;
     let bodyText = "";
     let rootChildren = 0;
+    let overflow = -1;
     try {
       const resp = await page.goto(BASE + "/", { waitUntil: "networkidle", timeout: 45_000 });
       status = resp?.status() ?? 0;
@@ -54,6 +56,14 @@ async function run() {
       bodyText = (await page.locator("body").innerText().catch(() => "")) || "";
       bodyLen = bodyText.length;
       rootChildren = await page.locator("#root > *, [id=root] > *").count().catch(() => 0);
+      // Horizontal overflow = a non-responsive element wider than the viewport
+      // (the classic "scrolls sideways on mobile" bug). scrollWidth must not exceed
+      // the visible clientWidth (allow 2px for sub-pixel rounding).
+      overflow = await page.evaluate(() => {
+        // runs in the browser; scripts tsconfig has no DOM lib, so reach document via globalThis.
+        const d = (globalThis as unknown as { document: { documentElement: { scrollWidth: number; clientWidth: number } } }).document;
+        return d.documentElement.scrollWidth - d.documentElement.clientWidth;
+      }).catch(() => -1);
     } catch (e) {
       pageErrors.push(`navigation: ${String(e).slice(0, 200)}`);
     }
@@ -67,6 +77,8 @@ async function run() {
       title,
       bodyTextChars: bodyLen,
       rootMounted: rootChildren > 0,
+      horizontalOverflowPx: overflow,
+      responsiveOK: overflow <= 2,
       bodyPreview: bodyText.replace(/\s+/g, " ").slice(0, 240),
       consoleErrors: consoleErrors.slice(0, 8),
       pageErrors: pageErrors.slice(0, 8),
