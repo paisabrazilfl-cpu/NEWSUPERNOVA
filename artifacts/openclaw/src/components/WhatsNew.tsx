@@ -92,7 +92,7 @@ export function WhatsNewButton() {
           <div className="relative z-10 w-full max-w-lg max-h-[85vh] flex flex-col rounded-2xl border border-card-border bg-popover shadow-2xl">
             <div className="flex items-center gap-2 px-5 py-4 border-b border-card-border shrink-0">
               <Sparkles className="w-5 h-5 text-primary" />
-              <h2 className="text-base font-bold tracking-tight text-foreground flex-1">What's new in OpenClaw</h2>
+              <h2 className="text-base font-bold tracking-tight text-foreground flex-1">What's new in Abby AI</h2>
               <button onClick={() => setOpen(false)} aria-label="Close" className="p-1.5 -mr-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-card-border/50">
                 <X className="w-4 h-4" />
               </button>

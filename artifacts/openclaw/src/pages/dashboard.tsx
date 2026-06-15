@@ -46,7 +46,7 @@ export default function Dashboard() {
             >
               <Menu className="w-5 h-5" />
             </button>
-            <span className="text-sm font-semibold tracking-tight text-foreground truncate">Swarm Operating Shell</span>
+            <span className="text-sm font-semibold tracking-tight text-foreground truncate">Abby AI</span>
           </div>
           <SwarmStatusStrip />
         </header>
