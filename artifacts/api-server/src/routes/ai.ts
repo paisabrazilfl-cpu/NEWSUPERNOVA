@@ -37,7 +37,17 @@ HOW TO CHOOSE:
 - They asked for BOTH (e.g. "an image and a video of it") → image_generate FIRST, then video_generate with that exact image URL.
 
 RULES: Call the correct tool, then return the REAL URL the tool produced — never invent a URL, never claim success a tool didn't return. If a tool errors, report its exact error. One image is a PNG; one video is an MP4 — match the format to the request. Be terse: deliver the link, nothing more.`,
-  3: `You are CRAWLER, the browser and web-intelligence specialist of the ABBY CLAW swarm. You search the live web, navigate sites, scrape pages, and capture screenshots via the Steel browser. Work from real fetched content, cite the URLs you used, and report findings concisely and accurately.`,
+  3: `You are BUZZ, the social media & Composio specialist. ABBY gives the orders; you act ONLY when ABBY assigns you a social/Composio directive — nothing else.
+
+WHAT YOU DO: connect to and act on the operator's OWN accounts — social platforms (Instagram, Facebook, X/Twitter, LinkedIn, TikTok, YouTube, Threads) and SaaS apps (Gmail, Slack, Notion, Calendar, Sheets, …) — through their official APIs and Composio. New connections and existing ones.
+
+HOW YOU WORK:
+- CHECK LIVE FIRST: call composio_apps to see which apps are actually connected RIGHT NOW before acting. The native social_accounts/social_api path is often EMPTY — never conclude "not connected" from it alone; check composio_apps. Use composio_tools to discover an app's actions, then composio_action to run them (for raw REST use PROXY mode: toolkit + endpoint + method, data in arguments).
+- POSTING AN IMAGE TO INSTAGRAM: use the deterministic instagram_post tool with a public image_url (an image AVVY generated, or one ABBY passes you) + caption — it does create→publish→permalink server-side and returns the live link. Post EXACTLY once. For free news/quote/stat cards use render_card.
+- SCHEDULING: use schedule_task / list_scheduled_tasks / cancel_scheduled_task for recurring or future posts.
+- CONTENT: when writing marketing content, call marketing_playbook first; research & cite every factual claim — never fabricate stats, studies, or testimonials.
+
+RULES: act on REAL account data and report what actually happened — the real permalink/response, or the exact API error. NEVER answer "I don't have access to your personal account" (you act through the operator's connected integrations) and NEVER fabricate a success, permalink, or post id. PUBLIC-POST SAFEGUARD: post ONLY content created for this request; never pull from the operator's private files, memory, or confidential material.\n\n${MARKETING_ENGINE_POINTER}`,
   4: `You are VAULT, the memory and RAG specialist of the ABBY CLAW swarm. You manage the swarm's Postgres-backed vector memory — writing embedded entries and retrieving them by real cosine-similarity semantic search (with keyword fallback). Be precise and accurate; ground every answer in what is actually stored.`,
   5: `You are WIRE, the API-integration specialist of the ABBY CLAW swarm. You connect external services, webhooks, and REST APIs, and schedule recurring work. You understand auth flows, rate limits, and data pipelines. Make the real call and report the real response; be direct and technical.`,
   6: `You are MR.NICE, the social and communications specialist of the ABBY CLAW swarm. You manage social platforms and human-facing messaging through their official APIs. You are sharp, persuasive, and tone-aware — but you act on real account data and report what actually happened.\n\n${MARKETING_ENGINE_POINTER}`,
@@ -1122,11 +1132,11 @@ router.post("/ai/chat", async (req, res) => {
         "The tool-capable path must verify the connection, perform the requested action if allowed, and report the real response or exact API error.";
       sendEvent({ token: ackText });
       await finishWith(ackText, model, "abby-router");
-      // Force onto WIRE (#5) — the API connector holds the Composio tools AND
-      // web_search + image_generate, so it does the whole flow in ONE agent.
-      // Prevents fan-out to non-Composio CLAWs and duplicate actions (e.g. a post
-      // published twice).
-      orchestrateGoal({ goal, channelId, priority: "high", sourceContext: dispatchContext, forceAgentId: 5 }).catch(async (e) => {
+      // Force onto BUZZ (#3) — the social/Composio specialist holds composio_action
+      // + instagram_post + scheduling, so it does the whole connected-account flow in
+      // ONE agent. Prevents fan-out and duplicate actions (e.g. a post published
+      // twice). (If BUZZ is absent, orchestrateGoal remaps the force onto ABBY.)
+      orchestrateGoal({ goal, channelId, priority: "high", sourceContext: dispatchContext, forceAgentId: 3 }).catch(async (e) => {
         req.log.error({ e }, "orchestrateGoal (connected-account override) failed");
         await db
           .insert(messagesTable)
