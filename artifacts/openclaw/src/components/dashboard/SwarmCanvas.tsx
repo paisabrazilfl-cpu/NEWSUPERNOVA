@@ -259,16 +259,16 @@ export function SwarmCanvas({ onAgentClick }: SwarmCanvasProps) {
         <div
           className={
             "inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold backdrop-blur transition-colors " +
-            (talking ? "border-[#00e5ff]/50 bg-[#00e5ff]/10 text-[#00e5ff]" : "border-card-border bg-card/60 text-muted-foreground")
+            (talking ? "border-[#d97757]/50 bg-[#d97757]/10 text-[#d97757]" : "border-card-border bg-card/60 text-muted-foreground")
           }
           data-testid="swarm-talking-badge"
           data-talking={talking ? "true" : "false"}
         >
           <span className="relative flex h-2.5 w-2.5 items-center justify-center shrink-0">
             {talking && !reduceMotion && (
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#00e5ff] opacity-75" />
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#d97757] opacity-75" />
             )}
-            <span className={"relative inline-flex h-2.5 w-2.5 rounded-full " + (talking ? "bg-[#00e5ff]" : "bg-muted-foreground")} />
+            <span className={"relative inline-flex h-2.5 w-2.5 rounded-full " + (talking ? "bg-[#d97757]" : "bg-muted-foreground")} />
           </span>
           <span className="inline-flex items-center gap-1.5 truncate">
             {talking && <Radio className="w-3.5 h-3.5 shrink-0" />}
@@ -286,7 +286,7 @@ export function SwarmCanvas({ onAgentClick }: SwarmCanvasProps) {
       {/* Legend — only when the peer ring is present. */}
       {hasPeer && (
         <div className="absolute top-3 right-3 z-20 pointer-events-none rounded-lg border border-card-border bg-card/70 backdrop-blur px-2.5 py-1.5 text-[10px] font-medium leading-tight">
-          <div className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full border-2 border-[#00e5ff] shrink-0" /> AURA · outer</div>
+          <div className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full border-2 border-[#d97757] shrink-0" /> AURA · outer</div>
           <div className="mt-1 flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-[#a855f7] shrink-0" /> {peerName} · inner</div>
         </div>
       )}
@@ -304,7 +304,7 @@ export function SwarmCanvas({ onAgentClick }: SwarmCanvasProps) {
                 <motion.line
                   key={`${pos1.id}-${pos2.id}`}
                   x1={pos1.x} y1={pos1.y} x2={pos2.x} y2={pos2.y}
-                  stroke="#00e5ff" strokeWidth={1.5}
+                  stroke="#d97757" strokeWidth={1.5}
                   initial={{ opacity: reduceMotion ? 0.3 : 0 }}
                   animate={reduceMotion ? { opacity: 0.3 } : { opacity: [0.12, 0.45, 0.12] }}
                   transition={reduceMotion ? undefined : { duration: 2.4, repeat: Infinity, ease: "linear" }}

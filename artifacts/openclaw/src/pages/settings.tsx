@@ -86,7 +86,7 @@ function OperatorLogin() {
         >
           <div className="flex flex-col items-center text-center gap-3">
             <div className="w-14 h-14 bg-muted rounded-lg flex items-center justify-center border border-muted-border">
-              <ShieldAlert className="w-7 h-7 text-[#bf00ff]" />
+              <ShieldAlert className="w-7 h-7 text-[#d97757]" />
             </div>
             <div>
               <h1 className="text-xl font-bold tracking-tight text-foreground">OPERATOR SIGN-IN</h1>
@@ -107,7 +107,7 @@ function OperatorLogin() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="••••••••••••••••"
-              className="w-full bg-background border border-muted-border rounded-md px-3 py-2 text-sm text-foreground font-mono focus:outline-none focus:border-[#bf00ff] transition-colors"
+              className="w-full bg-background border border-muted-border rounded-md px-3 py-2 text-sm text-foreground font-mono focus:outline-none focus:border-[#d97757] transition-colors"
             />
           </div>
 
@@ -116,7 +116,7 @@ function OperatorLogin() {
           <button
             type="submit"
             disabled={login.isPending}
-            className="w-full flex items-center justify-center gap-2 bg-[#bf00ff]/10 hover:bg-[#bf00ff]/20 border border-[#bf00ff]/50 text-[#bf00ff] rounded-md px-4 py-2 text-sm font-semibold uppercase tracking-wider transition-colors disabled:opacity-50"
+            className="w-full flex items-center justify-center gap-2 bg-[#d97757]/10 hover:bg-[#d97757]/20 border border-[#d97757]/50 text-[#d97757] rounded-md px-4 py-2 text-sm font-semibold uppercase tracking-wider transition-colors disabled:opacity-50"
           >
             <Lock className="w-4 h-4" />
             {login.isPending ? "Authenticating…" : "Unlock Vault"}
@@ -193,7 +193,7 @@ function VaultPanel() {
     <div className="flex-1 flex flex-col h-full bg-background overflow-hidden relative">
       <div className="p-8 border-b border-card-border relative z-10 flex items-center gap-4">
         <div className="w-12 h-12 bg-muted rounded-lg flex items-center justify-center border border-muted-border">
-          <KeyRound className="w-6 h-6 text-[#00e5ff]" />
+          <KeyRound className="w-6 h-6 text-[#d97757]" />
         </div>
         <div className="flex-1">
           <h1 className="text-2xl font-bold tracking-tight text-foreground">Settings</h1>
@@ -265,12 +265,12 @@ function VaultPanel() {
           </div>
 
           {/* Security notice */}
-          <div className="flex gap-3 rounded-lg border border-[#bf00ff]/30 bg-[#bf00ff]/5 p-4">
-            <ShieldCheck className="w-5 h-5 text-[#bf00ff] shrink-0 mt-0.5" />
+          <div className="flex gap-3 rounded-lg border border-[#d97757]/30 bg-[#d97757]/5 p-4">
+            <ShieldCheck className="w-5 h-5 text-[#d97757] shrink-0 mt-0.5" />
             <div className="text-sm text-muted-foreground leading-relaxed">
               <p className="text-foreground font-semibold mb-1">How agents use secrets</p>
               Reference a stored secret anywhere a command or tool argument accepts text using
-              <code className="mx-1 px-1.5 py-0.5 rounded bg-muted text-[#00e5ff] font-mono text-xs">
+              <code className="mx-1 px-1.5 py-0.5 rounded bg-muted text-[#d97757] font-mono text-xs">
                 {"{{secret:NAME}}"}
               </code>
               . The raw value is injected only at the moment of use — it is never sent to the model,
@@ -285,7 +285,7 @@ function VaultPanel() {
             className="scroll-mt-20 rounded-lg border border-card-border bg-card p-6 space-y-4"
           >
             <div className="flex items-center gap-2 text-foreground font-semibold">
-              <Plus className="w-4 h-4 text-[#00e5ff]" />
+              <Plus className="w-4 h-4 text-[#d97757]" />
               Add / Update Secret
             </div>
 
@@ -304,7 +304,7 @@ function VaultPanel() {
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   placeholder="OPENAI_API_KEY"
-                  className="w-full bg-background border border-muted-border rounded-md px-3 py-2 text-sm text-foreground font-mono focus:outline-none focus:border-[#00e5ff] transition-colors"
+                  className="w-full bg-background border border-muted-border rounded-md px-3 py-2 text-sm text-foreground font-mono focus:outline-none focus:border-[#d97757] transition-colors"
                 />
                 {name && !nameValid && (
                   <p className="text-xs text-[#ff2d78]">Letters, numbers, _ and - only.</p>
@@ -319,7 +319,7 @@ function VaultPanel() {
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
                   placeholder="Used by CRAWLER for API access"
-                  className="w-full bg-background border border-muted-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:border-[#00e5ff] transition-colors"
+                  className="w-full bg-background border border-muted-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:border-[#d97757] transition-colors"
                 />
               </div>
             </div>
@@ -334,7 +334,7 @@ function VaultPanel() {
                 value={value}
                 onChange={(e) => setValue(e.target.value)}
                 placeholder="••••••••••••••••••••"
-                className="w-full bg-background border border-muted-border rounded-md px-3 py-2 text-sm text-foreground font-mono focus:outline-none focus:border-[#00e5ff] transition-colors"
+                className="w-full bg-background border border-muted-border rounded-md px-3 py-2 text-sm text-foreground font-mono focus:outline-none focus:border-[#d97757] transition-colors"
               />
             </div>
 
@@ -344,7 +344,7 @@ function VaultPanel() {
               <button
                 type="submit"
                 disabled={setSecret.isPending}
-                className="flex items-center gap-2 bg-[#00e5ff]/10 hover:bg-[#00e5ff]/20 border border-[#00e5ff]/50 text-[#00e5ff] rounded-md px-4 py-2 text-sm font-semibold uppercase tracking-wider transition-colors disabled:opacity-50"
+                className="flex items-center gap-2 bg-[#d97757]/10 hover:bg-[#d97757]/20 border border-[#d97757]/50 text-[#d97757] rounded-md px-4 py-2 text-sm font-semibold uppercase tracking-wider transition-colors disabled:opacity-50"
               >
                 <Lock className="w-4 h-4" />
                 {setSecret.isPending ? "Encrypting…" : "Encrypt & Store"}
@@ -372,7 +372,7 @@ function VaultPanel() {
                     key={secret.id}
                     className="flex items-center gap-4 rounded-lg border border-card-border bg-card px-4 py-3 group"
                   >
-                    <KeyRound className="w-4 h-4 text-[#00e5ff] shrink-0" />
+                    <KeyRound className="w-4 h-4 text-[#d97757] shrink-0" />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <span className="font-mono text-sm text-foreground truncate">{secret.name}</span>
@@ -388,7 +388,7 @@ function VaultPanel() {
                     <button
                       onClick={() => copyPlaceholder(secret.name)}
                       title="Copy placeholder"
-                      className="flex items-center gap-1.5 text-xs font-mono text-muted-foreground hover:text-[#00e5ff] transition-colors shrink-0"
+                      className="flex items-center gap-1.5 text-xs font-mono text-muted-foreground hover:text-[#d97757] transition-colors shrink-0"
                     >
                       {copied === secret.name ? (
                         <>
@@ -448,7 +448,7 @@ function IntegrationsStatus() {
     <div className="space-y-4">
       <div className="flex items-center gap-3">
         <div className="w-10 h-10 bg-muted rounded-lg flex items-center justify-center border border-muted-border shrink-0">
-          <Plug className="w-5 h-5 text-[#00e5ff]" />
+          <Plug className="w-5 h-5 text-[#d97757]" />
         </div>
         <div className="flex-1">
           <h2 className="text-lg font-bold tracking-tight text-foreground">Integrations</h2>
@@ -583,7 +583,7 @@ function SocialIntegrations() {
                 target="_blank"
                 rel="noopener noreferrer"
                 title={p.docsUrl}
-                className="flex items-center gap-1.5 text-xs font-mono uppercase tracking-wider text-muted-foreground hover:text-[#00e5ff] border border-muted-border hover:border-[#00e5ff]/50 rounded-md px-3 py-1.5 transition-colors shrink-0"
+                className="flex items-center gap-1.5 text-xs font-mono uppercase tracking-wider text-muted-foreground hover:text-[#d97757] border border-muted-border hover:border-[#d97757]/50 rounded-md px-3 py-1.5 transition-colors shrink-0"
               >
                 <BookOpen className="w-3.5 h-3.5" /> Docs
               </a>
@@ -651,13 +651,13 @@ function SiteLogins({
     }
   };
 
-  const inputCls = "w-full bg-background border border-muted-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:border-[#00e5ff] transition-colors";
+  const inputCls = "w-full bg-background border border-muted-border rounded-md px-3 py-2 text-sm text-foreground focus:outline-none focus:border-[#d97757] transition-colors";
 
   return (
     <section className="rounded-lg border border-card-border bg-card p-6 space-y-5">
       <div className="flex items-start gap-3">
         <div className="w-10 h-10 rounded-lg bg-muted border border-muted-border flex items-center justify-center shrink-0">
-          <Globe className="w-5 h-5 text-[#00e5ff]" />
+          <Globe className="w-5 h-5 text-[#d97757]" />
         </div>
         <div>
           <h2 className="text-lg font-bold text-foreground">Website Logins</h2>
@@ -695,7 +695,7 @@ function SiteLogins({
         <button
           type="submit"
           disabled={saving}
-          className="flex items-center gap-2 bg-[#00e5ff]/10 hover:bg-[#00e5ff]/20 border border-[#00e5ff]/50 text-[#00e5ff] rounded-md px-4 py-2 text-sm font-semibold uppercase tracking-wider transition-colors disabled:opacity-50"
+          className="flex items-center gap-2 bg-[#d97757]/10 hover:bg-[#d97757]/20 border border-[#d97757]/50 text-[#d97757] rounded-md px-4 py-2 text-sm font-semibold uppercase tracking-wider transition-colors disabled:opacity-50"
         >
           <LogIn className="w-4 h-4" />
           {saving ? "Encrypting…" : "Save login"}
@@ -707,7 +707,7 @@ function SiteLogins({
           <div className="text-xs uppercase tracking-widest text-muted-foreground font-mono">Saved logins ({logins.length})</div>
           {logins.map((l) => (
             <div key={l.base} className="flex items-center gap-4 rounded-lg border border-card-border bg-card px-4 py-3">
-              <Globe className="w-4 h-4 text-[#00e5ff] shrink-0" />
+              <Globe className="w-4 h-4 text-[#d97757] shrink-0" />
               <div className="min-w-0 flex-1">
                 <div className="font-mono text-sm text-foreground truncate">{l.base}</div>
                 <div className="text-xs text-muted-foreground truncate">{l.desc || `${l.base}_EMAIL · ${l.base}_PASSWORD`}</div>
@@ -831,20 +831,20 @@ function ComposioIntegrations() {
     <div className="space-y-4">
       <div className="flex items-center gap-3">
         <div className="w-10 h-10 bg-muted rounded-lg flex items-center justify-center border border-muted-border shrink-0">
-          <Plug className="w-5 h-5 text-[#bf00ff]" />
+          <Plug className="w-5 h-5 text-[#d97757]" />
         </div>
         <div className="flex-1 min-w-0">
           <h2 className="text-lg font-bold tracking-tight text-foreground">CONNECT APPS (COMPOSIO)</h2>
           <p className="text-sm text-muted-foreground">
             Authorize SaaS apps so agents can act on them with{" "}
-            <code className="px-1 py-0.5 rounded bg-muted text-[#bf00ff] font-mono text-xs">composio_action</code>.
+            <code className="px-1 py-0.5 rounded bg-muted text-[#d97757] font-mono text-xs">composio_action</code>.
           </p>
         </div>
         <button
           onClick={() => refetch()}
           disabled={isFetching || notConfigured}
           title="Refresh connection status"
-          className="flex items-center gap-1.5 text-xs font-mono uppercase tracking-wider text-muted-foreground hover:text-[#bf00ff] border border-muted-border hover:border-[#bf00ff]/50 rounded-md px-3 py-2 transition-colors disabled:opacity-50 shrink-0"
+          className="flex items-center gap-1.5 text-xs font-mono uppercase tracking-wider text-muted-foreground hover:text-[#d97757] border border-muted-border hover:border-[#d97757]/50 rounded-md px-3 py-2 transition-colors disabled:opacity-50 shrink-0"
         >
           <RefreshCw className={`w-3.5 h-3.5 ${isFetching ? "animate-spin" : ""}`} />
           Refresh
@@ -861,8 +861,8 @@ function ComposioIntegrations() {
         </div>
       ) : (
         <>
-          <div className="flex gap-3 rounded-lg border border-[#bf00ff]/30 bg-[#bf00ff]/5 p-4">
-            <ShieldCheck className="w-5 h-5 text-[#bf00ff] shrink-0 mt-0.5" />
+          <div className="flex gap-3 rounded-lg border border-[#d97757]/30 bg-[#d97757]/5 p-4">
+            <ShieldCheck className="w-5 h-5 text-[#d97757] shrink-0 mt-0.5" />
             <div className="text-sm text-muted-foreground leading-relaxed">
               <span className="font-semibold text-foreground">Connect</span> opens the app's OAuth screen in a new
               tab. Approve access there, then <span className="font-semibold text-foreground">Refresh</span> — the
@@ -883,7 +883,7 @@ function ComposioIntegrations() {
                     "flex items-center gap-1.5 text-xs font-mono rounded-md px-3 py-1.5 border transition-colors disabled:opacity-60",
                     status === "ACTIVE"
                       ? "text-[#00cc88] border-[#00cc88]/40 bg-[#00cc88]/10"
-                      : "text-foreground border-muted-border hover:border-[#bf00ff]/50 hover:text-[#bf00ff]",
+                      : "text-foreground border-muted-border hover:border-[#d97757]/50 hover:text-[#d97757]",
                   )}
                 >
                   {status === "ACTIVE" ? <Check className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
@@ -900,12 +900,12 @@ function ComposioIntegrations() {
               onChange={(e) => setSlug(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && connect(slug)}
               placeholder="other app slug, e.g. airtable, hubspot, jira"
-              className="flex-1 bg-background border border-muted-border rounded-md px-3 py-2 text-sm text-foreground font-mono focus:outline-none focus:border-[#bf00ff] transition-colors"
+              className="flex-1 bg-background border border-muted-border rounded-md px-3 py-2 text-sm text-foreground font-mono focus:outline-none focus:border-[#d97757] transition-colors"
             />
             <button
               onClick={() => connect(slug)}
               disabled={!slug.trim() || connecting === slug.trim().toLowerCase()}
-              className="flex items-center gap-1.5 bg-[#bf00ff]/10 hover:bg-[#bf00ff]/20 border border-[#bf00ff]/50 text-[#bf00ff] rounded-md px-4 py-2 text-sm font-semibold uppercase tracking-wider transition-colors disabled:opacity-50 shrink-0"
+              className="flex items-center gap-1.5 bg-[#d97757]/10 hover:bg-[#d97757]/20 border border-[#d97757]/50 text-[#d97757] rounded-md px-4 py-2 text-sm font-semibold uppercase tracking-wider transition-colors disabled:opacity-50 shrink-0"
             >
               <ExternalLink className="w-4 h-4" />
               Connect
@@ -926,7 +926,7 @@ function ComposioIntegrations() {
                   key={c.id}
                   className="flex items-center gap-4 rounded-lg border border-card-border bg-card px-4 py-3"
                 >
-                  <Plug className="w-4 h-4 text-[#bf00ff] shrink-0" />
+                  <Plug className="w-4 h-4 text-[#d97757] shrink-0" />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <span className="font-semibold text-sm text-foreground">{c.toolkit}</span>

@@ -112,9 +112,9 @@ export function RelayBanner() {
 
   const styles =
     phase === "peer"
-      ? "border-primary/50 bg-primary/10 text-primary shadow-[0_0_24px_rgba(0,255,255,0.25)]"
+      ? "border-primary/50 bg-primary/10 text-primary shadow-[0_0_24px_rgba(217,119,87,0.25)]"
       : phase === "self"
-        ? "border-[#bf00ff]/50 bg-[#bf00ff]/10 text-[#bf00ff] shadow-[0_0_24px_rgba(191,0,255,0.22)]"
+        ? "border-[#d97757]/50 bg-[#d97757]/10 text-[#d97757] shadow-[0_0_24px_rgba(191,0,255,0.22)]"
         : "border-emerald-500/50 bg-emerald-500/10 text-emerald-400 shadow-[0_0_24px_rgba(16,185,129,0.22)]";
 
   const Icon = phase === "peer" ? Bot : phase === "self" ? Cpu : CheckCircle2;
@@ -173,7 +173,7 @@ export function RelayRailIndicator() {
     phase === "peer"
       ? "text-primary"
       : phase === "self"
-        ? "text-[#bf00ff]"
+        ? "text-[#d97757]"
         : phase === "done"
           ? "text-emerald-400"
           : "text-muted-foreground";
@@ -181,7 +181,7 @@ export function RelayRailIndicator() {
     phase === "peer"
       ? "bg-primary"
       : phase === "self"
-        ? "bg-[#bf00ff]"
+        ? "bg-[#d97757]"
         : phase === "done"
           ? "bg-emerald-400"
           : "bg-muted-foreground";

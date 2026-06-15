@@ -50,11 +50,9 @@ export function ChatStream({ channelId }: ChatStreamProps) {
 
   return (
     <div className="w-full h-full flex flex-col bg-background/50">
-      <div className="absolute inset-0 bg-[linear-gradient(to_bottom,transparent,rgba(0,0,0,0.8))] pointer-events-none z-10 h-16" />
-      
-      <div 
+      <div
         ref={scrollRef}
-        className="flex-1 overflow-y-auto p-6 space-y-6 pt-16 scrollbar-thin relative z-0"
+        className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5 scrollbar-thin relative z-0"
       >
         {isLoading ? (
           <div className="flex items-center justify-center h-full text-muted-foreground animate-pulse font-mono text-sm">
@@ -127,10 +125,15 @@ export function ChatStream({ channelId }: ChatStreamProps) {
                   )}
 
                   <div className={cn(
-                    "text-sm leading-relaxed",
-                    msg.messageType === 'system' && "text-muted-foreground font-mono text-xs uppercase tracking-wider",
-                    msg.messageType === 'tool_output' && "bg-card/50 border border-card-border rounded-md p-3 font-mono text-xs text-muted-foreground mt-2",
-                    msg.messageType === 'hitl_request' && "bg-accent/10 border border-accent/30 rounded-lg p-4 text-accent mt-2 shadow-[0_0_15px_rgba(var(--color-accent),0.1)]",
+                    "text-[15px] leading-relaxed",
+                    // System lines are full sentences (solution gate, status) — keep
+                    // them normal-case and readable, NOT tracked-out uppercase.
+                    msg.messageType === 'system' && "text-muted-foreground text-[13px] border-l-2 border-card-border pl-3 py-0.5",
+                    // Tool output: a readable mono block — higher contrast + a touch
+                    // larger than before, capped height with its own scroll so one
+                    // huge dump can't swamp the stream.
+                    msg.messageType === 'tool_output' && "bg-card border border-card-border rounded-lg p-3 font-mono text-[12.5px] leading-relaxed text-foreground/80 mt-2 max-h-72 overflow-y-auto scrollbar-thin",
+                    msg.messageType === 'hitl_request' && "bg-accent/10 border border-accent/30 rounded-lg p-4 text-accent mt-2",
                     msg.messageType === 'user' && "text-foreground",
                     msg.messageType === 'agent' && "text-foreground/90"
                   )}>
@@ -139,7 +142,7 @@ export function ChatStream({ channelId }: ChatStreamProps) {
                         <AlertTriangle className="w-4 h-4 animate-pulse" /> Authorization Required
                       </div>
                     )}
-                    
+
                     <div className="whitespace-pre-wrap break-words">{msg.content}</div>
                   </div>
                 </div>

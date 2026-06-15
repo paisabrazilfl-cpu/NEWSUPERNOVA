@@ -14,12 +14,12 @@ interface AgentInspectorProps {
 const TOOL_CATEGORIES: { label: string; color: string; tools: string[] }[] = [
   {
     label: "Runtime",
-    color: "#bf00ff",
+    color: "#d97757",
     tools: ["code_exec", "exec", "code_execution", "process"],
   },
   {
     label: "Files",
-    color: "#00e5ff",
+    color: "#d97757",
     tools: ["read", "write", "edit", "apply_patch", "diffs"],
   },
   {
@@ -39,12 +39,12 @@ const TOOL_CATEGORIES: { label: string; color: string; tools: string[] }[] = [
   },
   {
     label: "Agents",
-    color: "#00e5ff",
+    color: "#d97757",
     tools: ["subagents", "sessions_spawn", "sessions_history", "agents_list", "goal", "session_status"],
   },
   {
     label: "Automation",
-    color: "#bf00ff",
+    color: "#d97757",
     tools: ["cron", "heartbeat_respond", "webhook", "message"],
   },
   {
