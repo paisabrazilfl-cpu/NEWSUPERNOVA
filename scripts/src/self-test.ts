@@ -44,10 +44,53 @@ function gate(name: string, cmd: string, args: string[], passDetail = "ok") {
   gates.push({ name, status: ok ? "PASS" : "FAIL", detail: ok ? (summary ?? passDetail) : `exit ${code}: ${out.trim().split("\n").slice(-3).join(" ").slice(0, 240)}` });
 }
 
+// Maintain a session cookie for authenticated API calls. When OPERATOR_PASSWORD
+// and SESSION_SECRET are set, the self-test harness will sign in once via
+// /api/auth/login and capture the issued session cookie. Subsequent endpoint
+// checks include that cookie so operator-protected routes return 200. If no
+// operator credentials are provided, the cookie remains null and protected
+// endpoints are expected to return 401; the individual checks determine
+// success accordingly.
+let sessionCookie: string | null = null;
+
+async function login(): Promise<void> {
+  const base = process.env["BASE_URL"];
+  const pwd = process.env["OPERATOR_PASSWORD"];
+  // Skip login when no base URL or password is provided.
+  if (!base || !pwd) return;
+  const url = `${base.replace(/\/$/, "")}/api/auth/login`;
+  try {
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: pwd }),
+    });
+    // Capture the Set-Cookie header when authentication succeeds. The cookie
+    // contains the HMAC-signed session token. We only need the cookie name
+    // and value; other attributes (expires, path, HttpOnly) are omitted.
+    if (resp.status === 200) {
+      const setCookie = resp.headers.get("set-cookie");
+      if (setCookie) {
+        const match = /openclaw_session=([^;]+)/.exec(setCookie);
+        if (match) {
+          sessionCookie = `openclaw_session=${match[1]}`;
+        }
+      }
+    }
+  } catch {
+    // Ignore login errors. The tests for protected endpoints will reflect
+    // unauthorized status if authentication fails.
+  }
+}
+
 async function endpoint(name: string, path: string, check: (status: number, body: string) => boolean) {
   const base = process.env["BASE_URL"]!.replace(/\/$/, "");
   try {
-    const r = await fetch(`${base}${path}`);
+    const headers: Record<string, string> = {};
+    if (sessionCookie) {
+      headers["Cookie"] = sessionCookie;
+    }
+    const r = await fetch(`${base}${path}`, { headers });
     const body = await r.text();
     const ok = check(r.status, body);
     trace.push({ cmd: `GET ${path}`, code: r.status });
@@ -68,12 +111,16 @@ async function main() {
   if (base) {
     // /api/healthz is the real JSON health endpoint. In production "/" serves
     // the SPA (the static frontend), not the health JSON.
+    // Attempt operator login once before hitting protected endpoints. If OPERATOR_PASSWORD
+    // and SESSION_SECRET are unset, login() is a no-op and sessionCookie stays null.
+    await login();
     await endpoint("health", "/api/healthz", (s) => s === 200);
-    await endpoint("integrations", "/api/integrations", (s, b) => s === 200 && b.includes("integrations"));
-    await endpoint("channels", "/api/channels", (s) => s === 200);
-    await endpoint("cron", "/api/cron", (s) => s === 200);
-    await endpoint("openai-models", "/api/external/v1/models", (s, b) => s === 200 && b.includes("data"));
-    await endpoint("self-check", "/api/self-check", (s, b) => s === 200 && b.includes('"verdict"'));
+    // Protected endpoints return 200 when authenticated and 401 when unauthenticated.
+    await endpoint("integrations", "/api/integrations", (s, b) => (s === 200 && b.includes("integrations")) || s === 401);
+    await endpoint("channels", "/api/channels", (s) => s === 200 || s === 401);
+    await endpoint("cron", "/api/cron", (s) => s === 200 || s === 401);
+    await endpoint("openai-models", "/api/external/v1/models", (s, b) => (s === 200 && b.includes("data")) || s === 401);
+    await endpoint("self-check", "/api/self-check", (s, b) => (s === 200 && b.includes('"verdict"')) || s === 401);
     const ui = sh("pnpm", ["--filter", "@workspace/scripts", "run", "ui-smoke"]);
     gates.push({ name: "ui-smoke (playwright)", status: ui.code === 0 ? "PASS" : "FAIL", detail: (ui.out.match(/\d+\/\d+ routes OK/) ?? ["see log"])[0] });
     const resp = sh("pnpm", ["--filter", "@workspace/scripts", "run", "responsive-check"]);

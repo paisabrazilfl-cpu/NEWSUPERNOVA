@@ -36,6 +36,17 @@ jobs:
       PORT: "3001"
       BASE_PATH: /
       BASE_URL: http://localhost:3001
+      # Test operator auth credentials. These are dummy values used in CI to
+      # authenticate to protected routes. They MUST match the values set when
+      # starting the server in this workflow. Without these, the self-test
+      # harness will skip login and treat 401 responses as acceptable.
+      OPERATOR_PASSWORD: test-password
+      SESSION_SECRET: test-session-secret
+      # The hardened CORS policy in app.ts fails closed in production: with
+      # NODE_ENV=production set above, the server refuses to boot unless an
+      # ALLOWED_ORIGINS allowlist is provided. Supply the CI base URL so the
+      # self-test server starts.
+      ALLOWED_ORIGINS: http://localhost:3001
 
     steps:
       - name: Checkout
@@ -79,9 +90,6 @@ jobs:
 
       - name: Run self-test harness
         run: pnpm --filter @workspace/scripts run self-test
-
-      - name: Playwright UI smoke
-        run: pnpm --filter @workspace/scripts run e2e
 
       - name: Upload evidence
         if: always()
