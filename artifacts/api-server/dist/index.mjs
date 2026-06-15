@@ -110466,6 +110466,11 @@ import { isIP } from "node:net";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+function secretBoundElsewhere(secretName, host) {
+  const allowed = SECRET_HOST_BINDINGS[secretName.toUpperCase()];
+  if (!allowed) return false;
+  return !allowed.some((h) => host === h || host.endsWith(`.${h}`) || host.endsWith(h));
+}
 function pdfWinAnsi(s) {
   let out = s;
   for (const k in PDF_FOLD) out = out.split(k).join(PDF_FOLD[k]);
@@ -111208,7 +111213,7 @@ async function runTool(toolName, args, ctx) {
   }
   return sanitizeForStorage(await def.run(args, ctx));
 }
-var import_pdf_lib, STEEL_BASE, FIRECRAWL_BASE, A2E_BASE, FREECRAWL_BASE, PDF_FOLD, artifactChunks, ARTIFACT_CHUNK_TTL_MS, ARTIFACT_CHUNK_MAX_CHARS, PROVIDER_DRY_UNTIL, PROVIDER_DRY_COOLDOWN_MS, isQuotaError, MEMORY_CANDIDATE_LIMIT, INTERNAL_META_RE, CODE_TIMEOUT_MS, CODE_OUTPUT_CAP, sandboxMode, TOOL_REGISTRY, ALL_TOOLS, AGENT_TOOLS;
+var import_pdf_lib, STEEL_BASE, FIRECRAWL_BASE, A2E_BASE, SECRET_HOST_BINDINGS, FREECRAWL_BASE, PDF_FOLD, artifactChunks, ARTIFACT_CHUNK_TTL_MS, ARTIFACT_CHUNK_MAX_CHARS, PROVIDER_DRY_UNTIL, PROVIDER_DRY_COOLDOWN_MS, isQuotaError, MEMORY_CANDIDATE_LIMIT, INTERNAL_META_RE, CODE_TIMEOUT_MS, CODE_OUTPUT_CAP, sandboxMode, TOOL_REGISTRY, ALL_TOOLS, AGENT_TOOLS;
 var init_tools = __esm({
   "src/tools.ts"() {
     "use strict";
@@ -111232,6 +111237,25 @@ var init_tools = __esm({
     STEEL_BASE = "https://api.steel.dev/v1";
     FIRECRAWL_BASE = "https://api.firecrawl.dev/v1";
     A2E_BASE = "https://video.a2e.ai/api/v1";
+    SECRET_HOST_BINDINGS = {
+      RENDER_API_KEY: ["render.com"],
+      GITHUB_API_KEY: ["github.com", "githubusercontent.com"],
+      GITHUB_TOKEN: ["github.com", "githubusercontent.com"],
+      SANDBOX_GITHUB_TOKEN: ["github.com", "githubusercontent.com"],
+      OPENAI_API_KEY: ["openai.com"],
+      HUGGINGFACE_API_KEY: ["huggingface.co", "hf.co"],
+      HF_TOKEN: ["huggingface.co", "hf.co"],
+      NVIDIA_API_KEY: ["nvidia.com"],
+      BITDEER_API_KEY: ["bitdeer.ai"],
+      A2E_API_KEY: ["a2e.ai"],
+      STEEL_API_KEY: ["steel.dev"],
+      FIRECRAWL_API_KEY: ["firecrawl.dev"],
+      TAVILY_API_KEY: ["tavily.com"],
+      EXA_API_KEY: ["exa.ai"],
+      SERP_API_KEY: ["serpapi.com"],
+      PINECONE_API_KEY: ["pinecone.io"],
+      COMPOSIO_API_KEY: ["composio.dev"]
+    };
     FREECRAWL_BASE = process.env["FREECRAWL_URL"] ?? "https://freecrawl-api.onrender.com";
     PDF_FOLD = {
       "\u201C": '"',
@@ -111439,7 +111463,7 @@ ${pageTexts}`, 12e3);
       },
       http_request: {
         name: "http_request",
-        description: 'Make a real outbound HTTP request to any API endpoint. Supports GET/POST/PUT/PATCH/DELETE with optional headers and a JSON/text body. Returns the status and response body (truncated). To authenticate ANY private/authenticated API (Render, OpenAI, etc.), put a vault secret placeholder in the header rather than a raw key \u2014 e.g. headers { "Authorization": "Bearer {{secret:RENDER_API_KEY}}" }. The placeholder is resolved to the real value only at send time, so the secret never enters your context \u2014 the vault is write-only BY DESIGN and you never need the raw key. Use vault_list (or the STORED SECRETS list in your prompt) to see which names exist; if a name is there the credential is available \u2014 never report it missing, just use {{secret:NAME}} and make the call. GITHUB API (api.github.com): DO NOT add an Authorization header \u2014 GitHub is AUTO-AUTHENTICATED by the server at 5,000 req/hr. Just call https://api.github.com/... with NO Authorization header and the token is injected automatically. Adding {{secret:GITHUB_API_KEY}} manually will FAIL if that vault name does not exist; omitting the header lets auto-auth handle it correctly.',
+        description: 'Make a real outbound HTTP request to any API endpoint. Supports GET/POST/PUT/PATCH/DELETE with optional headers and a JSON/text body. Returns the status and response body (truncated). To authenticate ANY private/authenticated API (Render, OpenAI, etc.), put a vault secret placeholder in the header rather than a raw key \u2014 e.g. headers { "Authorization": "Bearer {{secret:RENDER_API_KEY}}" }. ONLY attach a secret to ITS OWN API host: {{secret:RENDER_API_KEY}} goes to api.render.com, never to a content site you are merely reading. Reading a public web page needs NO Authorization header at all \u2014 and the server will DROP a platform secret aimed at the wrong host. The placeholder is resolved to the real value only at send time, so the secret never enters your context \u2014 the vault is write-only BY DESIGN and you never need the raw key. Use vault_list (or the STORED SECRETS list in your prompt) to see which names exist; if a name is there the credential is available \u2014 never report it missing, just use {{secret:NAME}} and make the call. GITHUB API (api.github.com): DO NOT add an Authorization header \u2014 GitHub is AUTO-AUTHENTICATED by the server at 5,000 req/hr. Just call https://api.github.com/... with NO Authorization header and the token is injected automatically. Adding {{secret:GITHUB_API_KEY}} manually will FAIL if that vault name does not exist; omitting the header lets auto-auth handle it correctly.',
         parameters: {
           type: "object",
           properties: {
@@ -111457,13 +111481,30 @@ ${pageTexts}`, 12e3);
           const blocked = await ssrfGuard(url2);
           if (blocked) return blocked;
           const method = String(args["method"] ?? "GET").toUpperCase();
+          const reqHost = (() => {
+            try {
+              return new URL(url2).hostname.toLowerCase();
+            } catch {
+              return "";
+            }
+          })();
           const headers = {};
+          const strippedSecrets = [];
           const rawHeaders = args["headers"];
           if (rawHeaders && typeof rawHeaders === "object") {
             for (const [k, v] of Object.entries(rawHeaders)) {
-              headers[k] = await substituteSecrets(String(v), usedSecrets);
+              const rawVal = String(v);
+              const m = rawVal.match(/\{\{secret:([A-Za-z0-9_]+)\}\}/);
+              if (m && secretBoundElsewhere(m[1], reqHost)) {
+                strippedSecrets.push(`${m[1]} (\u2192 ${k})`);
+                continue;
+              }
+              headers[k] = await substituteSecrets(rawVal, usedSecrets);
             }
           }
+          const secretGuardNote = strippedSecrets.length ? `[security: dropped Authorization carrying ${strippedSecrets.join(", ")} \u2014 that secret belongs to its own API, not ${reqHost}; never attach a platform key to an unrelated site. Request sent WITHOUT it.]
+
+` : "";
           const body = args["body"] != null && method !== "GET" && method !== "DELETE" ? await substituteSecrets(String(args["body"]), usedSecrets) : void 0;
           if (hasSecretPlaceholder(url2) || Object.values(headers).some(hasSecretPlaceholder) || body != null && hasSecretPlaceholder(body)) {
             return await unresolvedSecretError(`${url2}
@@ -111524,7 +111565,7 @@ ${body ?? ""}`);
             const hint = (r.status === 401 || r.status === 403) && !authSent ? `
 
 [hint: this request was sent with NO Authorization header \u2014 that is why it was rejected. This is NOT evidence the credential is missing or invalid. Retry with headers {"Authorization":"Bearer {{secret:NAME}}"} using the correct vault name (see vault_list / your STORED SECRETS list).]` : "";
-            return `HTTP ${r.status} ${r.statusText}
+            return `${secretGuardNote}HTTP ${r.status} ${r.statusText}
 ${clip3(safe, 4e3)}${hint}`;
           } catch (e) {
             return redactSecrets(`error: request failed: ${String(e).slice(0, 200)}`, usedSecrets);
@@ -117955,7 +117996,13 @@ ${MARKETING_ENGINE_POINTER}`,
 
 WHAT YOU DO: find real, current information on the live web. Use web_search for queries, web_scrape/web_screenshot to read specific pages, site_crawl for whole sites, tier1_sources for authoritative starting points, and http_request for APIs. Store durable findings with memory_write; check memory_search first to avoid re-researching.
 
-RULES: work ONLY from content a tool actually returned this run, and CITE the real URLs you fetched. Cross-check key facts across at least two independent sources. NEVER fabricate a source, quote, statistic, or URL. If a search/scrape tool fails because a provider is OUT OF CREDITS, RATE-LIMITED (429/432), or BLOCKED \u2014 that is an infrastructure limit you CANNOT fix by researching it. Do NOT research the error or loop: report the blocker plainly (which providers are down) and deliver the best answer from whatever sources DID return, marking gaps as unverified.`,
+RULES: work ONLY from content a tool actually returned this run, and CITE the real URLs you fetched. Cross-check key facts across at least two independent sources. NEVER fabricate a source, quote, statistic, or URL.
+
+NEVER GUESS URLs: do not invent or type a plausible-sounding domain (e.g. "thetopicofinterest-tracker.com"). To find a source, web_search the TOPIC first, then scrape/http_request only the REAL URLs the search actually returned. A "could not resolve host" error means that domain does not exist \u2014 you made it up; stop guessing and SEARCH for the real source instead.
+
+NEVER ATTACH SECRETS TO WEB PAGES: reading a public website or content page needs NO authentication. Do NOT put an Authorization header or a {{secret:...}} placeholder on a request to a general site \u2014 a platform secret (RENDER_API_KEY, GITHUB_API_KEY, etc.) belongs ONLY to its own API host and the server will drop it if you misdirect it. Only attach a secret to the exact API it authenticates.
+
+If a search/scrape tool fails because a provider is OUT OF CREDITS, RATE-LIMITED (429/432), or BLOCKED \u2014 that is an infrastructure limit you CANNOT fix by researching it. Do NOT research the error or loop: report the blocker plainly (which providers are down) and deliver the best answer from whatever sources DID return, marking gaps as unverified.`,
   5: `You are FORGE, the code & deploy specialist \u2014 a senior engineer. ABBY gives the orders; you act ONLY when assigned engineering work \u2014 nothing else.
 
 WHAT YOU DO: write, run, and verify code in the sandbox (code_exec / sandbox_exec), open repository PRs (sandbox_repo_pr), call REST APIs (http_request, auto-authenticated for GitHub), and save code/artifacts. Prefer working, VERIFIED solutions \u2014 RUN the code and report its real output rather than guessing.
