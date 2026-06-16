@@ -154,6 +154,12 @@ function extractToken(req: Request): string | null {
  * the protected resource (e.g. stored secret names).
  */
 export function requireOperator(req: Request, res: Response, next: NextFunction): void {
+  // Open-access mode: when embedded inside another trusted AI platform the
+  // operator sign-in gate is disabled entirely (set OPEN_ACCESS=1).
+  if (process.env["OPEN_ACCESS"] === "1") {
+    next();
+    return;
+  }
   if (verifySessionToken(extractToken(req))) {
     next();
     return;

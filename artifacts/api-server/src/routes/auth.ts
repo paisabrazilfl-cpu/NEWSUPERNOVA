@@ -30,6 +30,12 @@ router.post("/auth/logout", (_req, res) => {
 
 // Report whether the caller currently holds a valid operator session.
 router.get("/auth/me", (req, res) => {
+  // Open-access mode (embedded in another trusted platform): report
+  // authenticated so the frontend skips the operator sign-in gate entirely.
+  if (process.env["OPEN_ACCESS"] === "1") {
+    res.status(200).json({ authenticated: true });
+    return;
+  }
   const token = req.cookies?.[SESSION_COOKIE];
   res.status(200).json({ authenticated: verifySessionToken(token) });
 });
