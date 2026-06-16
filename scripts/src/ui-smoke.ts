@@ -29,8 +29,8 @@ const ROUTES: RouteCheck[] = [
   { path: "/", expect: 'textarea[aria-label="Message"]', label: "Chat composer" },
   { path: "/swarm", expect: "text=Chat", label: "Swarm shell" },
   { path: "/agents", expect: "text=AGENTS", label: "Agents page" },
-  { path: "/tasks", expect: "text=TASK QUEUE", label: "Tasks page" },
-  { path: "/cron", expect: "text=Cron Scheduler", label: "Cron page" },
+  { path: "/tasks", expect: "text=What your agents are working on", label: "Tasks page" },
+  { path: "/cron", expect: "text=Scheduled jobs", label: "Cron page" },
   { path: "/settings", expect: "text=Chat", label: "Settings shell" },
 ];
 
