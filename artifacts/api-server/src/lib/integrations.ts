@@ -372,7 +372,7 @@ export function openrouterRequestFor(nimModel: string): LlmChatRequest {
     headers: {
       Authorization: `Bearer ${key}`,
       "Content-Type": "application/json",
-      "HTTP-Referer": "https://newsupernova.onrender.com",
+      "HTTP-Referer": "https://supernova.onrender.com",
       "X-Title": "OPENCLAW OMEGA",
     },
     model: orModel,

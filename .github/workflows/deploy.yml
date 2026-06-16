@@ -30,7 +30,10 @@ jobs:
       PNPM_VERSION: "10"
       API_SERVER_FILTER: "@workspace/api-server"
       FRONTEND_FILTER: "@workspace/openclaw"
-      RENDER_SERVICE_ID: "srv-d8hmeunlk1mc73faoh90"
+      # Set this as a GitHub repo variable (Settings → Secrets and variables →
+      # Actions → Variables) to THIS clone's own supernova service id (srv-…).
+      # Never hardcode the original service id here — that would deploy to it.
+      RENDER_SERVICE_ID: ${{ vars.RENDER_SERVICE_ID }}
       FRONTEND_PORT: "10000"
       BASE_PATH: "/"
 
@@ -59,6 +62,11 @@ jobs:
 
           if [ -z "${{ secrets.RENDER_TOKEN }}" ]; then
             echo "RENDER_TOKEN is missing."
+            exit 1
+          fi
+
+          if [ -z "${RENDER_SERVICE_ID}" ]; then
+            echo "RENDER_SERVICE_ID is missing — set the 'RENDER_SERVICE_ID' repo variable to the supernova service id."
             exit 1
           fi
 
@@ -170,5 +178,5 @@ jobs:
             echo "| Render deploy request | see job logs |"
             echo ""
             echo "Render service: \`${RENDER_SERVICE_ID}\`"
-            echo "Production URL: https://newsupernova.onrender.com"
+            echo "Production URL: https://supernova.onrender.com"
           } >> "$GITHUB_STEP_SUMMARY"

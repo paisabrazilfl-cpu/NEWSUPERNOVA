@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: newsupernova
+    name: supernova
     runtime: node
     plan: free
     region: oregon
@@ -43,7 +43,7 @@ services:
       #    THIS exact value as its RELAY_API_KEY. Set the value in the dashboard.
       - key: OPENCLAW_API_KEY
         sync: false
-      # ── Primary/secondary collaboration relay (NEWSUPERNOVA = PRIMARY) ──────────
+      # ── Primary/secondary collaboration relay (SUPERNOVA = PRIMARY) ──────────
       #    Non-secret config is set here; the shared secret is set in the
       #    dashboard. The loop stays OFF until RELAY_API_KEY is filled in.
       - key: RELAY_ENABLED
@@ -53,7 +53,7 @@ services:
       - key: RELAY_PEER_URL
         value: https://t800-aura.onrender.com
       - key: RELAY_SELF_NAME
-        value: NEWSUPERNOVA
+        value: SUPERNOVA
       - key: RELAY_PEER_NAME
         value: T800-AURA
       - key: RELAY_MAX_ROUNDS

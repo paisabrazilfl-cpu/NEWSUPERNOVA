@@ -149,7 +149,7 @@ pnpm --filter @workspace/scripts run visual-audit
 
 Deployment Verification Commands
 
-curl -i https://newsupernova.onrender.com/api/healthz
+curl -i https://supernova.onrender.com/api/healthz
 
 
 ---

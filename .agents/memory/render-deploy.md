@@ -1,11 +1,11 @@
-````md id="render-deployment-newsupernova"
+````md id="render-deployment-supernova"
 
 # Render Deployment — NEWSUPERNOVA
 
-**service:** newsupernova  
-**service_id:** srv-d8hmeunlk1mc73faoh90  
-**url:** https://newsupernova.onrender.com  
-**dashboard:** https://dashboard.render.com/web/srv-d8hmeunlk1mc73faoh90  
+**service:** supernova  
+**service_id:** srv-REPLACE_WITH_NEW_SUPERNOVA_SERVICE_ID  
+**url:** https://supernova.onrender.com  
+**dashboard:** https://dashboard.render.com/web/srv-REPLACE_WITH_NEW_SUPERNOVA_SERVICE_ID  
 **owner_id:** tea-d8a836beo5us739g6cc0  
 **repo:** https://github.com/paisabrazilfl-cpu/NEWSUPERNOVA  
 **auto_deploy:** true (branch: main)
@@ -65,7 +65,7 @@ Render API limitation:
 # fix procedure (authoritative)
 
 1. open:
-   [https://dashboard.render.com/web/srv-d8hmeunlk1mc73faoh90](https://dashboard.render.com/web/srv-d8hmeunlk1mc73faoh90)
+   [https://dashboard.render.com/web/srv-REPLACE_WITH_NEW_SUPERNOVA_SERVICE_ID](https://dashboard.render.com/web/srv-REPLACE_WITH_NEW_SUPERNOVA_SERVICE_ID)
 
 2. go to:
    Environment → Add Variable

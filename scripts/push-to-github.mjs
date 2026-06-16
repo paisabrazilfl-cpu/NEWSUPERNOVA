@@ -56,7 +56,7 @@ try {
   );
   console.log("Push result:", result || "(clean push)");
   console.log("\n✅ PUSHED TO: https://github.com/paisabrazilfl-cpu/NEWSUPERNOVA");
-  console.log("🚀 RENDER URL: https://newsupernova.onrender.com");
+  console.log("🚀 RENDER URL: https://supernova.onrender.com");
 } catch (err) {
   console.error("ERROR:", err.message);
   if (err.stdout) console.error("stdout:", err.stdout.toString().slice(0, 500));

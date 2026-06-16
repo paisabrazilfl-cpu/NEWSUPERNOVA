@@ -1226,7 +1226,7 @@ export function createVapiWebhookRouter(deps: {
 Assistant
 
 Provider: Custom LLM
-URL: https://newsupernova.onrender.com/api/external/v1
+URL: https://supernova.onrender.com/api/external/v1
 Model: abby
 Credential/API key: OPENCLAW_API_KEY
 Authorization mode: Bearer token
@@ -1237,7 +1237,7 @@ Vapi appends:
 
 Final request target:
 
-https://newsupernova.onrender.com/api/external/v1/chat/completions
+https://supernova.onrender.com/api/external/v1/chat/completions
 
 
 ---
@@ -1265,7 +1265,7 @@ Be clear, direct, and calm.
 
 For call-end summaries:
 
-https://newsupernova.onrender.com/api/external/v1/vapi/webhook
+https://supernova.onrender.com/api/external/v1/vapi/webhook
 
 Server secret:
 
@@ -1550,7 +1550,7 @@ OPENCLAW_API_KEY=...
 Recommended:
 
 NODE_ENV=production
-RENDER_EXTERNAL_URL=https://newsupernova.onrender.com
+RENDER_EXTERNAL_URL=https://supernova.onrender.com
 KEEP_ALIVE_INTERVAL_MS=600000
 
 
@@ -1560,11 +1560,11 @@ KEEP_ALIVE_INTERVAL_MS=600000
 
 Health
 
-curl -i https://newsupernova.onrender.com/api/healthz
+curl -i https://supernova.onrender.com/api/healthz
 
 Unauthorized check
 
-curl -i https://newsupernova.onrender.com/api/external/v1/chat/completions \
+curl -i https://supernova.onrender.com/api/external/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model":"abby","messages":[{"role":"user","content":"hello"}]}'
 
@@ -1574,7 +1574,7 @@ Expected:
 
 Authorized check
 
-curl -i https://newsupernova.onrender.com/api/external/v1/chat/completions \
+curl -i https://supernova.onrender.com/api/external/v1/chat/completions \
   -H "Authorization: Bearer $OPENCLAW_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"model":"abby","messages":[{"role":"user","content":"hello"}]}'
@@ -1585,7 +1585,7 @@ Expected:
 
 Voice mode check
 
-curl -i https://newsupernova.onrender.com/api/external/v1/chat/completions \
+curl -i https://supernova.onrender.com/api/external/v1/chat/completions \
   -H "Authorization: Bearer $OPENCLAW_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{

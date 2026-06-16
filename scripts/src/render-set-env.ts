@@ -1,7 +1,7 @@
 /**
  * render-set-env.ts
  *
- * Pushes provided API keys to the newsupernova Render service via the Render API and
+ * Pushes provided API keys to the supernova Render service via the Render API and
  * triggers a redeploy. PRESERVES every existing env var on Render — it only
  * overwrites the managed keys that are actually present in the local environment,
  * so nothing already configured is ever wiped.
@@ -17,7 +17,10 @@
  * Optional: RENDER_SERVICE_ID to target a different service.
  */
 
-const SERVICE_ID = process.env["RENDER_SERVICE_ID"] || "srv-d8hmeunlk1mc73faoh90";
+// No hardcoded default: this clone must target its OWN supernova service.
+// Set RENDER_SERVICE_ID to the supernova service id (srv-…) from the Render
+// dashboard. Fails closed so we never write to another service by accident.
+const SERVICE_ID = requireEnv("RENDER_SERVICE_ID");
 const RENDER_API = "https://api.render.com/v1";
 
 // Every env var the app understands. Pushed only when present locally; anything

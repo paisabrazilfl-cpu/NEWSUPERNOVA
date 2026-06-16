@@ -67,7 +67,7 @@ push to main
 
 Live service:
 
-https://newsupernova.onrender.com
+https://supernova.onrender.com
 
 
 ---

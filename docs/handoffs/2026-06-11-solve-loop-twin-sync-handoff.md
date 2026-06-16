@@ -88,7 +88,7 @@ The final output of `orchestrateGoal` must BE a solution to the operator's input
 ## 4. Also discussed (no code written)
 
 - **Vapi voice control:** plug-and-play via Vapi "Custom LLM" → base URL
-  `https://newsupernova.onrender.com/api/external/v1` (OpenAI-compatible, SSE streaming
+  `https://supernova.onrender.com/api/external/v1` (OpenAI-compatible, SSE streaming
   already supported), model = agent name (`abby`, …), bearer = `OPENCLAW_API_KEY`.
   Set `OPENCLAW_API_KEY` on Render first (auth is OPEN when unset). Watch Render
   cold-start latency; add a brevity system prompt in Vapi. Voice→actions would need

@@ -394,7 +394,7 @@ HTTP 2xx from production endpoint
 
 Recommended:
 
-curl -i https://newsupernova.onrender.com/api/healthz
+curl -i https://supernova.onrender.com/api/healthz
 
 Forbidden:
 
@@ -635,7 +635,7 @@ pnpm --filter @workspace/scripts run visual-audit
 
 Production health:
 
-curl -i https://newsupernova.onrender.com/api/healthz
+curl -i https://supernova.onrender.com/api/healthz
 
 
 ---

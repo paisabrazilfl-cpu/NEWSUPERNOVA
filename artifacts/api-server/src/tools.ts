@@ -259,7 +259,7 @@ function publicBaseUrl(): string {
   return (
     process.env["PUBLIC_BASE_URL"] ||
     process.env["RENDER_EXTERNAL_URL"] ||
-    "https://newsupernova.onrender.com"
+    "https://supernova.onrender.com"
   ).replace(/\/$/, "");
 }
 function uploadUrl(id: number, download = false): string {

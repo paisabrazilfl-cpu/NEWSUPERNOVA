@@ -54513,7 +54513,7 @@ function openrouterRequestFor(nimModel) {
     headers: {
       Authorization: `Bearer ${key}`,
       "Content-Type": "application/json",
-      "HTTP-Referer": "https://newsupernova.onrender.com",
+      "HTTP-Referer": "https://supernova.onrender.com",
       "X-Title": "OPENCLAW OMEGA"
     },
     model: orModel,
@@ -109851,7 +109851,7 @@ function worldEngineEnabled() {
   return v != null && ["1", "true", "yes", "on"].includes(v.toLowerCase());
 }
 function publicBase() {
-  return (process.env["PUBLIC_BASE_URL"] || process.env["RENDER_EXTERNAL_URL"] || "https://newsupernova.onrender.com").replace(/\/$/, "");
+  return (process.env["PUBLIC_BASE_URL"] || process.env["RENDER_EXTERNAL_URL"] || "https://supernova.onrender.com").replace(/\/$/, "");
 }
 async function readAuraState() {
   const agents = await db.select().from(agentsTable);
@@ -110601,7 +110601,7 @@ async function renderImagePdf(images, opts = {}) {
   return await doc.save();
 }
 function publicBaseUrl() {
-  return (process.env["PUBLIC_BASE_URL"] || process.env["RENDER_EXTERNAL_URL"] || "https://newsupernova.onrender.com").replace(/\/$/, "");
+  return (process.env["PUBLIC_BASE_URL"] || process.env["RENDER_EXTERNAL_URL"] || "https://supernova.onrender.com").replace(/\/$/, "");
 }
 function uploadUrl(id, download = false) {
   return `${publicBaseUrl()}/api/uploads/${id}${download ? "?download=1" : ""}`;
@@ -122450,7 +122450,7 @@ app.use(import_express20.default.json({ limit: "30mb" }));
 app.use(import_express20.default.urlencoded({ extended: true, limit: "30mb" }));
 app.use("/api", routes_default);
 app.get("/healthz", (_req, res) => {
-  res.json({ status: "ok", service: "newsupernova-api" });
+  res.json({ status: "ok", service: "supernova-api" });
 });
 var __filename_app = fileURLToPath2(import.meta.url);
 var __dirname_app = path2.dirname(__filename_app);
@@ -122479,7 +122479,7 @@ if (hasFrontend) {
   });
 } else {
   app.get("/", (_req, res) => {
-    res.json({ status: "ok", service: "newsupernova-api" });
+    res.json({ status: "ok", service: "supernova-api" });
   });
 }
 var app_default = app;
@@ -122928,7 +122928,7 @@ function startKeepAlive() {
       const res = await fetch(target, {
         method: "GET",
         signal: controller.signal,
-        headers: { "user-agent": "newsupernova-keepalive" }
+        headers: { "user-agent": "supernova-keepalive" }
       });
       if (!res.ok) {
         logger.warn({ status: res.status, target }, "Keep-alive ping non-OK");

@@ -63,7 +63,7 @@ export function startKeepAlive(): void {
       const res = await fetch(target, {
         method: "GET",
         signal: controller.signal,
-        headers: { "user-agent": "newsupernova-keepalive" },
+        headers: { "user-agent": "supernova-keepalive" },
       });
       if (!res.ok) {
         logger.warn({ status: res.status, target }, "Keep-alive ping non-OK");

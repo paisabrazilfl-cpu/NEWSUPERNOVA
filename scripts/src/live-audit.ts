@@ -5,7 +5,7 @@ import { join } from "node:path";
 // Focused live-site validation against production. Loads the app in desktop AND
 // mobile viewports, records console/page errors and failed requests, checks the
 // page actually rendered (not a blank/crash screen), and captures screenshots.
-const BASE = (process.env["AUDIT_URL"] ?? "https://newsupernova.onrender.com").replace(/\/$/, "");
+const BASE = (process.env["AUDIT_URL"] ?? "https://supernova.onrender.com").replace(/\/$/, "");
 const OUT = join(process.cwd(), ".self-test", "live");
 mkdirSync(OUT, { recursive: true });
 
