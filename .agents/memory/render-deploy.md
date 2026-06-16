@@ -11,6 +11,22 @@
 **repo:** https://github.com/paisabrazilfl-cpu/NEWSUPERNOVA  
 **auto_deploy:** true (branch: ai/2026-06-16-github-render-supernova-deploy)
 
+## Key management (clean slate)
+
+Provider/integration API keys are **operator-managed in the app**: Settings →
+Vault (`PUT /api/vault`, encrypted in DB, loaded into env at boot; explicit env
+vars win). NO provider keys are baked into the Render env.
+
+Render env holds ONLY non-secret config + boot/auth essentials:
+`NODE_ENV, PORT, BASE_PATH, ALLOWED_ORIGINS, PUBLIC_BASE_URL, DATABASE_URL,
+SESSION_SECRET, OPERATOR_PASSWORD`.
+
+PROTECTED (vault refuses them — set via Render env only if needed):
+`OPERATOR_PASSWORD, SESSION_SECRET, OPENCLAW_API_KEY, DATABASE_URL, NODE_ENV,
+PATH, PORT, BASE_PATH, ALLOW_COMPOSIO_EXECUTE`. `OPENCLAW_API_KEY` (external/
+swarm API auth) was intentionally wiped; add it in the Render dashboard if the
+external API / Nova- swarm integration is needed.
+
 ---
 
 # build configuration
