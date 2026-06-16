@@ -389,6 +389,10 @@ export function openrouterRequestFor(nimModel: string): LlmChatRequest {
  */
 function nimRequestFor(model: string, opts?: { bypassHealthGate?: boolean }): LlmChatRequest {
   if (!nimConfigured()) throw new Error("NVIDIA_API_KEY is not set");
+  // Global model override: when NIM_FORCE_MODEL is set, every swarm call uses
+  // that single model (key/entitlement-safe pinning). Must be a NIM-catalog id.
+  const forced = process.env["NIM_FORCE_MODEL"];
+  if (forced) model = forced;
   // Banned ids are rewritten FIRST so they are unreachable from any path.
   model = NIM_MODEL_BANS[model] ?? model;
   // Map any non-NIM id to a real NIM model so we never emit a non-NIM model id.

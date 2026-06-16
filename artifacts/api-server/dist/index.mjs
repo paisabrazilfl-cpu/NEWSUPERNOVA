@@ -54523,6 +54523,8 @@ function openrouterRequestFor(nimModel) {
 }
 function nimRequestFor(model, opts) {
   if (!nimConfigured()) throw new Error("NVIDIA_API_KEY is not set");
+  const forced = process.env["NIM_FORCE_MODEL"];
+  if (forced) model = forced;
   model = NIM_MODEL_BANS[model] ?? model;
   const effectiveModel = isNimModel(model) ? model : NIM_MODEL_FALLBACKS[model] ?? NIM_GENERIC_FALLBACK;
   const healthy = nimHealthy() && !nimDegraded();
