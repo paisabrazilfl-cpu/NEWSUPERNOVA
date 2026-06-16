@@ -3,12 +3,13 @@
 # Render Deployment — NEWSUPERNOVA
 
 **service:** supernova  
-**service_id:** srv-REPLACE_WITH_NEW_SUPERNOVA_SERVICE_ID  
-**url:** https://supernova.onrender.com  
-**dashboard:** https://dashboard.render.com/web/srv-REPLACE_WITH_NEW_SUPERNOVA_SERVICE_ID  
+**service_id:** srv-d8om1j7lk1mc739ed5ig  
+**url:** https://supernova-ekbj.onrender.com  (the `supernova` subdomain was taken globally, so Render assigned the `-ekbj` suffix)  
+**dashboard:** https://dashboard.render.com/web/srv-d8om1j7lk1mc739ed5ig  
+**db:** supernova-db (dpg-d8om025ckfvc73ftip40-a, basic_256mb, oregon) — dedicated, not shared with bos-aura  
 **owner_id:** tea-d8a836beo5us739g6cc0  
 **repo:** https://github.com/paisabrazilfl-cpu/NEWSUPERNOVA  
-**auto_deploy:** true (branch: main)
+**auto_deploy:** true (branch: ai/2026-06-16-github-render-supernova-deploy)
 
 ---
 
