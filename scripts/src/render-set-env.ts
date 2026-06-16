@@ -1,7 +1,7 @@
 /**
  * render-set-env.ts
  *
- * Pushes provided API keys to the bos-aura Render service via the Render API and
+ * Pushes provided API keys to the newsupernova Render service via the Render API and
  * triggers a redeploy. PRESERVES every existing env var on Render — it only
  * overwrites the managed keys that are actually present in the local environment,
  * so nothing already configured is ever wiped.

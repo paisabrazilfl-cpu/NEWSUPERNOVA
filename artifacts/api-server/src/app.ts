@@ -66,7 +66,7 @@ app.use("/api", router);
 
 // Always-available health endpoint (used by Render / load-balancers).
 app.get("/healthz", (_req, res) => {
-  res.json({ status: "ok", service: "bos-aura-api" });
+  res.json({ status: "ok", service: "newsupernova-api" });
 });
 
 // In production, serve the Vite-built frontend if it was bundled into the image.
@@ -109,7 +109,7 @@ if (hasFrontend) {
 } else {
   // No frontend bundle (dev, or build missing) — expose a health root.
   app.get("/", (_req, res) => {
-    res.json({ status: "ok", service: "bos-aura-api" });
+    res.json({ status: "ok", service: "newsupernova-api" });
   });
 }
 

@@ -1,13 +1,13 @@
-````md id="render-deployment-bos-aura"
+````md id="render-deployment-newsupernova"
 
-# Render Deployment — BOS-AURA
+# Render Deployment — NEWSUPERNOVA
 
-**service:** bos-aura  
+**service:** newsupernova  
 **service_id:** srv-d8hmeunlk1mc73faoh90  
-**url:** https://bos-aura.onrender.com  
+**url:** https://newsupernova.onrender.com  
 **dashboard:** https://dashboard.render.com/web/srv-d8hmeunlk1mc73faoh90  
 **owner_id:** tea-d8a836beo5us739g6cc0  
-**repo:** https://github.com/paisabrazilfl-cpu/BOS-AURA  
+**repo:** https://github.com/paisabrazilfl-cpu/NEWSUPERNOVA  
 **auto_deploy:** true (branch: main)
 
 ---

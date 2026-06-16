@@ -17,7 +17,7 @@
 import { Sandbox } from "e2b";
 
 // The only repository agents may clone/push through these tools.
-const GITHUB_REPO = "paisabrazilfl-cpu/bos-aura";
+const GITHUB_REPO = "paisabrazilfl-cpu/newsupernova";
 const GITHUB_API = "https://api.github.com";
 const SANDBOX_TIMEOUT_MS = 180_000;
 

@@ -114,7 +114,7 @@ export async function teachTwin(now: Date = new Date()): Promise<string> {
     const r: Response = await fetch(url, {
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ source: "BOS-AURA", lessons }),
+      body: JSON.stringify({ source: "NEWSUPERNOVA", lessons }),
       signal: ac.signal,
     });
     if (!r.ok) {

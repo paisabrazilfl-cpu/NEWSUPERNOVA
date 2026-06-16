@@ -1,6 +1,6 @@
 # CLAUDE.md — Working in This Repo
 
-Guidance for AI agents and contributors modifying **BOS-AURA / OPENCLAW OMEGA**.
+Guidance for AI agents and contributors modifying **NEWSUPERNOVA / OPENCLAW OMEGA**.
 
 ---
 
@@ -67,7 +67,7 @@ push to main
 
 Live service:
 
-https://bos-aura.onrender.com
+https://newsupernova.onrender.com
 
 
 ---

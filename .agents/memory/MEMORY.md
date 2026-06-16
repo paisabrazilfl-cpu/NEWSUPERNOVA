@@ -4,7 +4,7 @@
 - [Commands & cron schema](commands-cron-schema.md) — agent_commands + cron_jobs tables, REST API, and frontend wiring.
 - [Operator auth](operator-auth.md) — cookie-based operator sign-in guards the secrets-vault routes; why web auth is cookie-based here.
 - [Orchestration execution](orchestration-execution.md) — how real agent orchestration runs and the invariant keeping dashboard status honest.
-- [Render deploy](render-deploy.md) — BOS-AURA service on Render: service IDs, URL, pending DATABASE_URL setup.
+- [Render deploy](render-deploy.md) — NEWSUPERNOVA service on Render: service IDs, URL, pending DATABASE_URL setup.
 - [Secrets vault](secrets-vault.md) — security model + non-obvious constraints for the encrypted secrets vault and how agents consume secrets.
 - [Social connectors](social-connectors.md) — official platform API access via Replit-managed OAuth; no passwords, no browser login.
 - [Steel browser](steel-browser.md) — constraints and known limitations of the Steel.dev live browser embed.

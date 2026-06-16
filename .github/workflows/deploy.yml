@@ -170,5 +170,5 @@ jobs:
             echo "| Render deploy request | see job logs |"
             echo ""
             echo "Render service: \`${RENDER_SERVICE_ID}\`"
-            echo "Production URL: https://bos-aura.onrender.com"
+            echo "Production URL: https://newsupernova.onrender.com"
           } >> "$GITHUB_STEP_SUMMARY"

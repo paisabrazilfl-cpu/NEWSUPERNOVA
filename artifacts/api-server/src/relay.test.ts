@@ -145,7 +145,7 @@ describe("decideTerminate — primary owns 'done', round cap stops either side",
 
 describe("wrapRelayGoal — carries role, goal, and the peer's input", () => {
   it("tells the secondary it may NOT declare done", () => {
-    const w = wrapRelayGoal({ role: "secondary", round: 2, peerName: "BOS-AURA", goal: "build X", inputText: "primary output" });
+    const w = wrapRelayGoal({ role: "secondary", round: 2, peerName: "NEWSUPERNOVA", goal: "build X", inputText: "primary output" });
     expect(w).toContain("SECONDARY");
     expect(w).toContain("may NOT declare the MVP done");
     expect(w).toContain("build X");

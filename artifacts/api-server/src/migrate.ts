@@ -183,7 +183,7 @@ CREATE TABLE IF NOT EXISTS "world_state" (
 INSERT INTO "world_state" ("id") VALUES (1) ON CONFLICT ("id") DO NOTHING;
 
 -- Relay sessions — the primary/secondary collaboration loop between two
--- OPENCLAW swarms (BOS-AURA = primary, T800-AURA = secondary). One logical
+-- OPENCLAW swarms (NEWSUPERNOVA = primary, T800-AURA = secondary). One logical
 -- session has ONE row on EACH side, keyed by the cross-service relay_id.
 -- Defined in the Drizzle schema (lib/db/schema/relay.ts) but previously absent
 -- from this boot migration, so GET/POST /api/relay 500'd ("relation

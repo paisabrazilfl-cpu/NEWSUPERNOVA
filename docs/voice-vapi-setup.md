@@ -1,11 +1,11 @@
 ---
 name: Voice control via Vapi
-description: Phone-call control plane for BOS-AURA / OPENCLAW OMEGA using Vapi Custom LLM, inline swarm tools, per-call dashboard channels, and authenticated external API access.
+description: Phone-call control plane for NEWSUPERNOVA / OPENCLAW OMEGA using Vapi Custom LLM, inline swarm tools, per-call dashboard channels, and authenticated external API access.
 ---
 
 # Voice Control via Vapi — Phone the Swarm and Run It
 
-BOS-AURA can be controlled entirely from a live phone call through Vapi.
+NEWSUPERNOVA can be controlled entirely from a live phone call through Vapi.
 
 Voice mode lets the operator:
 
@@ -24,7 +24,7 @@ POST /api/external/v1/chat/completions
 
 This endpoint is used by Vapi as a Custom LLM provider.
 
-When Vapi includes a live call object in the request, BOS-AURA enters voice-call mode.
+When Vapi includes a live call object in the request, NEWSUPERNOVA enters voice-call mode.
 
 
 ---
@@ -33,9 +33,9 @@ When Vapi includes a live call object in the request, BOS-AURA enters voice-call
 
 phone call
   → Vapi transcribes caller speech
-  → Vapi sends OpenAI-compatible request to BOS-AURA
-  → BOS-AURA detects live call object
-  → BOS-AURA creates or reuses one dashboard channel for the call
+  → Vapi sends OpenAI-compatible request to NEWSUPERNOVA
+  → NEWSUPERNOVA detects live call object
+  → NEWSUPERNOVA creates or reuses one dashboard channel for the call
   → ABBY responds conversationally
   → inline voice tools can dispatch real swarm work
   → transcript and tool actions are logged to the call channel
@@ -98,7 +98,7 @@ Vapi sends:
 
 Authorization: Bearer <OPENCLAW_API_KEY>
 
-BOS-AURA validates this before allowing:
+NEWSUPERNOVA validates this before allowing:
 
 chat completions
 
@@ -1226,7 +1226,7 @@ export function createVapiWebhookRouter(deps: {
 Assistant
 
 Provider: Custom LLM
-URL: https://bos-aura.onrender.com/api/external/v1
+URL: https://newsupernova.onrender.com/api/external/v1
 Model: abby
 Credential/API key: OPENCLAW_API_KEY
 Authorization mode: Bearer token
@@ -1237,7 +1237,7 @@ Vapi appends:
 
 Final request target:
 
-https://bos-aura.onrender.com/api/external/v1/chat/completions
+https://newsupernova.onrender.com/api/external/v1/chat/completions
 
 
 ---
@@ -1265,7 +1265,7 @@ Be clear, direct, and calm.
 
 For call-end summaries:
 
-https://bos-aura.onrender.com/api/external/v1/vapi/webhook
+https://newsupernova.onrender.com/api/external/v1/vapi/webhook
 
 Server secret:
 
@@ -1550,7 +1550,7 @@ OPENCLAW_API_KEY=...
 Recommended:
 
 NODE_ENV=production
-RENDER_EXTERNAL_URL=https://bos-aura.onrender.com
+RENDER_EXTERNAL_URL=https://newsupernova.onrender.com
 KEEP_ALIVE_INTERVAL_MS=600000
 
 
@@ -1560,11 +1560,11 @@ KEEP_ALIVE_INTERVAL_MS=600000
 
 Health
 
-curl -i https://bos-aura.onrender.com/api/healthz
+curl -i https://newsupernova.onrender.com/api/healthz
 
 Unauthorized check
 
-curl -i https://bos-aura.onrender.com/api/external/v1/chat/completions \
+curl -i https://newsupernova.onrender.com/api/external/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model":"abby","messages":[{"role":"user","content":"hello"}]}'
 
@@ -1574,7 +1574,7 @@ Expected:
 
 Authorized check
 
-curl -i https://bos-aura.onrender.com/api/external/v1/chat/completions \
+curl -i https://newsupernova.onrender.com/api/external/v1/chat/completions \
   -H "Authorization: Bearer $OPENCLAW_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"model":"abby","messages":[{"role":"user","content":"hello"}]}'
@@ -1585,7 +1585,7 @@ Expected:
 
 Voice mode check
 
-curl -i https://bos-aura.onrender.com/api/external/v1/chat/completions \
+curl -i https://newsupernova.onrender.com/api/external/v1/chat/completions \
   -H "Authorization: Bearer $OPENCLAW_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{

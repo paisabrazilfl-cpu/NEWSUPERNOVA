@@ -59,7 +59,7 @@ The final output of `orchestrateGoal` must BE a solution to the operator's input
   inspected the T800 repo. Until T800 implements the receiver, enabling sync will
   log `twin sync: HTTP 404` and teach nothing. The pre-existing `main` commit
   "one-way twin-teach to T800" only ever built the SENDING side.
-- The receiver added to BOS-AURA is AURA's own inbound ear (lets a twin teach
+- The receiver added to NEWSUPERNOVA is AURA's own inbound ear (lets a twin teach
   AURA back); it does not help T800 receive.
 
 ## 3. Next steps (in order)
@@ -72,7 +72,7 @@ The final output of `orchestrateGoal` must BE a solution to the operator's input
    Contract (reference implementation: `routes/external.ts` route + `lib/twinSync.ts`
    on this branch):
    - `POST /api/external/v1/twin-lessons`, `Authorization: Bearer <T800's own key>`
-   - Body: `{"source": "BOS-AURA", "lessons": [{"sourceId": "aura:<id>", "key", "content", "tags", "agentName"}]}`
+   - Body: `{"source": "NEWSUPERNOVA", "lessons": [{"sourceId": "aura:<id>", "key", "content", "tags", "agentName"}]}`
    - Store quarantined (`from-twin,proposed`, strip `self-learned`), dedupe on
      `src:<sourceId>`, reply `{"ingested": n, "skipped": n}`.
    - First verify what T800's stack actually is — do not assume it mirrors this repo.
@@ -88,7 +88,7 @@ The final output of `orchestrateGoal` must BE a solution to the operator's input
 ## 4. Also discussed (no code written)
 
 - **Vapi voice control:** plug-and-play via Vapi "Custom LLM" → base URL
-  `https://bos-aura.onrender.com/api/external/v1` (OpenAI-compatible, SSE streaming
+  `https://newsupernova.onrender.com/api/external/v1` (OpenAI-compatible, SSE streaming
   already supported), model = agent name (`abby`, …), bearer = `OPENCLAW_API_KEY`.
   Set `OPENCLAW_API_KEY` on Render first (auth is OPEN when unset). Watch Render
   cold-start latency; add a brevity system prompt in Vapi. Voice→actions would need

@@ -8,7 +8,7 @@ if (!GH_TOKEN) {
   console.error("ERROR: GITHUB_TOKEN env var is required (no hardcoded token).");
   process.exit(1);
 }
-const REMOTE = `https://x-token:${GH_TOKEN}@github.com/paisabrazilfl-cpu/BOS-AURA.git`;
+const REMOTE = `https://x-token:${GH_TOKEN}@github.com/paisabrazilfl-cpu/NEWSUPERNOVA.git`;
 
 function run(cmd, opts = {}) {
   console.log(`$ ${cmd.replace(GH_TOKEN, "***")}`);
@@ -55,8 +55,8 @@ try {
     { env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } }
   );
   console.log("Push result:", result || "(clean push)");
-  console.log("\n✅ PUSHED TO: https://github.com/paisabrazilfl-cpu/BOS-AURA");
-  console.log("🚀 RENDER URL: https://bos-aura.onrender.com");
+  console.log("\n✅ PUSHED TO: https://github.com/paisabrazilfl-cpu/NEWSUPERNOVA");
+  console.log("🚀 RENDER URL: https://newsupernova.onrender.com");
 } catch (err) {
   console.error("ERROR:", err.message);
   if (err.stdout) console.error("stdout:", err.stdout.toString().slice(0, 500));

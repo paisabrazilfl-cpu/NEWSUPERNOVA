@@ -448,7 +448,7 @@ export async function renderContentCard(opts: ContentCardOpts = {}): Promise<Buf
   // top chrome bar (terminal window)
   ctx.fillStyle = PANEL; ctx.fillRect(0, 0, W, 92); ctx.fillStyle = CYAN; ctx.fillRect(0, 92, W, 3);
   ["#ff5f56", "#ffbd2e", "#27c93f"].forEach((c, i) => { ctx.fillStyle = c; ctx.beginPath(); ctx.arc(40 + i * 34, 46, 9, 0, Math.PI * 2); ctx.fill(); });
-  ctx.fillStyle = DIM; ctx.font = `22pt ${MONO}`; ctx.fillText("bos-aura — execution mode", 150, 34 + 22);
+  ctx.fillStyle = DIM; ctx.font = `22pt ${MONO}`; ctx.fillText("newsupernova — execution mode", 150, 34 + 22);
   ctx.fillStyle = GREEN; ctx.font = `18pt ${MONO}`; ctx.fillText("● live", W - 140, 38 + 18);
 
   // bottom ticker
@@ -481,7 +481,7 @@ export async function renderContentCard(opts: ContentCardOpts = {}): Promise<Buf
     if (opts.body) { y += 18; for (const ln of wrap(opts.body, 26, W - 90)) { put(ln, 40, y, 26, DIM); y += 38; } }
   } else if (kind === "quote") {
     let y = 320; for (const ln of wrap(`"${head}"`, 50, W - 110)) { put(ln, 55, y, 50, INK); y += 66; }
-    put(opts.body ?? "— bos-aura field notes", 55, y + 24, 28, CYAN);
+    put(opts.body ?? "— newsupernova field notes", 55, y + 24, 28, CYAN);
   } else { // news | hook
     let y = 224; for (const ln of wrap(head, 52, W - 90)) { put(ln, 40, y, 52, INK); y += 64; }
     if (opts.body) { y += 22; put(kind === "hook" ? "the build:" : "why it matters:", 40, y, 26, CYAN); y += 44; for (const ln of wrap(opts.body, 28, W - 90)) { put(ln, 40, y, 28, DIM); y += 40; } }

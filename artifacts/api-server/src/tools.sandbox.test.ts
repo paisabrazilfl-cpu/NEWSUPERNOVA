@@ -40,7 +40,7 @@ describe("normalizeGitHubAuth — fix GitHub git auth form", () => {
   });
 
   it("leaves a credential-free github URL untouched", () => {
-    const plain = "git clone --mirror https://github.com/paisabrazilfl-cpu/BOS-AURA.git";
+    const plain = "git clone --mirror https://github.com/paisabrazilfl-cpu/NEWSUPERNOVA.git";
     expect(normalizeGitHubAuth(plain)).toBe(plain);
   });
 

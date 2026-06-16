@@ -262,7 +262,7 @@ const VOICE_TOOLS = [
     function: {
       name: "dispatch_task",
       description:
-        "Dispatch a goal to the BOS-AURA agent swarm (research, build, analyze, post, schedule, …). Fire-and-forget: the swarm works in the background. Confirm dispatch and move on.",
+        "Dispatch a goal to the NEWSUPERNOVA agent swarm (research, build, analyze, post, schedule, …). Fire-and-forget: the swarm works in the background. Confirm dispatch and move on.",
       parameters: {
         type: "object",
         required: ["task"],
@@ -635,7 +635,7 @@ router.post("/external/v1/messages", async (req, res) => {
 // Learner side of the twin teaching sync (lib/twinSync.ts is the teacher side).
 // T800-AURA is a SEPARATE repo/service: it needs its own implementation of this
 // ingest endpoint to receive AURA's nightly teach push — this route is AURA's
-// own inbound ear, so a twin can teach BOS-AURA back through the same contract.
+// own inbound ear, so a twin can teach NEWSUPERNOVA back through the same contract.
 // Inbound lessons are stored QUARANTINED: tagged "from-twin,proposed" with the
 // teacher's "self-learned" tag stripped, so a twin lesson is visible to this
 // swarm's agents via memory_search but is never auto-trusted and can never be

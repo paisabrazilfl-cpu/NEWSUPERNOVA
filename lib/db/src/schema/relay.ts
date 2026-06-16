@@ -4,7 +4,7 @@ import { z } from "zod/v4";
 
 /**
  * Relay sessions — the primary/secondary collaboration loop between two
- * OPENCLAW swarms (e.g. BOS-AURA = primary, T800-AURA = secondary).
+ * OPENCLAW swarms (e.g. NEWSUPERNOVA = primary, T800-AURA = secondary).
  *
  * The operator hands a goal to the PRIMARY. The primary runs its own swarm
  * cycle, then forwards the output to the SECONDARY as input. The secondary

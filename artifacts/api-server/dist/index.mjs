@@ -28105,7 +28105,7 @@ var require_pino = __commonJS({
     function pinoBundlerAbsolutePath(p) {
       try {
         const path3 = __require("path");
-        const outputDir = "/home/user/BOS-AURA/artifacts/api-server/dist";
+        const outputDir = "/home/user/NEWSUPERNOVA/artifacts/api-server/dist";
         return path3.resolve(outputDir, p.replace(/^\.\//, ""));
       } catch (e) {
         const f = new Function("p", "return new URL(p, import.meta.url).pathname");
@@ -54513,7 +54513,7 @@ function openrouterRequestFor(nimModel) {
     headers: {
       Authorization: `Bearer ${key}`,
       "Content-Type": "application/json",
-      "HTTP-Referer": "https://bos-aura.onrender.com",
+      "HTTP-Referer": "https://newsupernova.onrender.com",
       "X-Title": "OPENCLAW OMEGA"
     },
     model: orModel,
@@ -82282,7 +82282,7 @@ var init_sandbox = __esm({
   "src/lib/sandbox.ts"() {
     "use strict";
     import_e2b = __toESM(require_dist4(), 1);
-    GITHUB_REPO = "paisabrazilfl-cpu/bos-aura";
+    GITHUB_REPO = "paisabrazilfl-cpu/newsupernova";
     GITHUB_API = "https://api.github.com";
     SANDBOX_TIMEOUT_MS = 18e4;
     WORKDIR = "/tmp/repo";
@@ -109629,7 +109629,7 @@ async function renderContentCard(opts = {}) {
   });
   ctx.fillStyle = DIM;
   ctx.font = `22pt ${MONO}`;
-  ctx.fillText("bos-aura \u2014 execution mode", 150, 34 + 22);
+  ctx.fillText("newsupernova \u2014 execution mode", 150, 34 + 22);
   ctx.fillStyle = GREEN;
   ctx.font = `18pt ${MONO}`;
   ctx.fillText("\u25CF live", W - 140, 38 + 18);
@@ -109685,7 +109685,7 @@ async function renderContentCard(opts = {}) {
       put(ln, 55, y, 50, INK);
       y += 66;
     }
-    put(opts.body ?? "\u2014 bos-aura field notes", 55, y + 24, 28, CYAN);
+    put(opts.body ?? "\u2014 newsupernova field notes", 55, y + 24, 28, CYAN);
   } else {
     let y = 224;
     for (const ln of wrap(head, 52, W - 90)) {
@@ -109851,7 +109851,7 @@ function worldEngineEnabled() {
   return v != null && ["1", "true", "yes", "on"].includes(v.toLowerCase());
 }
 function publicBase() {
-  return (process.env["PUBLIC_BASE_URL"] || process.env["RENDER_EXTERNAL_URL"] || "https://bos-aura.onrender.com").replace(/\/$/, "");
+  return (process.env["PUBLIC_BASE_URL"] || process.env["RENDER_EXTERNAL_URL"] || "https://newsupernova.onrender.com").replace(/\/$/, "");
 }
 async function readAuraState() {
   const agents = await db.select().from(agentsTable);
@@ -110601,7 +110601,7 @@ async function renderImagePdf(images, opts = {}) {
   return await doc.save();
 }
 function publicBaseUrl() {
-  return (process.env["PUBLIC_BASE_URL"] || process.env["RENDER_EXTERNAL_URL"] || "https://bos-aura.onrender.com").replace(/\/$/, "");
+  return (process.env["PUBLIC_BASE_URL"] || process.env["RENDER_EXTERNAL_URL"] || "https://newsupernova.onrender.com").replace(/\/$/, "");
 }
 function uploadUrl(id, download = false) {
   return `${publicBaseUrl()}/api/uploads/${id}${download ? "?download=1" : ""}`;
@@ -111721,7 +111721,7 @@ ${clip3(safe, 4e3)}${hint}`;
       },
       sandbox_repo_pr: {
         name: "sandbox_repo_pr",
-        description: "Work on the OpenClaw (bos-aura) repository for real: clones it into an isolated E2B VM, runs your shell script to make changes and/or run the test suite (cwd = repo root), commits, pushes a branch, and opens a Pull Request for human review. Use this to implement a fix/feature, run the real tests against your changes, and propose them. Scoped to the bos-aura repo only. The GitHub token is handled server-side and never exposed to you.",
+        description: "Work on the OpenClaw (newsupernova) repository for real: clones it into an isolated E2B VM, runs your shell script to make changes and/or run the test suite (cwd = repo root), commits, pushes a branch, and opens a Pull Request for human review. Use this to implement a fix/feature, run the real tests against your changes, and propose them. Scoped to the newsupernova repo only. The GitHub token is handled server-side and never exposed to you.",
         parameters: {
           type: "object",
           properties: {
@@ -120147,7 +120147,7 @@ async function teachTwin(now = /* @__PURE__ */ new Date()) {
     const r = await fetch(url2, {
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ source: "BOS-AURA", lessons }),
+      body: JSON.stringify({ source: "NEWSUPERNOVA", lessons }),
       signal: ac.signal
     });
     if (!r.ok) {
@@ -121220,7 +121220,7 @@ var VOICE_TOOLS = [
     type: "function",
     function: {
       name: "dispatch_task",
-      description: "Dispatch a goal to the BOS-AURA agent swarm (research, build, analyze, post, schedule, \u2026). Fire-and-forget: the swarm works in the background. Confirm dispatch and move on.",
+      description: "Dispatch a goal to the NEWSUPERNOVA agent swarm (research, build, analyze, post, schedule, \u2026). Fire-and-forget: the swarm works in the background. Confirm dispatch and move on.",
       parameters: {
         type: "object",
         required: ["task"],
@@ -122450,7 +122450,7 @@ app.use(import_express20.default.json({ limit: "30mb" }));
 app.use(import_express20.default.urlencoded({ extended: true, limit: "30mb" }));
 app.use("/api", routes_default);
 app.get("/healthz", (_req, res) => {
-  res.json({ status: "ok", service: "bos-aura-api" });
+  res.json({ status: "ok", service: "newsupernova-api" });
 });
 var __filename_app = fileURLToPath2(import.meta.url);
 var __dirname_app = path2.dirname(__filename_app);
@@ -122479,7 +122479,7 @@ if (hasFrontend) {
   });
 } else {
   app.get("/", (_req, res) => {
-    res.json({ status: "ok", service: "bos-aura-api" });
+    res.json({ status: "ok", service: "newsupernova-api" });
   });
 }
 var app_default = app;
@@ -122672,7 +122672,7 @@ CREATE TABLE IF NOT EXISTS "world_state" (
 INSERT INTO "world_state" ("id") VALUES (1) ON CONFLICT ("id") DO NOTHING;
 
 -- Relay sessions \u2014 the primary/secondary collaboration loop between two
--- OPENCLAW swarms (BOS-AURA = primary, T800-AURA = secondary). One logical
+-- OPENCLAW swarms (NEWSUPERNOVA = primary, T800-AURA = secondary). One logical
 -- session has ONE row on EACH side, keyed by the cross-service relay_id.
 -- Defined in the Drizzle schema (lib/db/schema/relay.ts) but previously absent
 -- from this boot migration, so GET/POST /api/relay 500'd ("relation
@@ -122928,7 +122928,7 @@ function startKeepAlive() {
       const res = await fetch(target, {
         method: "GET",
         signal: controller.signal,
-        headers: { "user-agent": "bos-aura-keepalive" }
+        headers: { "user-agent": "newsupernova-keepalive" }
       });
       if (!res.ok) {
         logger.warn({ status: res.status, target }, "Keep-alive ping non-OK");

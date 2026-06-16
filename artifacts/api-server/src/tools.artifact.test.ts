@@ -35,8 +35,8 @@ const save = TOOL_REGISTRY.save_artifact!;
 describe("save_artifact — chunked save", () => {
   it("assembles ordered base64 slices into the original file", async () => {
     inserted.length = 0;
-    // "Hello, BOS-AURA!" → base64, split across three uneven slices.
-    const full = Buffer.from("Hello, BOS-AURA!").toString("base64");
+    // "Hello, NEWSUPERNOVA!" → base64, split across three uneven slices.
+    const full = Buffer.from("Hello, NEWSUPERNOVA!").toString("base64");
     const a = full.slice(0, 5);
     const b = full.slice(5, 11);
     const c = full.slice(11);
@@ -48,7 +48,7 @@ describe("save_artifact — chunked save", () => {
 
     expect(done).toContain("saved");
     expect(inserted).toHaveLength(1);
-    expect(Buffer.from(inserted[0]!.data, "base64").toString("utf8")).toBe("Hello, BOS-AURA!");
+    expect(Buffer.from(inserted[0]!.data, "base64").toString("utf8")).toBe("Hello, NEWSUPERNOVA!");
   });
 
   it("errors on done with no buffered chunks", async () => {

@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to **BOS-AURA / OPENCLAW OMEGA**.
+All notable changes to **NEWSUPERNOVA / OPENCLAW OMEGA**.
 
 Convention: every push records the **date** and **what was done**. When a new
 branch is created, it gets its own dated section here.
@@ -122,8 +122,8 @@ Turns the runtime swarm's "no"s into "yes"s, SAFELY (isolated VM, prod untouched
 - **`lib/sandbox.ts`** + tools:
   - `sandbox_exec` — run real shell (pnpm/tsc/vitest/node/curl/playwright/git) in a
     disposable, isolated E2B VM with no access to the prod server or its secrets.
-  - `sandbox_repo_pr` — clone bos-aura into the VM, run a script to edit/test,
-    commit, push a branch, and OPEN A PR. Scoped to the bos-aura repo only; the
+  - `sandbox_repo_pr` — clone newsupernova into the VM, run a script to edit/test,
+    commit, push a branch, and OPEN A PR. Scoped to the newsupernova repo only; the
     GitHub token is server-side and never exposed to the model.
 - Assigned to ABBY, FORGE, WIRE.
 - **Verified live, end-to-end**: sandbox_exec ran shell; sandbox_repo_pr cloned,

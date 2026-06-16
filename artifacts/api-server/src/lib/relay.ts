@@ -1,7 +1,7 @@
 /**
  * OPENCLAW OMEGA — Primary/Secondary collaboration relay.
  *
- * Two swarms owned by the same operator (BOS-AURA = primary, T800-AURA =
+ * Two swarms owned by the same operator (NEWSUPERNOVA = primary, T800-AURA =
  * secondary) work a goal together. The operator hands the goal to the PRIMARY.
  * Each side runs its OWN orchestrator cycle on the input it receives — i.e.
  * each analyses the work as an independent swarm — and forwards its output to

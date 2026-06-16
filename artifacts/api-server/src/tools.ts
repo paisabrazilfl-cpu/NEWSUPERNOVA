@@ -259,7 +259,7 @@ function publicBaseUrl(): string {
   return (
     process.env["PUBLIC_BASE_URL"] ||
     process.env["RENDER_EXTERNAL_URL"] ||
-    "https://bos-aura.onrender.com"
+    "https://newsupernova.onrender.com"
   ).replace(/\/$/, "");
 }
 function uploadUrl(id: number, download = false): string {
@@ -1578,7 +1578,7 @@ export const TOOL_REGISTRY: Record<string, ToolDef> = {
   sandbox_repo_pr: {
     name: "sandbox_repo_pr",
     description:
-      "Work on the OpenClaw (bos-aura) repository for real: clones it into an isolated E2B VM, runs your shell script to make changes and/or run the test suite (cwd = repo root), commits, pushes a branch, and opens a Pull Request for human review. Use this to implement a fix/feature, run the real tests against your changes, and propose them. Scoped to the bos-aura repo only. The GitHub token is handled server-side and never exposed to you.",
+      "Work on the OpenClaw (newsupernova) repository for real: clones it into an isolated E2B VM, runs your shell script to make changes and/or run the test suite (cwd = repo root), commits, pushes a branch, and opens a Pull Request for human review. Use this to implement a fix/feature, run the real tests against your changes, and propose them. Scoped to the newsupernova repo only. The GitHub token is handled server-side and never exposed to you.",
     parameters: {
       type: "object",
       properties: {

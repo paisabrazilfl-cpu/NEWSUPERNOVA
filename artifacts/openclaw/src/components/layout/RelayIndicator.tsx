@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
  *   - "done"          → the relay finished
  *   - anything else   → idle / stalled / error (no live work)
  *
- * On BOS-AURA the peer is T800-AURA, so "awaiting-peer" is exactly the
+ * On NEWSUPERNOVA the peer is T800-AURA, so "awaiting-peer" is exactly the
  * "T800 is working" signal the operator asked for. Names come from the API
  * (RELAY_SELF_NAME / RELAY_PEER_NAME) so nothing is hardcoded.
  */

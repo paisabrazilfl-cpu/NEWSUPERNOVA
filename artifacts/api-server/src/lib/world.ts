@@ -35,7 +35,7 @@ export function worldEngineEnabled(): boolean {
 }
 
 function publicBase(): string {
-  return (process.env["PUBLIC_BASE_URL"] || process.env["RENDER_EXTERNAL_URL"] || "https://bos-aura.onrender.com").replace(/\/$/, "");
+  return (process.env["PUBLIC_BASE_URL"] || process.env["RENDER_EXTERNAL_URL"] || "https://newsupernova.onrender.com").replace(/\/$/, "");
 }
 
 // ── Layer 2: state-only telemetry ──────────────────────────────────────────
