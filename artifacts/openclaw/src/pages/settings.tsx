@@ -560,17 +560,17 @@ function SocialIntegrations() {
           {platforms.map((p) => (
             <div
               key={p.key}
-              className="flex items-center gap-4 rounded-lg border border-card-border bg-card px-4 py-3"
+              className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-card-border bg-card px-4 py-3"
             >
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="font-semibold text-sm text-foreground">{p.displayName}</span>
+              <div className="min-w-0 flex-1 basis-full sm:basis-0">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="font-semibold text-sm text-foreground truncate">{p.displayName}</span>
                   {p.connected ? (
-                    <span className="inline-flex items-center gap-1 text-[10px] font-mono uppercase tracking-wider text-[#00cc88] bg-[#00cc88]/10 border border-[#00cc88]/40 rounded px-1.5 py-0.5">
+                    <span className="inline-flex items-center gap-1 shrink-0 whitespace-nowrap text-[10px] font-mono uppercase tracking-wider text-[#00cc88] bg-[#00cc88]/10 border border-[#00cc88]/40 rounded px-1.5 py-0.5">
                       <Check className="w-3 h-3" /> Connected
                     </span>
                   ) : (
-                    <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground bg-muted border border-muted-border rounded px-1.5 py-0.5">
+                    <span className="shrink-0 whitespace-nowrap text-[10px] font-mono uppercase tracking-wider text-muted-foreground bg-muted border border-muted-border rounded px-1.5 py-0.5">
                       Not connected
                     </span>
                   )}
