@@ -122519,8 +122519,21 @@ var staticPath = path2.join(__dirname_app, "..", "..", "openclaw", "dist", "publ
 var indexHtml = path2.join(staticPath, "index.html");
 var hasFrontend = process.env["NODE_ENV"] === "production" && fs2.existsSync(indexHtml);
 if (hasFrontend) {
+  const BUILD_ID = (process.env["RENDER_GIT_COMMIT"] ?? "").slice(0, 8) || (process.env["BUILD_ID"] ?? "") || String(Date.now());
+  let indexHtmlCache = null;
+  const renderIndexHtml = () => {
+    if (indexHtmlCache != null) return indexHtmlCache;
+    const raw = fs2.readFileSync(indexHtml, "utf8");
+    indexHtmlCache = raw.replace(
+      /((?:src|href)=")(\/(?!assets\/)[A-Za-z0-9_\-./]+\.(?:png|jpe?g|svg|webp|gif|ico|json|webmanifest|js|css|woff2?))(")/g,
+      (_m, p1, url2, p3) => `${p1}${url2}${url2.includes("?") ? "&" : "?"}v=${BUILD_ID}${p3}`
+    );
+    return indexHtmlCache;
+  };
   app.use(
     import_express21.default.static(staticPath, {
+      index: false,
+      // "/" is served by the SPA handler so it gets a stamped, no-cache shell
       setHeaders: (res, filePath) => {
         if (filePath.endsWith("index.html")) {
           res.setHeader("Cache-Control", "no-cache");
@@ -122530,13 +122543,10 @@ if (hasFrontend) {
       }
     })
   );
-  app.get("/*path", (req, res, next) => {
-    if (req.path.startsWith("/api")) return next();
+  app.get(/^(?!\/api).*/, (req, res, next) => {
     if (path2.extname(req.path)) return next();
     res.setHeader("Cache-Control", "no-cache");
-    res.sendFile(indexHtml, (err) => {
-      if (err) next();
-    });
+    res.type("html").send(renderIndexHtml());
   });
 } else {
   app.get("/", (_req, res) => {

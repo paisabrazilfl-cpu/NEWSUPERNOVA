@@ -78,8 +78,30 @@ const hasFrontend =
   process.env["NODE_ENV"] === "production" && fs.existsSync(indexHtml);
 
 if (hasFrontend) {
+  // Per-deploy cache-busting version. Vite already content-hashes /assets/*, so
+  // those auto-bust; this stamps ?v=<git-commit> onto FIXED-name public assets
+  // (favicon, og image, manifest…) so a new build is a fresh URL for those too.
+  // We deliberately EXCLUDE /assets/ to preserve their immutable caching (an
+  // unchanged vendor chunk must not be forced to re-download every deploy).
+  const BUILD_ID =
+    (process.env["RENDER_GIT_COMMIT"] ?? "").slice(0, 8) ||
+    (process.env["BUILD_ID"] ?? "") ||
+    String(Date.now());
+  let indexHtmlCache: string | null = null;
+  const renderIndexHtml = (): string => {
+    if (indexHtmlCache != null) return indexHtmlCache;
+    const raw = fs.readFileSync(indexHtml, "utf8");
+    indexHtmlCache = raw.replace(
+      /((?:src|href)=")(\/(?!assets\/)[A-Za-z0-9_\-./]+\.(?:png|jpe?g|svg|webp|gif|ico|json|webmanifest|js|css|woff2?))(")/g,
+      (_m, p1: string, url: string, p3: string) =>
+        `${p1}${url}${url.includes("?") ? "&" : "?"}v=${BUILD_ID}${p3}`,
+    );
+    return indexHtmlCache;
+  };
+
   app.use(
     express.static(staticPath, {
+      index: false, // "/" is served by the SPA handler so it gets a stamped, no-cache shell
       setHeaders: (res, filePath) => {
         // The SPA entry point must NEVER be cached: the browser has to revalidate
         // it on every load so a new deploy is picked up immediately (otherwise a
@@ -94,17 +116,14 @@ if (hasFrontend) {
       },
     }),
   );
-  app.get("/*path", (req, res, next) => {
-    if (req.path.startsWith("/api")) return next();
+  app.get(/^(?!\/api).*/, (req, res, next) => {
     // Missing static assets (paths with a file extension) should 404, not
     // fall back to the SPA shell — otherwise stale asset requests get HTML 200.
     if (path.extname(req.path)) return next();
     // The SPA shell is served for every app route; it must revalidate too so a
     // deep-link/refresh always lands the newest deployed bundle.
     res.setHeader("Cache-Control", "no-cache");
-    res.sendFile(indexHtml, (err) => {
-      if (err) next();
-    });
+    res.type("html").send(renderIndexHtml());
   });
 } else {
   // No frontend bundle (dev, or build missing) — expose a health root.
