@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Menu } from "lucide-react";
+import { Menu, Minus, Maximize2 } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { LeftPanel } from "@/components/dashboard/LeftPanel";
 import { SwarmCanvas } from "@/components/dashboard/SwarmCanvas";
@@ -20,6 +20,13 @@ export default function Dashboard() {
   const [selectedAgentId, setSelectedAgentId] = useState<number | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
   const [dispatchDraft, setDispatchDraft] = useState("");
+  // Collapsible "windows": minimize the canvas or the tabbed panel so the other
+  // takes the full height (handy on phones).
+  const [canvasMin, setCanvasMin] = useState(false);
+  const [panelMin, setPanelMin] = useState(false);
+
+  const winBtn =
+    "grid place-items-center h-7 w-7 shrink-0 rounded-md border border-card-border bg-background/70 text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors";
 
   const tabBase =
     "h-11 rounded-none border-b-2 border-transparent bg-transparent px-1 text-xs font-medium text-muted-foreground transition-all data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-foreground";
@@ -55,36 +62,76 @@ export default function Dashboard() {
         <div className="flex-1 flex flex-col min-h-0 gap-3 p-3 sm:p-4 overflow-hidden">
           {/* TOP — spatial swarm canvas. flex-1 (shares space with the tabs) +
               a min-height so the orb ring (~370px) is never clipped at the edge. */}
-          <section className="relative flex-1 min-h-[180px] sm:min-h-[260px] overflow-hidden rounded-xl border border-card-border bg-card/30">
-            <div className="absolute inset-0 pointer-events-none opacity-30 [background-size:18px_18px] bg-[radial-gradient(hsl(var(--card-border))_1px,transparent_1px)]" />
-            <div className="w-full h-full">
-              <SwarmCanvas onAgentClick={setSelectedAgentId} />
-            </div>
+          <section
+            className={`relative overflow-hidden rounded-xl border border-card-border bg-card/30 ${
+              canvasMin ? "shrink-0" : "flex-1 min-h-[180px] sm:min-h-[260px]"
+            }`}
+          >
+            {!canvasMin && (
+              <div className="absolute inset-0 pointer-events-none opacity-30 [background-size:18px_18px] bg-[radial-gradient(hsl(var(--card-border))_1px,transparent_1px)]" />
+            )}
+            <button
+              type="button"
+              onClick={() => setCanvasMin((v) => !v)}
+              aria-label={canvasMin ? "Expand swarm canvas" : "Minimize swarm canvas"}
+              title={canvasMin ? "Expand" : "Minimize"}
+              className={`absolute top-2 right-2 z-20 ${winBtn}`}
+            >
+              {canvasMin ? <Maximize2 className="w-3.5 h-3.5" /> : <Minus className="w-3.5 h-3.5" />}
+            </button>
+            {canvasMin ? (
+              <div className="flex h-10 items-center px-3 text-xs font-medium text-muted-foreground">
+                Swarm canvas
+              </div>
+            ) : (
+              <div className="w-full h-full">
+                <SwarmCanvas onAgentClick={setSelectedAgentId} />
+              </div>
+            )}
           </section>
 
           {/* BOTTOM — tabbed text / browser / dispatch panes (shares space) */}
-          <section className="flex-[2] sm:flex-1 min-h-[200px] flex flex-col overflow-hidden rounded-xl border border-card-border bg-card/50">
+          <section
+            className={`flex flex-col overflow-hidden rounded-xl border border-card-border bg-card/50 ${
+              panelMin ? "shrink-0" : "flex-[2] sm:flex-1 min-h-[200px]"
+            }`}
+          >
             <Tabs defaultValue="logs" className="flex-1 flex flex-col min-h-0">
-              <div className="flex shrink-0 items-center justify-between px-3 sm:px-4 border-b border-card-border bg-card/30">
+              <div className="flex shrink-0 items-center justify-between gap-2 px-3 sm:px-4 border-b border-card-border bg-card/30">
                 <TabsList className="h-11 gap-3 sm:gap-4 bg-transparent p-0">
                   <TabsTrigger value="logs" className={tabBase}>💬 Live Logs</TabsTrigger>
                   <TabsTrigger value="browser" className={tabBase}>🌐 Browser</TabsTrigger>
                   <TabsTrigger value="dispatch" className={tabBase}>⚡ Dispatch</TabsTrigger>
                 </TabsList>
-                <div className="hidden md:flex items-center gap-2 font-mono text-[10px] text-muted-foreground">
-                  <span>SANDBOX:</span>
-                  <span className="text-foreground/70">oc-node-00</span>
+                <div className="flex items-center gap-2">
+                  <div className="hidden md:flex items-center gap-2 font-mono text-[10px] text-muted-foreground">
+                    <span>SANDBOX:</span>
+                    <span className="text-foreground/70">oc-node-00</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setPanelMin((v) => !v)}
+                    aria-label={panelMin ? "Expand panel" : "Minimize panel"}
+                    title={panelMin ? "Expand" : "Minimize"}
+                    className={winBtn}
+                  >
+                    {panelMin ? <Maximize2 className="w-3.5 h-3.5" /> : <Minus className="w-3.5 h-3.5" />}
+                  </button>
                 </div>
               </div>
-              <TabsContent value="logs" className="m-0 flex-1 min-h-0 overflow-hidden">
-                <div className="h-full w-full overflow-hidden"><ChatStream channelId={activeChannelId} /></div>
-              </TabsContent>
-              <TabsContent value="browser" className="m-0 flex-1 min-h-0 overflow-hidden">
-                <div className="h-full w-full flex flex-col overflow-hidden"><SteelBrowser /></div>
-              </TabsContent>
-              <TabsContent value="dispatch" className="m-0 flex-1 min-h-0 overflow-hidden">
-                <div className="h-full w-full overflow-hidden"><DispatchPanel /></div>
-              </TabsContent>
+              {!panelMin && (
+                <>
+                  <TabsContent value="logs" className="m-0 flex-1 min-h-0 overflow-hidden">
+                    <div className="h-full w-full overflow-hidden"><ChatStream channelId={activeChannelId} /></div>
+                  </TabsContent>
+                  <TabsContent value="browser" className="m-0 flex-1 min-h-0 overflow-hidden">
+                    <div className="h-full w-full flex flex-col overflow-hidden"><SteelBrowser /></div>
+                  </TabsContent>
+                  <TabsContent value="dispatch" className="m-0 flex-1 min-h-0 overflow-hidden">
+                    <div className="h-full w-full overflow-hidden"><DispatchPanel /></div>
+                  </TabsContent>
+                </>
+              )}
             </Tabs>
           </section>
         </div>
