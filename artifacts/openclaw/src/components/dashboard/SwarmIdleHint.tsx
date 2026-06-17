@@ -30,7 +30,7 @@ export function SwarmIdleHint({ onPick }: { onPick?: (prompt: string) => void })
   };
 
   return (
-    <div className="shrink-0 border-t border-card-border bg-card/40 backdrop-blur px-4 py-3 flex flex-col items-center gap-2">
+    <div className="hidden md:flex shrink-0 border-t border-card-border bg-card/40 backdrop-blur px-4 py-3 flex-col items-center gap-2">
       <p className="text-xs text-muted-foreground text-center">
         Agents are ready. Dispatch a goal below — or start with:
       </p>

@@ -55,7 +55,7 @@ export default function Dashboard() {
         <div className="flex-1 flex flex-col min-h-0 gap-3 p-3 sm:p-4 overflow-hidden">
           {/* TOP — spatial swarm canvas. flex-1 (shares space with the tabs) +
               a min-height so the orb ring (~370px) is never clipped at the edge. */}
-          <section className="relative flex-1 min-h-[260px] overflow-hidden rounded-xl border border-card-border bg-card/30">
+          <section className="relative flex-1 min-h-[180px] sm:min-h-[260px] overflow-hidden rounded-xl border border-card-border bg-card/30">
             <div className="absolute inset-0 pointer-events-none opacity-30 [background-size:18px_18px] bg-[radial-gradient(hsl(var(--card-border))_1px,transparent_1px)]" />
             <div className="w-full h-full">
               <SwarmCanvas onAgentClick={setSelectedAgentId} />
@@ -63,7 +63,7 @@ export default function Dashboard() {
           </section>
 
           {/* BOTTOM — tabbed text / browser / dispatch panes (shares space) */}
-          <section className="flex-1 min-h-[200px] flex flex-col overflow-hidden rounded-xl border border-card-border bg-card/50">
+          <section className="flex-[2] sm:flex-1 min-h-[200px] flex flex-col overflow-hidden rounded-xl border border-card-border bg-card/50">
             <Tabs defaultValue="logs" className="flex-1 flex flex-col min-h-0">
               <div className="flex shrink-0 items-center justify-between px-3 sm:px-4 border-b border-card-border bg-card/30">
                 <TabsList className="h-11 gap-3 sm:gap-4 bg-transparent p-0">
