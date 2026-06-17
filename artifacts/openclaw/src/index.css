@@ -141,6 +141,33 @@
 }
 .btn-3d-sm:active:not(:disabled) { transform: translateY(2px); box-shadow: inset 0 1px 0 rgba(255,255,255,0.2), 0 1px 0 0 #1a56c4; }
 
+/* ── 3D rotating "thinking" cube ──────────────────────────────────────────
+   Shown whenever the swarm (Super Nova) or NOVA is working. A real 3D cube
+   (six faces, preserve-3d) tumbling on two axes — the brand spark gradient. */
+.cube3d { perspective: 90px; flex: none; }
+.cube3d__c {
+  position: relative; width: 100%; height: 100%;
+  transform-style: preserve-3d;
+  animation: cube3d-spin 2.4s infinite linear;
+}
+.cube3d__f {
+  position: absolute; inset: 0; border-radius: 4px;
+  background: linear-gradient(135deg, hsl(var(--primary)), hsl(var(--accent)));
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: 0 0 10px -2px hsl(var(--primary));
+}
+.cube3d__f:nth-child(1) { transform: translateZ(var(--z, 11px)); }
+.cube3d__f:nth-child(2) { transform: rotateY(180deg) translateZ(var(--z, 11px)); }
+.cube3d__f:nth-child(3) { transform: rotateY(90deg) translateZ(var(--z, 11px)); }
+.cube3d__f:nth-child(4) { transform: rotateY(-90deg) translateZ(var(--z, 11px)); }
+.cube3d__f:nth-child(5) { transform: rotateX(90deg) translateZ(var(--z, 11px)); }
+.cube3d__f:nth-child(6) { transform: rotateX(-90deg) translateZ(var(--z, 11px)); }
+@keyframes cube3d-spin {
+  from { transform: rotateX(0deg) rotateY(0deg); }
+  to { transform: rotateX(360deg) rotateY(360deg); }
+}
+@media (prefers-reduced-motion: reduce) { .cube3d__c { animation-duration: 6s; } }
+
 @layer base {
   * {
     @apply border-border;

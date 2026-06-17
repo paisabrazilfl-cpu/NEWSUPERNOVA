@@ -20,6 +20,7 @@ import { toast } from "sonner";
 import {
   Plus, Send, Paperclip, X, Menu, Download, Trash2, Pencil, Check,
   MessageSquare, Bot, AlertTriangle, Loader2, Sparkles, Copy, Volume2, Square, Mic,
+  ChevronDown, Save,
 } from "lucide-react";
 
 // Uploaded to /api/uploads on pick; images are rendered inline and sent to ABBY
@@ -63,6 +64,7 @@ export default function ChatPage() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editName, setEditName] = useState("");
   const [exportOpen, setExportOpen] = useState(false);
+  const [chatMenuOpen, setChatMenuOpen] = useState(false);
 
   useEffect(() => {
     if (activeId == null && channels.length) setActiveId(channels[0].id);
@@ -305,6 +307,33 @@ export default function ChatPage() {
     URL.revokeObjectURL(url);
   };
 
+  // Save the current conversation into NOVA's knowledge base ("workspace"
+  // memory) so the other system can reference it. Server-side proxy handles the
+  // cross-app key + PIN gate.
+  const [savingNova, setSavingNova] = useState(false);
+  const saveToNova = async () => {
+    setChatMenuOpen(false);
+    if (!messages.length) { toast("Nothing to save yet."); return; }
+    const transcript = messages
+      .map((m) => `${m.messageType === "user" ? "You" : (m.agentName || "ABBY")}: ${m.content}`)
+      .join("\n\n");
+    setSavingNova(true);
+    try {
+      const r = await fetch(resolveApiUrl("/api/nova/save-conversation"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: activeChannel?.name || "Supernova conversation", content: transcript }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || j.error) throw new Error(j.error || `HTTP ${r.status}`);
+      toast.success("Saved to NOVA workspace.");
+    } catch (e) {
+      toast.error("Couldn't save to NOVA: " + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setSavingNova(false);
+    }
+  };
+
   const visibleMessages = messages.filter((m) => (m.content ?? "").trim().length > 0);
 
   return (
@@ -389,9 +418,48 @@ export default function ChatPage() {
       <div className="flex-1 flex flex-col min-w-0">
         {/* Top bar */}
         <header className="h-14 shrink-0 border-b border-card-border flex items-center gap-3 px-4">
-          <button onClick={() => setSidebarOpen(true)} aria-label="Open conversations" className="md:hidden p-2 -ml-2 text-muted-foreground hover:text-foreground">
-            <Menu className="w-5 h-5" />
-          </button>
+          {/* Top-left chat menu: new / browse / download / save-to-NOVA / delete */}
+          <div className="relative">
+            <button
+              onClick={() => setChatMenuOpen((v) => !v)}
+              aria-label="Chat menu"
+              className="flex items-center gap-1 p-2 -ml-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-card-border/50 transition-colors"
+            >
+              <MessageSquare className="w-5 h-5" />
+              <ChevronDown className="w-3.5 h-3.5" />
+            </button>
+            {chatMenuOpen && (
+              <>
+                <div className="fixed inset-0 z-10" onClick={() => setChatMenuOpen(false)} />
+                <div className="absolute left-0 mt-1 w-56 rounded-xl border border-card-border bg-popover shadow-xl z-20 overflow-hidden py-1">
+                  <button onClick={() => { setChatMenuOpen(false); newChat(); }} className="w-full flex items-center gap-2.5 text-left px-3 py-2.5 text-sm hover:bg-card-border/50">
+                    <Plus className="w-4 h-4 text-primary" /> New chat
+                  </button>
+                  <button onClick={() => { setChatMenuOpen(false); setSidebarOpen(true); }} className="w-full flex items-center gap-2.5 text-left px-3 py-2.5 text-sm hover:bg-card-border/50">
+                    <Menu className="w-4 h-4" /> Browse conversations
+                  </button>
+                  <div className="my-1 h-px bg-card-border" />
+                  <button onClick={() => { setChatMenuOpen(false); exportConvo("txt"); }} className="w-full flex items-center gap-2.5 text-left px-3 py-2.5 text-sm hover:bg-card-border/50">
+                    <Download className="w-4 h-4" /> Download .txt
+                  </button>
+                  <button onClick={() => { setChatMenuOpen(false); exportConvo("json"); }} className="w-full flex items-center gap-2.5 text-left px-3 py-2.5 text-sm hover:bg-card-border/50">
+                    <Download className="w-4 h-4" /> Download .json
+                  </button>
+                  <button onClick={saveToNova} disabled={savingNova} className="w-full flex items-center gap-2.5 text-left px-3 py-2.5 text-sm hover:bg-card-border/50 disabled:opacity-50">
+                    {savingNova ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4 text-accent" />} Save to NOVA workspace
+                  </button>
+                  <div className="my-1 h-px bg-card-border" />
+                  <button
+                    onClick={() => { setChatMenuOpen(false); if (activeId != null) deleteChannel(activeId); }}
+                    disabled={activeId == null}
+                    className="w-full flex items-center gap-2.5 text-left px-3 py-2.5 text-sm text-destructive hover:bg-destructive/10 disabled:opacity-50"
+                  >
+                    <Trash2 className="w-4 h-4" /> Delete this chat
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
           <div className="flex items-center gap-2 min-w-0 flex-1">
             <Bot className="w-5 h-5 text-primary shrink-0" />
             <h1 className="text-sm font-semibold truncate">{activeChannel?.name ?? "Abby AI"}</h1>
@@ -551,18 +619,17 @@ function WorkingIndicator() {
   });
   const busy = agents.filter((a) => a.status && a.status !== "idle");
   if (busy.length === 0) return null;
-  const names = busy.map((a) => a.name).join(", ");
+  // "what it's doing": single agent → its live action; many → count.
+  const label =
+    busy.length === 1 ? `${busy[0]!.name} ${busy[0]!.status}…` : `${busy.length} agents working…`;
   return (
     <div
       title={busy.map((a) => `${a.name}: ${a.status}`).join(" · ")}
-      className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary shrink-0"
+      className="flex items-center gap-2 pl-1.5 pr-2.5 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary shrink-0"
     >
-      <span className="relative flex h-2 w-2">
-        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-60" />
-        <span className="relative inline-flex rounded-full h-2 w-2 bg-primary" />
-      </span>
-      <span className="text-xs font-medium max-w-[40vw] sm:max-w-[16rem] truncate">
-        {busy.length === 1 ? `${names} working…` : `${busy.length} agents working…`}
+      <ThinkingCube size={16} />
+      <span className="text-xs font-medium max-w-[40vw] sm:max-w-[16rem] truncate capitalize">
+        {label}
       </span>
     </div>
   );
@@ -674,14 +741,27 @@ function MessageActions({ content }: { content: string }) {
   );
 }
 
-function TypingDots() {
+/**
+ * 3D rotating "thinking" cube — the working/thinking indicator used whenever
+ * the swarm (Super Nova) or NOVA is busy. Optional status label says what it's
+ * doing. Size-flexible via the --z (half-edge) CSS var.
+ */
+export function ThinkingCube({ label, size = 22, className }: { label?: string; size?: number; className?: string }) {
   return (
-    <div className="flex items-center gap-1 py-2" aria-label="Assistant is typing">
-      {[0, 1, 2].map((i) => (
-        <span key={i} className="w-2 h-2 rounded-full bg-muted-foreground/60 animate-bounce" style={{ animationDelay: `${i * 0.15}s` }} />
-      ))}
+    <div className={cn("flex items-center gap-2.5", className)} role="status" aria-label={label || "Working"}>
+      <div className="cube3d" style={{ width: size, height: size, ["--z" as string]: `${size / 2}px` }}>
+        <div className="cube3d__c">
+          <span className="cube3d__f" /><span className="cube3d__f" /><span className="cube3d__f" />
+          <span className="cube3d__f" /><span className="cube3d__f" /><span className="cube3d__f" />
+        </div>
+      </div>
+      {label && <span className="text-sm text-muted-foreground animate-pulse">{label}</span>}
     </div>
   );
+}
+
+function TypingDots() {
+  return <ThinkingCube label="Thinking…" className="py-2" />;
 }
 
 function EmptyState({ onNew }: { onNew: () => void }) {

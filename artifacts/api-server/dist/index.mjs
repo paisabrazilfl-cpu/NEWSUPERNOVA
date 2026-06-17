@@ -20502,27 +20502,27 @@ var require_router = __commonJS({
     var slice = Array.prototype.slice;
     var flatten = Array.prototype.flat;
     var methods = METHODS.map((method) => method.toLowerCase());
-    module.exports = Router20;
+    module.exports = Router21;
     module.exports.Route = Route;
-    function Router20(options) {
-      if (!(this instanceof Router20)) {
-        return new Router20(options);
+    function Router21(options) {
+      if (!(this instanceof Router21)) {
+        return new Router21(options);
       }
       const opts = options || {};
-      function router20(req, res, next) {
-        router20.handle(req, res, next);
+      function router21(req, res, next) {
+        router21.handle(req, res, next);
       }
-      Object.setPrototypeOf(router20, this);
-      router20.caseSensitive = opts.caseSensitive;
-      router20.mergeParams = opts.mergeParams;
-      router20.params = {};
-      router20.strict = opts.strict;
-      router20.stack = [];
-      return router20;
+      Object.setPrototypeOf(router21, this);
+      router21.caseSensitive = opts.caseSensitive;
+      router21.mergeParams = opts.mergeParams;
+      router21.params = {};
+      router21.strict = opts.strict;
+      router21.stack = [];
+      return router21;
     }
-    Router20.prototype = function() {
+    Router21.prototype = function() {
     };
-    Router20.prototype.param = function param(name, fn) {
+    Router21.prototype.param = function param(name, fn) {
       if (!name) {
         throw new TypeError("argument name is required");
       }
@@ -20542,7 +20542,7 @@ var require_router = __commonJS({
       params.push(fn);
       return this;
     };
-    Router20.prototype.handle = function handle(req, res, callback) {
+    Router21.prototype.handle = function handle(req, res, callback) {
       if (!callback) {
         throw new TypeError("argument callback is required");
       }
@@ -20669,7 +20669,7 @@ var require_router = __commonJS({
         }
       }
     };
-    Router20.prototype.use = function use(handler) {
+    Router21.prototype.use = function use(handler) {
       let offset = 0;
       let path3 = "/";
       if (typeof handler !== "function") {
@@ -20702,7 +20702,7 @@ var require_router = __commonJS({
       }
       return this;
     };
-    Router20.prototype.route = function route(path3) {
+    Router21.prototype.route = function route(path3) {
       const route2 = new Route(path3);
       const layer = new Layer(path3, {
         sensitive: this.caseSensitive,
@@ -20717,7 +20717,7 @@ var require_router = __commonJS({
       return route2;
     };
     methods.concat("all").forEach(function(method) {
-      Router20.prototype[method] = function(path3) {
+      Router21.prototype[method] = function(path3) {
         const route = this.route(path3);
         route[method].apply(route, slice.call(arguments, 1));
         return this;
@@ -20900,13 +20900,13 @@ var require_application = __commonJS({
     var compileTrust = require_utils3().compileTrust;
     var resolve = __require("node:path").resolve;
     var once = require_once();
-    var Router20 = require_router();
+    var Router21 = require_router();
     var slice = Array.prototype.slice;
     var flatten = Array.prototype.flat;
     var app2 = exports = module.exports = {};
     var trustProxyDefaultSymbol = "@@symbol:trust_proxy_default";
     app2.init = function init() {
-      var router20 = null;
+      var router21 = null;
       this.cache = /* @__PURE__ */ Object.create(null);
       this.engines = /* @__PURE__ */ Object.create(null);
       this.settings = /* @__PURE__ */ Object.create(null);
@@ -20915,13 +20915,13 @@ var require_application = __commonJS({
         configurable: true,
         enumerable: true,
         get: function getrouter() {
-          if (router20 === null) {
-            router20 = new Router20({
+          if (router21 === null) {
+            router21 = new Router21({
               caseSensitive: this.enabled("case sensitive routing"),
               strict: this.enabled("strict routing")
             });
           }
-          return router20;
+          return router21;
         }
       });
     };
@@ -20992,15 +20992,15 @@ var require_application = __commonJS({
       if (fns.length === 0) {
         throw new TypeError("app.use() requires a middleware function");
       }
-      var router20 = this.router;
+      var router21 = this.router;
       fns.forEach(function(fn2) {
         if (!fn2 || !fn2.handle || !fn2.set) {
-          return router20.use(path3, fn2);
+          return router21.use(path3, fn2);
         }
         debug(".use app under %s", path3);
         fn2.mountpath = path3;
         fn2.parent = this;
-        router20.use(path3, function mounted_app(req, res, next) {
+        router21.use(path3, function mounted_app(req, res, next) {
           var orig = req.app;
           fn2.handle(req, res, function(err) {
             Object.setPrototypeOf(req, orig.request);
@@ -23573,7 +23573,7 @@ var require_express = __commonJS({
     var EventEmitter = __require("node:events").EventEmitter;
     var mixin = require_merge_descriptors();
     var proto2 = require_application();
-    var Router20 = require_router();
+    var Router21 = require_router();
     var req = require_request();
     var res = require_response();
     exports = module.exports = createApplication;
@@ -23595,8 +23595,8 @@ var require_express = __commonJS({
     exports.application = proto2;
     exports.request = req;
     exports.response = res;
-    exports.Route = Router20.Route;
-    exports.Router = Router20;
+    exports.Route = Router21.Route;
+    exports.Router = Router21;
     exports.json = bodyParser.json;
     exports.raw = bodyParser.raw;
     exports.static = require_serve_static();
@@ -66751,20 +66751,20 @@ var require_router2 = __commonJS({
     function createConnectRouter(routerOptions) {
       const base = whichProtocols(routerOptions);
       const handlers = [];
-      const router20 = {
+      const router21 = {
         handlers,
         service: (service, implementation, options) => {
           const { protocols } = whichProtocols(options, base);
           handlers.push(...(0, universal_handler_js_1.createUniversalServiceHandlers)((0, implementation_js_1.createServiceImplSpec)(service, implementation), protocols));
-          return router20;
+          return router21;
         },
         rpc: (method, impl, opt) => {
           const { protocols } = whichProtocols(opt, base);
           handlers.push((0, universal_handler_js_1.createUniversalMethodHandler)((0, implementation_js_1.createMethodImplSpec)(method, impl), protocols));
-          return router20;
+          return router21;
         }
       };
-      return router20;
+      return router21;
     }
     function whichProtocols(options, base) {
       if (base && !options) {
@@ -67383,9 +67383,9 @@ var require_router_transport = __commonJS({
     var router_js_1 = require_router2();
     function createRouterTransport(routes, options) {
       var _a, _b;
-      const router20 = (0, router_js_1.createConnectRouter)(Object.assign(Object.assign({}, (_a = options === null || options === void 0 ? void 0 : options.router) !== null && _a !== void 0 ? _a : {}), { connect: true }));
-      routes(router20);
-      return (0, transport_js_1.createTransport)(Object.assign({ httpClient: (0, universal_handler_client_js_1.createUniversalHandlerClient)(router20.handlers), baseUrl: "https://in-memory", useBinaryFormat: true, interceptors: [], acceptCompression: [], sendCompression: null, compressMinBytes: Number.MAX_SAFE_INTEGER, readMaxBytes: Number.MAX_SAFE_INTEGER, writeMaxBytes: Number.MAX_SAFE_INTEGER }, (_b = options === null || options === void 0 ? void 0 : options.transport) !== null && _b !== void 0 ? _b : {}));
+      const router21 = (0, router_js_1.createConnectRouter)(Object.assign(Object.assign({}, (_a = options === null || options === void 0 ? void 0 : options.router) !== null && _a !== void 0 ? _a : {}), { connect: true }));
+      routes(router21);
+      return (0, transport_js_1.createTransport)(Object.assign({ httpClient: (0, universal_handler_client_js_1.createUniversalHandlerClient)(router21.handlers), baseUrl: "https://in-memory", useBinaryFormat: true, interceptors: [], acceptCompression: [], sendCompression: null, compressMinBytes: Number.MAX_SAFE_INTEGER, readMaxBytes: Number.MAX_SAFE_INTEGER, writeMaxBytes: Number.MAX_SAFE_INTEGER }, (_b = options === null || options === void 0 ? void 0 : options.transport) !== null && _b !== void 0 ? _b : {}));
     }
   }
 });
@@ -112845,7 +112845,7 @@ IN-PROGRESS TASKS (${pendingTasks.length}):`);
 });
 
 // src/app.ts
-var import_express20 = __toESM(require_express2(), 1);
+var import_express21 = __toESM(require_express2(), 1);
 var import_cors = __toESM(require_lib3(), 1);
 var import_cookie_parser = __toESM(require_cookie_parser(), 1);
 var import_pino_http = __toESM(require_logger(), 1);
@@ -113399,7 +113399,7 @@ var helmet = Object.assign(
 );
 
 // src/routes/index.ts
-var import_express19 = __toESM(require_express2(), 1);
+var import_express20 = __toESM(require_express2(), 1);
 
 // src/routes/health.ts
 var import_express = __toESM(require_express2(), 1);
@@ -122397,34 +122397,85 @@ router18.get("/relay/:id", async (req, res) => {
 });
 var relay_default = router18;
 
-// src/routes/index.ts
+// src/routes/nova.ts
+var import_express19 = __toESM(require_express2(), 1);
 var router19 = (0, import_express19.Router)();
-router19.use(health_default);
-router19.use(auth_default);
-router19.use(external_default);
-router19.use(world_default);
-router19.use(uploads_default);
-router19.use("/agents", requireOperator, agents_default);
-router19.use("/channels", requireOperator, channels_default);
-router19.use("/tasks", requireOperator, tasks_default);
-router19.use(requireOperator, telemetry_default);
-router19.use("/swarm", requireOperator, swarm_default);
-router19.use(requireOperator, commands_default);
-router19.use(requireOperator, steel_default);
-router19.use(requireOperator, ai_default);
-router19.use(requireOperator, integrations_default);
-router19.use(requireOperator, selfCheck_default);
-router19.use(requireOperator, vault_default);
-router19.use(requireOperator, social_default);
-router19.use(requireOperator, relay_default);
-var routes_default = router19;
+function novaBase() {
+  return (process.env["NOVA_BASE_URL"] || "https://nova-sszi.onrender.com").replace(/\/$/, "");
+}
+function sharedKey() {
+  return process.env["OPENCLAW_API_KEY"] || process.env["SUPERNOVA_API_KEY"] || "";
+}
+router19.post("/nova/save-conversation", async (req, res) => {
+  const body = req.body ?? {};
+  const title = typeof body.title === "string" && body.title.trim() ? body.title.slice(0, 500) : "Supernova conversation";
+  const content = typeof body.content === "string" ? body.content : "";
+  if (!content.trim()) {
+    res.status(400).json({ error: "content is required" });
+    return;
+  }
+  if (content.length > 19e4) {
+    res.status(400).json({ error: "content too large" });
+    return;
+  }
+  const key = sharedKey();
+  if (!key) {
+    res.status(503).json({ error: "Cross-app key (OPENCLAW_API_KEY) is not configured on this server." });
+    return;
+  }
+  try {
+    const r = await fetch(`${novaBase()}/api/knowledge/ingest`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+      body: JSON.stringify({ source: "supernova-chat", title, content })
+    });
+    const text2 = await r.text();
+    let parsed;
+    try {
+      parsed = JSON.parse(text2);
+    } catch {
+      parsed = { raw: text2.slice(0, 500) };
+    }
+    if (!r.ok) {
+      res.status(502).json({ error: "NOVA rejected the save", status: r.status, detail: parsed });
+      return;
+    }
+    res.json({ ok: true, nova: parsed });
+  } catch (e) {
+    res.status(502).json({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+var nova_default = router19;
+
+// src/routes/index.ts
+var router20 = (0, import_express20.Router)();
+router20.use(health_default);
+router20.use(auth_default);
+router20.use(external_default);
+router20.use(world_default);
+router20.use(uploads_default);
+router20.use("/agents", requireOperator, agents_default);
+router20.use("/channels", requireOperator, channels_default);
+router20.use("/tasks", requireOperator, tasks_default);
+router20.use(requireOperator, telemetry_default);
+router20.use("/swarm", requireOperator, swarm_default);
+router20.use(requireOperator, commands_default);
+router20.use(requireOperator, steel_default);
+router20.use(requireOperator, ai_default);
+router20.use(requireOperator, integrations_default);
+router20.use(requireOperator, selfCheck_default);
+router20.use(requireOperator, vault_default);
+router20.use(requireOperator, social_default);
+router20.use(requireOperator, relay_default);
+router20.use(requireOperator, nova_default);
+var routes_default = router20;
 
 // src/app.ts
 init_logger2();
 import path2 from "path";
 import fs2 from "fs";
 import { fileURLToPath as fileURLToPath2 } from "url";
-var app = (0, import_express20.default)();
+var app = (0, import_express21.default)();
 app.use(helmet());
 app.use(
   (0, import_pino_http.default)({
@@ -122456,8 +122507,8 @@ app.use(
   allowedOrigins.length > 0 ? (0, import_cors.default)({ origin: allowedOrigins, credentials: true }) : (0, import_cors.default)()
 );
 app.use((0, import_cookie_parser.default)());
-app.use(import_express20.default.json({ limit: "30mb" }));
-app.use(import_express20.default.urlencoded({ extended: true, limit: "30mb" }));
+app.use(import_express21.default.json({ limit: "30mb" }));
+app.use(import_express21.default.urlencoded({ extended: true, limit: "30mb" }));
 app.use("/api", routes_default);
 app.get("/healthz", (_req, res) => {
   res.json({ status: "ok", service: "supernova-api" });
@@ -122469,7 +122520,7 @@ var indexHtml = path2.join(staticPath, "index.html");
 var hasFrontend = process.env["NODE_ENV"] === "production" && fs2.existsSync(indexHtml);
 if (hasFrontend) {
   app.use(
-    import_express20.default.static(staticPath, {
+    import_express21.default.static(staticPath, {
       setHeaders: (res, filePath) => {
         if (filePath.endsWith("index.html")) {
           res.setHeader("Cache-Control", "no-cache");
