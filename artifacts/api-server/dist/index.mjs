@@ -119126,7 +119126,7 @@ function stableStringify(value) {
 function resultWasBlocked(result) {
   const r = (result ?? "").trim();
   if (!r || r === "(no result produced)" || r === "(no response)") return true;
-  return /could not complete its directive|UNVERIFIED — blocked or errored/i.test(r) || /^error:/i.test(r);
+  return /could not complete its directive|UNVERIFIED|empty LLM response/i.test(r) || /^error:/i.test(r);
 }
 var MAX_SOLVE_CYCLES = Number(process.env["MAX_SOLVE_CYCLES"]) > 0 ? Number(process.env["MAX_SOLVE_CYCLES"]) : 50;
 var MAX_SOLVE_STALL = Number(process.env["MAX_SOLVE_STALL"]) > 0 ? Number(process.env["MAX_SOLVE_STALL"]) : 3;
@@ -119637,7 +119637,24 @@ ${toolResult.slice(0, 1400)}${toolResult.length > 1400 ? "\n\u2026" : ""}`,
       const wrap = await completeChatTurn(model, messages, []);
       finalText = (wrap.content ?? "").trim();
     }
-    if (!finalText) finalText = "(no result produced)";
+    if (!finalText) {
+      const marker = "UNVERIFIED \u2014 empty LLM response (no final text produced)";
+      await postMessage({ channelId, agent, content: marker, messageType: "system" }).catch(() => {
+      });
+      await db.update(agentCommandsTable).set({ status: "failed", result: marker, completedAt: /* @__PURE__ */ new Date() }).where(eq(agentCommandsTable.id, commandId)).catch(() => {
+      });
+      if (taskId) {
+        await db.update(tasksTable).set({ status: "failed", completedAt: /* @__PURE__ */ new Date() }).where(eq(tasksTable.id, taskId)).catch(() => {
+        });
+      }
+      await db.insert(monologueLinesTable).values({
+        agentId: agent.id,
+        text: "Directive ended with an empty model response \u2014 marked UNVERIFIED for retry.",
+        type: "conclusion"
+      }).catch(() => {
+      });
+      return marker;
+    }
     await postMessage({ channelId, agent, content: finalText, messageType: "agent" });
     await db.update(agentCommandsTable).set({ status: "done", result: finalText.slice(0, 4e3), completedAt: /* @__PURE__ */ new Date() }).where(eq(agentCommandsTable.id, commandId));
     if (taskId) {

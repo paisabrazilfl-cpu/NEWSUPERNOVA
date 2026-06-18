@@ -183,7 +183,7 @@ export function stableStringify(value: unknown): string {
 export function resultWasBlocked(result: string): boolean {
   const r = (result ?? "").trim();
   if (!r || r === "(no result produced)" || r === "(no response)") return true;
-  return /could not complete its directive|UNVERIFIED — blocked or errored/i.test(r) || /^error:/i.test(r);
+  return /could not complete its directive|UNVERIFIED|empty LLM response/i.test(r) || /^error:/i.test(r);
 }
 
 /**
@@ -1020,7 +1020,32 @@ export async function executeAgentCommand(opts: {
       const wrap = await completeChatTurn(model, messages, []);
       finalText = (wrap.content ?? "").trim();
     }
-    if (!finalText) finalText = "(no result produced)";
+    // §17 empty-response hardening: an empty model result is NOT success. Mark the
+    // directive FAILED (recoverable) with an UNVERIFIED marker instead of persisting
+    // a fake "(no result produced)" as a done result — ABBY's synthesis then treats
+    // it as blocked (resultWasBlocked) rather than a real answer.
+    if (!finalText) {
+      const marker = "UNVERIFIED — empty LLM response (no final text produced)";
+      await postMessage({ channelId, agent, content: marker, messageType: "system" }).catch(() => {});
+      await db
+        .update(agentCommandsTable)
+        .set({ status: "failed", result: marker, completedAt: new Date() })
+        .where(eq(agentCommandsTable.id, commandId))
+        .catch(() => {});
+      if (taskId) {
+        await db
+          .update(tasksTable)
+          .set({ status: "failed", completedAt: new Date() })
+          .where(eq(tasksTable.id, taskId))
+          .catch(() => {});
+      }
+      await db.insert(monologueLinesTable).values({
+        agentId: agent.id,
+        text: "Directive ended with an empty model response — marked UNVERIFIED for retry.",
+        type: "conclusion",
+      }).catch(() => {});
+      return marker;
+    }
 
     await postMessage({ channelId, agent, content: finalText, messageType: "agent" });
 

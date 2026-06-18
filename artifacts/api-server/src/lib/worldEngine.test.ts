@@ -34,7 +34,7 @@ describe("worldEngine — production render ($0, no AI, pure-JS/bundleable)", ()
     const tiles = await sliceSixTiles(block);
     expect(tiles).toHaveLength(6);
     for (const t of tiles) expect(t.subarray(0, 4).toString("hex")).toBe(PNG_MAGIC);
-  });
+  }, 60_000);
 
   // One render per mood, alternating direction — covers every mood + both
   // directions. Full-size block renders are heavy in pure-JS, so allow time.
